@@ -1,0 +1,9 @@
+.env
+data/
+logs/
+output/
+FotosLVR/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

@@ -1,0 +1,4 @@
+# Palabras clave bloqueadas - noticias que contengan estas palabras en el cuerpo serán ignoradas
+# Una por línea. Líneas que empiezan con # son comentarios.
+# Agregar nombres de personas, entidades o términos que NO deben publicarse.
+
