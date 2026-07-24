@@ -1,62 +1,65 @@
-"""
-Orquestador de scraping: ejecuta los 3 scrapers + reescritura con OpenAI.
-Pasos:
-  1. Locales (si habilitado)
-  2. Policiales (si habilitado)
-  3. Interior (si habilitado)
-  4. Reescritura con OpenAI
-"""
+"""Orquestador estructurado de scraping y reescritura."""
+from __future__ import annotations
+
 import os
 import sys
-import subprocess
+import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
+from utils.config import validate_config
 from utils.logging_setup import setup_logger
+from utils.process_runner import run_stage_process
+from utils.stage_result import (
+    StageResult,
+    StageStatus,
+    aggregate_results,
+    emit_stage_result,
+)
 
 logger = setup_logger("run_all", "run_all.log")
 
 BASE_DIR = os.path.dirname(__file__)
-PYTHON = sys.executable
-
-
 TIMEOUTS = {
-    "openIA/rewrite_news.py": 1800,  # 30 min: 3 llamadas OpenAI por artículo
+    "openIA/rewrite_news.py": 1800,
 }
 DEFAULT_TIMEOUT = 300
 
 
-def run_script(script: str) -> bool:
-    path = os.path.join(BASE_DIR, script)
+def run_script(script: str) -> StageResult:
     timeout = TIMEOUTS.get(script, DEFAULT_TIMEOUT)
-    logger.info(f"Ejecutando: {script} (timeout: {timeout}s)")
-    try:
-        result = subprocess.run(
-            [PYTHON, path],
-            cwd=BASE_DIR,
-            timeout=timeout,
-            capture_output=False,
+    logger.info("Ejecutando %s (timeout=%ss)", script, timeout)
+    result = run_stage_process(script, base_dir=BASE_DIR, timeout=timeout)
+    logger.info(
+        "Resultado %s status=%s recibidos=%s procesados=%s exitosos=%s fallidos=%s",
+        script,
+        result.status.value,
+        result.received,
+        result.processed,
+        result.succeeded,
+        result.failed,
+    )
+    return result
+
+
+def main() -> StageResult:
+    started = time.monotonic()
+    report = validate_config(scope="core")
+    if not report.ok:
+        return StageResult(
+            stage="scraping_rewrite",
+            status=StageStatus.FAILED,
+            failed=len(report.errors),
+            duration_seconds=time.monotonic() - started,
+            error_type="configuration_error",
+            details={"config": report.to_dict()},
         )
-        if result.returncode == 0:
-            logger.info(f"OK: {script}")
-            return True
-        else:
-            logger.error(f"FALLO (código {result.returncode}): {script}")
-            return False
-    except subprocess.TimeoutExpired:
-        logger.error(f"TIMEOUT: {script}")
-        return False
-    except Exception as e:
-        logger.error(f"Excepción en {script}: {e}")
-        return False
 
-
-def main():
-    logger.info("=== Iniciando ciclo de scraping ===")
-
+    logger.info("=== Iniciando ciclo de scraping y reescritura ===")
     steps = [
         ("main_locales.py", os.getenv("SCRAPER_LOCALES_ENABLED", "1") == "1"),
         ("main_policiales.py", os.getenv("SCRAPER_POLICIALES_ENABLED", "1") == "1"),
@@ -66,16 +69,33 @@ def main():
         ("openIA/rewrite_news.py", True),
     ]
 
-    resultados = {}
+    results: list[StageResult] = []
     for script, enabled in steps:
         if not enabled:
-            logger.info(f"Saltando (deshabilitado): {script}")
+            results.append(
+                StageResult(
+                    stage=os.path.splitext(os.path.basename(script))[0],
+                    status=StageStatus.NO_WORK,
+                    details={"disabled": True, "script": script},
+                )
+            )
+            logger.info("Saltando etapa deshabilitada: %s", script)
             continue
-        resultados[script] = run_script(script)
+        results.append(run_script(script))
 
-    exitosos = sum(1 for v in resultados.values() if v)
-    logger.info(f"=== Scraping completado: {exitosos}/{len(resultados)} pasos exitosos ===")
+    aggregate = aggregate_results(
+        "scraping_rewrite",
+        results,
+        duration_seconds=time.monotonic() - started,
+    )
+    logger.info(
+        "Ciclo scraping/rewrite status=%s exitosos=%s fallidos=%s",
+        aggregate.status.value,
+        aggregate.succeeded,
+        aggregate.failed,
+    )
+    return aggregate
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(emit_stage_result(main()))
