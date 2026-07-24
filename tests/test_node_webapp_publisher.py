@@ -491,7 +491,7 @@ class InstagramVideoClientTests(unittest.TestCase):
         self.assertIn("video:test", saved_state["posted"])
         self.assertEqual(saved_state["posted"]["video:test"]["titulo"], "Video policial")
 
-    def test_instagram_skips_similar_posted_record(self):
+    def test_instagram_skips_similar_without_fabricating_publication_record(self):
         noticia = {
             "titulo": "Búsqueda de adolescente desaparecido en Chilecito",
             "texto_instagram": "Caption nuevo",
@@ -531,8 +531,8 @@ class InstagramVideoClientTests(unittest.TestCase):
 
         self.assertTrue(ok)
         post.assert_not_called()
-        self.assertIn("link:new", saved_state["posted"])
-        self.assertEqual(saved_state["posted"]["link:new"]["titulo"], noticia["titulo"])
+        self.assertNotIn("link:new", saved_state["posted"])
+        self.assertIn("link:old", saved_state["posted"])
 
 
 class ManualVideoQueueTests(unittest.TestCase):
@@ -596,8 +596,17 @@ class QueueTests(unittest.TestCase):
                 "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
                 str(history),
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                side_effect=[(True, False), (False, False)],
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                side_effect=[
+                    {"published": True, "featured": False, "error": None},
+                    {
+                        "published": False,
+                        "featured": False,
+                        "error": "network_error",
+                        "retryable": True,
+                        "terminal": False,
+                    },
+                ],
             ):
                 publisher.publish_pending()
 
@@ -618,13 +627,46 @@ class QueueTests(unittest.TestCase):
                 "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
                 str(history),
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                side_effect=[(True, False), publisher.InvalidCredentialError("bad key")],
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                side_effect=[
+                    {"published": True, "featured": False, "error": None},
+                    publisher.InvalidCredentialError("bad key"),
+                ],
             ):
                 publisher.publish_pending()
 
             saved = json.loads(queue.read_text(encoding="utf-8"))
         self.assertEqual([item["titulo"] for item in saved], ["B", "C"])
+
+    def test_publish_pending_reports_rate_limit_as_degraded_and_defers_rest(self):
+        noticias = [
+            {"titulo": "A", "web_queue_key": "link:a"},
+            {"titulo": "B", "web_queue_key": "link:b"},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = Path(tmpdir) / "noticias_web_pending.json"
+            history = Path(tmpdir) / "noticias_web_publicadas.json"
+            queue.write_text(json.dumps(noticias), encoding="utf-8")
+            with patch("pipeline.node_webapp.publisher.INPUT", str(queue)), patch(
+                "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
+                str(history),
+            ), patch(
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                return_value={
+                    "published": False,
+                    "featured": False,
+                    "error": "rate_limit",
+                    "retryable": True,
+                    "terminal": False,
+                    "next_retry_at": 9999999999,
+                },
+            ):
+                result = publisher.publish_pending()
+            saved = json.loads(queue.read_text(encoding="utf-8"))
+        self.assertEqual(result.status.value, "degraded")
+        self.assertEqual(result.exit_code, 2)
+        self.assertEqual(result.next_retry_at, 9999999999)
+        self.assertEqual([item["titulo"] for item in saved], ["A", "B"])
 
     def test_publish_pending_prioritizes_sections_and_defers_extra_deportes(self):
         noticias = [
@@ -645,8 +687,8 @@ class QueueTests(unittest.TestCase):
                 {"WEB_MAX_DEPORTES_PER_RUN": "1", "WEB_PUBLISH_MAX_PER_RUN": "0"},
                 clear=False,
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                return_value=(True, False),
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                return_value={"published": True, "featured": False, "error": None},
             ) as publish_one:
                 publisher.publish_pending()
 
