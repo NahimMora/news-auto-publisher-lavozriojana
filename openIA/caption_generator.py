@@ -144,7 +144,7 @@ def _get_prompt(seccion: str) -> str:
     return _PROMPT_BY_SECTION.get(seccion.lower().strip(), _NEWS_PROMPT)
 
 
-def _fallback(noticia: dict) -> dict:
+def _fallback(noticia: dict, reason: str = "fallback") -> dict:
     titulo = noticia.get("titulo", "")
     parrafos = noticia.get("parrafos", [])
     primer_parrafo = parrafos[0] if parrafos else ""
@@ -153,6 +153,8 @@ def _fallback(noticia: dict) -> dict:
         "titulo_instagram": titulo[:80],
         "texto_instagram":  texto[:2200],
         "cta":              "¿Qué opinás?",
+        "caption_fallback_used": True,
+        "caption_fallback_reason": reason,
     }
 
 
@@ -163,7 +165,7 @@ def generate_caption(noticia: dict) -> dict:
     """
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key or api_key == "PENDIENTE":
-        return _fallback(noticia)
+        return _fallback(noticia, "credential_missing")
 
     retry_count = int(os.getenv("OPENAI_RETRY_COUNT", "3"))
     retry_sleep  = float(os.getenv("OPENAI_RETRY_SLEEP", "2"))
@@ -199,6 +201,7 @@ def generate_caption(noticia: dict) -> dict:
                 "titulo_instagram": (data.get("titulo_instagram") or noticia.get("titulo", ""))[:80],
                 "texto_instagram":  (data.get("texto_instagram") or "")[:2200],
                 "cta":              data.get("cta") or "¿Qué opinás?",
+                "caption_fallback_used": False,
             }
             logger.info(f"Caption OK: {result['titulo_instagram'][:60]}")
             return result
@@ -208,5 +211,4 @@ def generate_caption(noticia: dict) -> dict:
                 time.sleep(retry_sleep)
 
     logger.error(f"Caption falló para: {noticia.get('titulo', '')[:60]}, usando fallback")
-    return _fallback(noticia)
-
+    return _fallback(noticia, "openai_failed")

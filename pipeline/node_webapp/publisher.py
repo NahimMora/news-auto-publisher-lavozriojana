@@ -20,15 +20,20 @@ from pipeline.node_webapp.editorial import (
 )
 from pipeline.node_webapp.media import MediaResult, prepare_media
 from utils.classifier import clasificar as _clasificar
+from utils.editorial_policy import evaluate_web_fallback
 from utils.editorial_priority import priority_interleave, split_priority_batch
-from utils.file_manager import load_json, save_json
+from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
+from utils.operation_result import OperationResult
+from utils.paths import data_dir
+from utils.queue_events import record_queue_event
+from utils.stage_result import StageResult, StageStatus, result_from_counts
 from utils.url_normalization import url_hash
 
 logger = setup_logger("node_webapp.publisher", "publish_web.log")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+DATA_DIR = str(data_dir())
 INPUT = os.getenv("WEB_QUEUE_PATH", os.path.join(DATA_DIR, "noticias_web_pending.json"))
 META_OUTPUT = os.getenv("META_QUEUE_PATH", os.path.join(DATA_DIR, "noticias_meta.json"))
 SOCIAL_OUTPUT = os.getenv("SOCIAL_QUEUE_PATH", os.path.join(DATA_DIR, "noticias_sociales_pendientes.json"))
@@ -294,14 +299,14 @@ def _webapp_config() -> tuple[str, str, int, int, float]:
     return base_url, private_api_key, timeout, retries, retry_sleep
 
 
-def post_payload(payload: dict) -> dict | None:
+def post_payload_detailed(payload: dict) -> OperationResult:
     base_url, private_api_key, timeout, retries, retry_sleep = _webapp_config()
     if not base_url or base_url == "PENDIENTE":
-        logger.warning("WEBAPP_BASE_URL no configurada, saltando publicacion web")
-        return None
+        logger.error("WEBAPP_BASE_URL no configurada")
+        return OperationResult(StageStatus.FAILED, error_type="configuration_error", error_code="base_url_missing")
     if not private_api_key or private_api_key == "PENDIENTE":
         logger.error("PRIVATE_API_KEY no configurada, no se publica en WebApp")
-        return None
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential", error_code="api_key_missing")
 
     endpoint = f"{base_url.rstrip('/')}/api/private/posts"
     headers = {
@@ -309,40 +314,130 @@ def post_payload(payload: dict) -> dict | None:
         "x-api-key": private_api_key,
     }
 
+    retries = max(1, retries)
+    last_result: OperationResult | None = None
     for attempt in range(1, retries + 1):
         try:
             response = requests.post(endpoint, json=payload, headers=headers, timeout=timeout)
             if response.status_code == 401:
                 logger.error("WebApp devolvio 401: PRIVATE_API_KEY invalida")
-                raise InvalidCredentialError("PRIVATE_API_KEY invalida")
+                return OperationResult(
+                    StageStatus.FAILED,
+                    error_type="invalid_credential",
+                    error_code=401,
+                )
 
             if response.status_code in (200, 201):
                 try:
                     data = response.json()
                 except ValueError:
                     logger.error("WebApp HTTP %s sin JSON valido: %s", response.status_code, response.text[:200])
-                    return None
-                if data.get("ok") is True:
+                    return OperationResult(
+                        StageStatus.FAILED,
+                        error_type="invalid_response",
+                        error_code=response.status_code,
+                    )
+                if isinstance(data, dict) and data.get("ok") is True:
+                    post_data = _response_post_data(data)
+                    post_id = _response_value(post_data, "id", "postId", "post_id")
+                    url = public_post_url(data, base_url)
                     logger.info("Publicado en WebApp: %s", payload.get("title", "")[:70])
-                    return data
+                    return OperationResult(
+                        StageStatus.SUCCESS,
+                        external_id=post_id,
+                        public_url=url,
+                        response=data,
+                    )
                 logger.error("WebApp respondio ok:false: %s", str(data)[:300])
-                return None
+                return OperationResult(
+                    StageStatus.FAILED,
+                    error_type="application_rejected",
+                    error_code=response.status_code,
+                    response=data if isinstance(data, dict) else None,
+                )
+
+            if response.status_code == 409:
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {}
+                post_data = _response_post_data(data)
+                post_id = _response_value(post_data, "id", "postId", "post_id")
+                url = public_post_url(data, base_url)
+                if post_id or url:
+                    logger.info("WebApp devolvio 409 con publicación existente verificable")
+                    return OperationResult(
+                        StageStatus.SUCCESS,
+                        external_id=post_id,
+                        public_url=url,
+                        response=data,
+                        deduplicated=True,
+                    )
+                logger.error("WebApp devolvio 409 sin ID/URL de la publicación existente")
+                return OperationResult(
+                    StageStatus.FAILED,
+                    error_type="conflict_without_evidence",
+                    error_code=409,
+                    response=data if isinstance(data, dict) else None,
+                )
 
             if response.status_code == 429:
                 logger.warning("Rate limit WebApp HTTP 429 intento %s/%s", attempt, retries)
+                try:
+                    retry_after = max(0.0, float(response.headers.get("Retry-After", retry_sleep)))
+                except (TypeError, ValueError):
+                    retry_after = retry_sleep
+                last_result = OperationResult(
+                    StageStatus.DEGRADED,
+                    error_type="rate_limit",
+                    error_code=429,
+                    retryable=True,
+                    next_retry_at=time.time() + retry_after,
+                )
                 if attempt < retries:
-                    time.sleep(retry_sleep)
+                    time.sleep(retry_after)
                 continue
 
+            if response.status_code >= 500:
+                logger.error("Error WebApp HTTP %s: %s", response.status_code, response.text[:300])
+                last_result = OperationResult(
+                    StageStatus.DEGRADED,
+                    error_type="server_error",
+                    error_code=response.status_code,
+                    retryable=True,
+                    next_retry_at=time.time() + retry_sleep,
+                )
+                if attempt < retries:
+                    time.sleep(retry_sleep)
+                    continue
+                return last_result
+
             logger.error("Error WebApp HTTP %s: %s", response.status_code, response.text[:300])
-            return None
-        except InvalidCredentialError:
-            raise
+            return OperationResult(
+                StageStatus.FAILED,
+                error_type="request_rejected",
+                error_code=response.status_code,
+            )
         except requests.RequestException as exc:
             logger.error("Error de red WebApp intento %s/%s: %s", attempt, retries, exc)
+            last_result = OperationResult(
+                StageStatus.DEGRADED,
+                error_type="network_error",
+                error_code=type(exc).__name__,
+                retryable=True,
+                next_retry_at=time.time() + retry_sleep,
+            )
             if attempt < retries:
                 time.sleep(retry_sleep)
-    return None
+    return last_result or OperationResult(StageStatus.FAILED, error_type="unknown_external_error")
+
+
+def post_payload(payload: dict) -> dict | None:
+    """Wrapper compatible con el contrato histórico."""
+    result = post_payload_detailed(payload)
+    if result.error_type == "invalid_credential":
+        raise InvalidCredentialError("PRIVATE_API_KEY invalida")
+    return result.response if result.ok else None
 
 
 def _queue_key(noticia: dict) -> str:
@@ -378,17 +473,21 @@ def _history_timestamp(item: dict) -> int:
 
 
 def _load_published_history() -> list[dict]:
-    history = load_json(PUBLISHED_HISTORY, [])
-    if not isinstance(history, list):
-        history = []
     cutoff = int(time.time()) - WEB_DEDUP_HISTORY_DAYS * 86400
-    active = [
-        item for item in history
-        if isinstance(item, dict) and _history_timestamp(item) >= cutoff
-    ]
-    if active != history:
-        save_json(PUBLISHED_HISTORY, active)
-    return active
+
+    def prune(history):
+        return [
+            item
+            for item in history
+            if isinstance(item, dict) and _history_timestamp(item) >= cutoff
+        ]
+
+    return update_json(
+        PUBLISHED_HISTORY,
+        prune,
+        [],
+        expected_type=list,
+    )
 
 
 def _filter_publish_duplicates(
@@ -410,6 +509,12 @@ def _filter_publish_duplicates(
                 reason,
                 noticia.get("titulo", "")[:70],
             )
+            record_queue_event(
+                stage="web",
+                status="completed",
+                reason=f"duplicate_published:{reason}",
+                item=noticia,
+            )
             continue
 
         reason = duplicate_reason(
@@ -423,6 +528,12 @@ def _filter_publish_duplicates(
                 "WebApp: duplicado pendiente (%s), se omite: %s",
                 reason,
                 noticia.get("titulo", "")[:70],
+            )
+            record_queue_event(
+                stage="web",
+                status="completed",
+                reason=f"duplicate_pending:{reason}",
+                item=noticia,
             )
             continue
         unique.append(noticia)
@@ -449,12 +560,16 @@ def _history_item(noticia: dict, payload: dict, public_url: str) -> dict:
 
 
 def _record_published_history(noticia: dict, payload: dict, public_url: str) -> None:
-    history = _load_published_history()
     item = _history_item(noticia, payload, public_url)
-    if duplicate_reason(item, history, key_fields=_DEDUP_KEY_FIELDS):
-        return
-    history.append(item)
-    save_json(PUBLISHED_HISTORY, history)
+
+    def append(history):
+        if not isinstance(history, list):
+            raise ValueError("El historial web debe ser una lista")
+        if not duplicate_reason(item, history, key_fields=_DEDUP_KEY_FIELDS):
+            history.append(item)
+        return history
+
+    update_json(PUBLISHED_HISTORY, append, [], expected_type=list)
 
 
 def _response_post_data(response_data: dict | None) -> dict:
@@ -523,16 +638,20 @@ def sync_meta_web_link(noticia: dict, response_data: dict | None, base_url: str)
     key = _queue_key(noticia)
     updated_files = 0
     for path in (META_OUTPUT, SOCIAL_OUTPUT):
-        queue = load_json(path, [])
-        if not isinstance(queue, list):
-            continue
         changed = False
-        for item in queue:
-            if isinstance(item, dict) and _item_queue_key(item) == key:
-                item.update(updates)
-                changed = True
+
+        def apply_updates(queue):
+            nonlocal changed
+            if not isinstance(queue, list):
+                raise ValueError(f"{path} debe contener una lista")
+            for item in queue:
+                if isinstance(item, dict) and _item_queue_key(item) == key:
+                    item.update(updates)
+                    changed = True
+            return queue
+
+        update_json(path, apply_updates, [], expected_type=list)
         if changed:
-            save_json(path, queue)
             updated_files += 1
 
     logger.info("Link web sincronizado para Meta (%s archivos): %s", updated_files, public_url)
@@ -548,15 +667,10 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
                       evita múltiples featured por ciclo.
     """
     from pipeline.node_webapp.editorial_flags import (
-        clear_breaking,
-        clear_featured,
         detect_breaking,
         detect_featured,
-        load_flags,
-        register_breaking,
-        register_featured,
+        reconcile_after_publish,
         resolve_post_id,
-        save_flags,
     )
 
     empty = {
@@ -566,13 +680,42 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         "post_id": "",
         "response": None,
         "error": None,
+        "retryable": False,
+        "terminal": False,
+        "next_retry_at": None,
     }
 
     editorial = prepare_editorial(noticia)
+    fallback_decision = evaluate_web_fallback(noticia, editorial.fallback_used)
+    if not fallback_decision.allowed:
+        logger.error(
+            "No se publica por política de fallback editorial: %s",
+            fallback_decision.reason,
+        )
+        record_queue_event(
+            stage="web",
+            status="dead_letter",
+            reason=fallback_decision.reason or "web_fallback_blocked",
+            item=noticia,
+            metadata={"fallback_policy": fallback_decision.to_dict()},
+        )
+        return {
+            **empty,
+            "error": fallback_decision.reason or "web_fallback_blocked",
+            "terminal": True,
+        }
+
     media = prepare_media(noticia, editorial.title)
     if not media.ok:
         logger.error("No se publica sin imagen principal publica verificada: %s", media.warnings)
-        return {**empty, "error": "media_not_ok:" + ",".join(media.warnings)}
+        error = "media_not_ok:" + ",".join(media.warnings)
+        record_queue_event(
+            stage="web",
+            status="dead_letter",
+            reason=error,
+            item=noticia,
+        )
+        return {**empty, "error": error, "terminal": True}
 
     category_slug = category_to_slug(classify(noticia))
     is_breaking = detect_breaking(editorial.title, category_slug)
@@ -590,7 +733,14 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         )
     except ValueError as exc:
         logger.error("No se publica por payload invalido: %s", exc)
-        return {**empty, "error": f"invalid_payload:{exc}"}
+        error = f"invalid_payload:{exc}"
+        record_queue_event(
+            stage="web",
+            status="dead_letter",
+            reason=error,
+            item=noticia,
+        )
+        return {**empty, "error": error, "terminal": True}
 
     logger.info(
         "Payload listo category=%s breaking=%s featured=%s score=%.2f tags=%s fallback=%s",
@@ -602,33 +752,87 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         editorial.fallback_used,
     )
 
-    # Desactivar flags anteriores antes de publicar
-    flags = load_flags()
-    if is_breaking:
-        flags = clear_breaking(flags)
-    if is_featured:
-        flags = clear_featured(flags)
-
-    response_data = post_payload(payload)
-    if not response_data:
-        return {**empty, "error": "post_payload_failed"}
-
-    # Registrar el ID del nuevo post publicado
-    post_id = resolve_post_id(response_data)
-    if post_id:
-        if is_breaking:
-            flags = register_breaking(flags, post_id)
-        if is_featured:
-            flags = register_featured(flags, post_id)
-        save_flags(flags)
-    else:
-        logger.warning(
-            "WebApp no devolvió ID del post; los flags %s no quedan rastreados",
-            [f for f, active in (("breaking", is_breaking), ("featured", is_featured)) if active],
+    operation = post_payload_detailed(payload)
+    if operation.error_type == "invalid_credential":
+        raise InvalidCredentialError("PRIVATE_API_KEY invalida")
+    if not operation.ok:
+        record_queue_event(
+            stage="web",
+            status="degraded" if operation.retryable else "failed",
+            reason=operation.error_type or "post_payload_failed",
+            item=noticia,
+            metadata=operation.to_dict(),
         )
+        return {
+            **empty,
+            "error": operation.error_type or "post_payload_failed",
+            "next_retry_at": operation.next_retry_at,
+            "retryable": operation.retryable,
+            "terminal": not operation.retryable,
+        }
 
+    response_data = operation.response
+    post_id = operation.external_id or resolve_post_id(response_data)
     base_url, *_ = _webapp_config()
-    public_url = sync_meta_web_link(noticia, response_data, base_url)
+    public_url = operation.public_url or public_post_url(response_data, base_url)
+    if not post_id and not public_url:
+        logger.error("WebApp confirmó ok pero no devolvió ID, URL ni slug verificable")
+        record_queue_event(
+            stage="web",
+            status="failed",
+            reason="missing_publication_evidence",
+            item=noticia,
+            metadata={"response": response_data or {}},
+        )
+        return {
+            **empty,
+            "error": "missing_publication_evidence",
+            "response": response_data,
+            "terminal": True,
+        }
+
+    # Los flags anteriores se desactivan sólo después de confirmar el nuevo post.
+    flag_errors: list[str] = []
+    if post_id:
+        flag_errors = reconcile_after_publish(
+            post_id=post_id,
+            is_breaking=is_breaking,
+            is_featured=is_featured,
+        )
+        for flag_error in flag_errors:
+            record_queue_event(
+                stage="web",
+                status="degraded",
+                reason="editorial_flag_reconciliation_required",
+                item=noticia,
+                metadata={"detail": flag_error, "post_id": post_id},
+            )
+    else:
+        active_flags = [
+            name
+            for name, active in (
+                ("breaking", is_breaking),
+                ("featured", is_featured),
+            )
+            if active
+        ]
+        if active_flags:
+            flag_error = "missing_post_id_for_editorial_flags"
+            flag_errors.append(flag_error)
+            logger.warning(
+                "WebApp no devolvió ID del post; los flags %s requieren conciliación",
+                active_flags,
+            )
+            record_queue_event(
+                stage="web",
+                status="degraded",
+                reason=flag_error,
+                item=noticia,
+                metadata={"active_flags": active_flags, "public_url": public_url},
+            )
+
+    synced_url = sync_meta_web_link(noticia, response_data, base_url)
+    public_url = synced_url or public_url
     _record_published_history(noticia, payload, public_url)
     return {
         "published": True,
@@ -637,6 +841,13 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         "post_id": post_id,
         "response": response_data,
         "error": None,
+        "retryable": False,
+        "terminal": True,
+        "next_retry_at": None,
+        "degraded": bool(flag_errors),
+        "degraded_reason": (
+            "editorial_flag_reconciliation_required" if flag_errors else None
+        ),
     }
 
 
@@ -650,20 +861,52 @@ def publish_one(noticia: dict, *, featured_claimed: bool = False) -> tuple[bool,
     return result["published"], result["featured"]
 
 
-def publish_pending() -> None:
-    noticias = load_json(INPUT, [])
+def publish_pending() -> StageResult:
+    started = time.monotonic()
+    try:
+        noticias = load_json(INPUT, [], expected_type=list)
+    except JsonStateError as exc:
+        logger.error("No se pudo leer la cola web: %s", exc)
+        return StageResult(
+            "web",
+            StageStatus.FAILED,
+            failed=1,
+            duration_seconds=time.monotonic() - started,
+            error_type="state_read_error",
+            details={"message": str(exc)},
+        )
     if not noticias:
         logger.info("Sin noticias pendientes para publicar en WebApp")
-        return
+        return StageResult(
+            "web",
+            StageStatus.NO_WORK,
+            duration_seconds=time.monotonic() - started,
+        )
 
+    original_snapshot = list(noticias)
+    received_count = len(original_snapshot)
     published_history = _load_published_history()
     noticias, skipped_duplicates = _filter_publish_duplicates(noticias, published_history)
     if skipped_duplicates:
         logger.info("WebApp: %s duplicados descartados antes de publicar", skipped_duplicates)
-        save_json(INPUT, noticias)
     if not noticias:
         logger.info("Sin noticias pendientes para publicar en WebApp tras deduplicar")
-        return
+        original_keys = {_item_queue_key(item) for item in original_snapshot}
+
+        def remove_duplicates(current):
+            return [
+                item for item in current
+                if _item_queue_key(item) not in original_keys
+            ]
+
+        update_json(INPUT, remove_duplicates, [], expected_type=list)
+        return StageResult(
+            "web",
+            StageStatus.NO_WORK,
+            received=received_count,
+            duration_seconds=time.monotonic() - started,
+            details={"duplicates": skipped_duplicates},
+        )
 
     noticias, diferidas = split_priority_batch(
         noticias,
@@ -678,30 +921,121 @@ def publish_pending() -> None:
         )
 
     publicadas: list[dict] = []
-    fallidas: list[dict] = []
+    retenidas: list[dict] = []
+    terminales: list[dict] = []
     stopped_for_auth = False
+    stopped_for_rate_limit = False
+    batch_error_type: str | None = None
+    next_retry_at = None
+    attempted = 0
+    published_degraded = 0
     featured_claimed = False  # solo una nota isFeatured por lote
 
     for index, noticia in enumerate(noticias):
         try:
-            success, was_featured = publish_one(noticia, featured_claimed=featured_claimed)
-            if success:
+            detail = publish_one_detailed(
+                noticia,
+                featured_claimed=featured_claimed,
+            )
+            attempted += 1
+            if detail["published"]:
                 publicadas.append(noticia)
-                if was_featured:
+                if detail.get("degraded"):
+                    published_degraded += 1
+                    batch_error_type = detail.get("degraded_reason") or "published_degraded"
+                if detail["featured"]:
                     featured_claimed = True
             else:
-                fallidas.append(noticia)
+                batch_error_type = detail.get("error") or "publication_failed"
+                next_retry_at = detail.get("next_retry_at") or next_retry_at
+                if detail.get("terminal"):
+                    terminales.append(noticia)
+                else:
+                    retenidas.append(noticia)
+                if batch_error_type == "rate_limit":
+                    stopped_for_rate_limit = True
+                    retenidas.extend(noticias[index + 1 :])
+                    break
         except InvalidCredentialError:
+            attempted += 1
             stopped_for_auth = True
-            fallidas.append(noticia)
-            fallidas.extend(noticias[index + 1 :])
+            batch_error_type = "invalid_credential"
+            retenidas.append(noticia)
+            retenidas.extend(noticias[index + 1 :])
             break
         except Exception as exc:
+            attempted += 1
             logger.exception("Fallo inesperado publicando noticia: %s", exc)
-            fallidas.append(noticia)
+            batch_error_type = "unexpected_error"
+            retenidas.append(noticia)
 
-    fallidas.extend(diferidas)
-    logger.info("WebApp: %s publicadas, %s pendientes", len(publicadas), len(fallidas))
+    retenidas.extend(diferidas)
+    logger.info(
+        "WebApp: %s publicadas, %s pendientes, %s terminales",
+        len(publicadas),
+        len(retenidas),
+        len(terminales),
+    )
     if stopped_for_auth:
         logger.error("Lote detenido por credencial invalida; las noticias restantes quedan en cola")
-    save_json(INPUT, priority_interleave(fallidas))
+    if stopped_for_rate_limit:
+        logger.warning("Lote detenido por rate limit; las noticias restantes quedan en cola")
+    remaining_keys = {_item_queue_key(item) for item in retenidas}
+    original_keys = {_item_queue_key(item) for item in original_snapshot}
+
+    def reconcile(current):
+        remaining = [
+            item
+            for item in current
+            if _item_queue_key(item) not in original_keys
+            or _item_queue_key(item) in remaining_keys
+        ]
+        return priority_interleave(remaining)
+
+    try:
+        update_json(INPUT, reconcile, [], expected_type=list)
+    except JsonStateError as exc:
+        logger.error("No se pudo reconciliar la cola web: %s", exc)
+        return StageResult(
+            "web",
+            StageStatus.FAILED,
+            received=received_count,
+            selected=len(noticias),
+            processed=attempted,
+            succeeded=len(publicadas),
+            failed=max(1, attempted - len(publicadas)),
+            deferred=len(diferidas),
+            duration_seconds=time.monotonic() - started,
+            error_type="state_write_error",
+            details={"message": str(exc)},
+        )
+
+    failed_count = max(0, attempted - len(publicadas))
+    unattempted = max(0, len(noticias) - attempted)
+    result = result_from_counts(
+        "web",
+        received=received_count,
+        selected=len(noticias),
+        processed=attempted,
+        succeeded=len(publicadas),
+        failed=failed_count,
+        deferred=len(diferidas) + unattempted,
+        duration_seconds=time.monotonic() - started,
+        error_type=batch_error_type,
+        next_retry_at=next_retry_at,
+        details={
+            "duplicates": skipped_duplicates,
+            "terminal": len(terminales),
+            "published_degraded": published_degraded,
+        },
+    )
+    if stopped_for_auth:
+        result.status = StageStatus.FAILED
+        result.error_type = "invalid_credential"
+    elif stopped_for_rate_limit:
+        result.status = StageStatus.DEGRADED
+        result.error_type = "rate_limit"
+    elif published_degraded:
+        result.status = StageStatus.DEGRADED
+        result.error_type = batch_error_type or "published_degraded"
+    return result

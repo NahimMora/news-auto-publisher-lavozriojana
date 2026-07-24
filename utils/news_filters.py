@@ -1,14 +1,15 @@
 import os
 from utils.logging_setup import setup_logger
-from utils.file_manager import load_json, save_json
+from utils.file_manager import update_json
+from utils.paths import data_dir
 
-logger = setup_logger("news_filters")
+logger = setup_logger("news_filters", "news_filters.log")
 
 BLOCKED_KEYWORDS_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "config", "blocked_body_keywords.txt"
 )
 FILTERED_LOG = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "data", "noticias_filtradas_body_keywords.json"
+    str(data_dir()), "noticias_filtradas_body_keywords.json"
 )
 
 
@@ -43,9 +44,7 @@ def is_blocked(noticia: dict, stage: str = "unknown") -> bool:
 def _log_filtered(noticia: dict, matched: list, stage: str) -> None:
     from datetime import datetime
 
-    entries = load_json(FILTERED_LOG, [])
-    entries.append(
-        {
+    entry = {
             "noticia": {
                 "titulo": noticia.get("titulo"),
                 "url": noticia.get("url"),
@@ -54,5 +53,9 @@ def _log_filtered(noticia: dict, matched: list, stage: str) -> None:
             "stage": stage,
             "timestamp": datetime.now().isoformat(),
         }
-    )
-    save_json(FILTERED_LOG, entries)
+
+    def append(entries):
+        entries.append(entry)
+        return entries
+
+    update_json(FILTERED_LOG, append, [], expected_type=list)

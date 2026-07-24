@@ -15,11 +15,12 @@ from PIL import Image, ImageOps
 from pipeline.node_webapp.editorial import clean_text, source_display_name
 from utils import r2_storage
 from utils.logging_setup import setup_logger
+from utils.paths import output_dir
+from utils.safe_http import safe_get, safe_head, validate_public_http_url
 
 logger = setup_logger("node_webapp.media", "publish_web.log")
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-MEDIA_WORK_DIR = ROOT_DIR / "output" / "web_media"
+MEDIA_WORK_DIR = output_dir() / "web_media"
 
 
 @dataclass
@@ -77,7 +78,12 @@ def _download_remote_image(url: str) -> Path | None:
     if not _is_http_url(url):
         return None
     try:
-        response = requests.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        response = safe_get(
+            url,
+            requester=requests.get,
+            timeout=25,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
         if not content_type.startswith("image/"):
@@ -165,14 +171,20 @@ def verify_public_image_url(url: str) -> bool:
 
     for attempt in range(1, attempts + 1):
         try:
-            head = requests.head(url, timeout=12, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+            validate_public_http_url(url)
+            head = safe_head(
+                url,
+                requester=requests.head,
+                timeout=12,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
             if _response_is_public_image(head):
                 return True
-            get = requests.get(
+            get = safe_get(
                 url,
+                requester=requests.get,
                 timeout=12,
                 stream=True,
-                allow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             try:

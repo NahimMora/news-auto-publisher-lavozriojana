@@ -11,8 +11,10 @@ Pipeline interactivo:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -29,6 +31,9 @@ load_dotenv()
 from utils.manual_video_queue import enqueue_video, load_video_state, save_video_draft
 from utils.manual_post_queue import save_post_draft, load_post_state
 from utils.logging_setup import setup_logger
+from utils.safe_http import UnsafeURLError, validate_public_http_url
+from utils.upload_validation import InvalidUploadError, validate_upload_content
+from utils.paths import output_dir
 
 logger = setup_logger("video_reel_manager", "video_reel_manager.log")
 
@@ -42,7 +47,7 @@ _publish_jobs: dict[str, dict] = {}
 _custom_previews: dict[str, bytes] = {}
 
 # Archivos subidos a mano (drag&drop / seleccionar archivo)
-UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "output", "uploads")
+UPLOADS_DIR = str(output_dir() / "uploads")
 _UPLOAD_EXTENSIONS = {
     "image": {".jpg", ".jpeg", ".png", ".webp", ".gif"},
     "video": {".mp4", ".mov", ".m4v", ".webm"},
@@ -59,6 +64,94 @@ _UPLOAD_CONTENT_TYPES = {
 
 # Jobs de publicación de Publicaciones: job_id → {done, web_ok, ig_ok, fb_ok, messages, error, public_url}
 _custom_jobs: dict[str, dict] = {}
+
+
+def validate_bind_host(host: str) -> str:
+    """La interfaz manual sólo puede escuchar en loopback.
+
+    No ofrece autenticación remota; exponerla en LAN/Internet permitiría disparar
+    publicaciones y uploads. Una futura exposición deberá incorporar un proxy
+    autenticado como cambio explícito, no un flag inseguro.
+    """
+    value = str(host or "").strip()
+    if value.lower() == "localhost":
+        return "127.0.0.1"
+    candidate = value.strip("[]")
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError as exc:
+        raise ValueError("El Reel Manager sólo puede usar localhost/loopback") from exc
+    if not address.is_loopback:
+        raise ValueError("Se rechaza exposición externa: use 127.0.0.1 o ::1")
+    return candidate
+
+
+def _is_loopback_hostname(value: str) -> bool:
+    host = str(value or "").rstrip(".").lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_local_request_headers(host_header: str, origin_header: str = "") -> None:
+    """Bloquea Host/Origin externos, incluido DNS rebinding contra loopback."""
+    try:
+        host = urlparse(f"//{str(host_header or '')}").hostname or ""
+    except ValueError as exc:
+        raise ValueError("Host HTTP inválido") from exc
+    if not _is_loopback_hostname(host):
+        raise ValueError("Host HTTP no permitido")
+    origin = str(origin_header or "").strip()
+    if not origin:
+        return
+    try:
+        origin_host = urlparse(origin).hostname or ""
+    except ValueError as exc:
+        raise ValueError("Origin HTTP inválido") from exc
+    if not _is_loopback_hostname(origin_host):
+        raise ValueError("Origin HTTP no permitido")
+
+
+def _safe_object_id(value: str) -> str | None:
+    candidate = str(value or "")
+    return candidate if re.fullmatch(r"[a-f0-9]{16,64}", candidate) else None
+
+
+def _owned_upload_path(value: str, *, kind: str) -> str:
+    try:
+        parsed = urlparse(str(value or ""))
+    except ValueError:
+        return ""
+    if parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+        return ""
+    prefix = "/api/uploads/"
+    if not parsed.path.startswith(prefix):
+        return ""
+    filename = parsed.path[len(prefix):]
+    extensions = "|".join(
+        re.escape(ext.lstrip("."))
+        for ext in sorted(_UPLOAD_EXTENSIONS[kind])
+    )
+    if not re.fullmatch(rf"[a-f0-9]{{32}}\.(?:{extensions})", filename, re.IGNORECASE):
+        return ""
+    root = os.path.realpath(UPLOADS_DIR)
+    candidate = os.path.realpath(os.path.join(root, filename))
+    if os.path.dirname(candidate) != root or not os.path.isfile(candidate):
+        return ""
+    return candidate
+
+
+def _validated_optional_url(value: object, *, kind: str | None = None) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    local = _owned_upload_path(raw, kind=kind) if kind else ""
+    if local:
+        return raw, local
+    return validate_public_http_url(raw), ""
 
 
 # ── HTML ─────────────────────────────────────────────────────
@@ -459,7 +552,12 @@ function draw() {
   const imgUrl = _currentArticle?.imagen_url;
   const imgEl = document.getElementById('imgPreview');
   if (imgUrl && imgEl) {
-    imgEl.innerHTML = `<img src="${imgUrl}" onerror="this.style.display='none'" alt="">`;
+    imgEl.textContent = '';
+    const image = document.createElement('img');
+    image.src = imgUrl;
+    image.alt = '';
+    image.addEventListener('error', () => { image.style.display = 'none'; });
+    imgEl.appendChild(image);
   }
 }
 
@@ -587,9 +685,10 @@ function pollPublish(jobId) {
         } else {
           const ig = d.ig_ok ? '✓ IG' : '✗ IG';
           const fb = d.fb_ok ? '✓ FB' : '✗ FB';
-          setStatus('st_publish', `Listo: ${ig} · ${fb}`, (d.ig_ok || d.fb_ok) ? 'ok' : 'err');
-          document.getElementById('badge3').textContent = '✓';
-          document.getElementById('badge3').classList.add('done');
+          const success = d.status === 'success';
+          setStatus('st_publish', `Listo (${d.status || 'failed'}): ${ig} · ${fb}`, success ? 'ok' : 'err');
+          document.getElementById('badge3').textContent = success ? '✓' : '!';
+          document.getElementById('badge3').classList.toggle('done', success);
           loadLists();
         }
       }
@@ -627,16 +726,36 @@ async function saveToQueue() {
 }
 
 // ── Queue / Drafts list ──────────────────────────────────────
+function listText(value) {
+  return String(value ?? '');
+}
+function emptyList(el) {
+  const small = document.createElement('small');
+  small.style.color = '#4a5568';
+  small.textContent = 'Sin items';
+  el.replaceChildren(small);
+}
+function buildListItem(it, onClick=null) {
+  const item = document.createElement('div');
+  item.className = 'item';
+  if (onClick) {
+    item.style.cursor = 'pointer';
+    item.addEventListener('click', onClick);
+  }
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = listText(it.seccion || 'general');
+  const title = document.createElement('b');
+  title.textContent = listText(it.titulo);
+  const detail = document.createElement('small');
+  detail.textContent = listText(it.source_video_url || it.web_url || it.url);
+  item.append(pill, title, detail);
+  return item;
+}
 function renderList(id, items) {
   const el = document.getElementById(id);
-  if (!items?.length) { el.innerHTML = '<small style="color:#4a5568">Sin items</small>'; return; }
-  el.innerHTML = items.map(it =>
-    `<div class="item">
-      <span class="pill">${it.seccion||'general'}</span>
-      <b>${it.titulo||''}</b>
-      <small>${it.source_video_url||it.url||''}</small>
-    </div>`
-  ).join('');
+  if (!items?.length) { emptyList(el); return; }
+  el.replaceChildren(...items.map(it => buildListItem(it)));
 }
 async function loadLists() {
   const r = await fetch('/api/videos');
@@ -785,9 +904,10 @@ function pollCustomPublish(jobId) {
           const web = d.web_ok ? '✓ Web' : '✗ Web';
           const ig = d.ig_ok ? '✓ IG' : '✗ IG';
           const fb = d.fb_ok ? '✓ FB' : '✗ FB';
-          setStatus('st_custom_publish', `Listo: ${web} · ${ig} · ${fb}`, (d.web_ok) ? 'ok' : 'err');
-          document.getElementById('cbadge3').textContent = '✓';
-          document.getElementById('cbadge3').classList.add('done');
+          const success = d.status === 'success';
+          setStatus('st_custom_publish', `Listo (${d.status || 'failed'}): ${web} · ${ig} · ${fb}`, success ? 'ok' : 'err');
+          document.getElementById('cbadge3').textContent = success ? '✓' : '!';
+          document.getElementById('cbadge3').classList.toggle('done', success);
           if (d.web_ok) _customDedupKey = '';
           loadCustomLists();
         }
@@ -820,14 +940,13 @@ let _customDrafts = [];
 
 function renderCustomList(id, items, clickable) {
   const el = document.getElementById(id);
-  if (!items?.length) { el.innerHTML = '<small style="color:#4a5568">Sin items</small>'; return; }
-  el.innerHTML = items.map((it, i) =>
-    `<div class="item"${clickable ? ` style="cursor:pointer" onclick="loadCustomDraft(${i})"` : ''}>
-      <span class="pill">${it.seccion || 'general'}</span>
-      <b>${it.titulo || ''}</b>
-      <small>${it.web_url || it.url || ''}</small>
-    </div>`
-  ).join('');
+  if (!items?.length) { emptyList(el); return; }
+  el.replaceChildren(
+    ...items.map((it, i) => buildListItem(
+      it,
+      clickable ? () => loadCustomDraft(i) : null,
+    )),
+  );
 }
 
 function loadCustomDraft(index) {
@@ -943,6 +1062,7 @@ def _publish_background(job_id: str, video_path: str, item: dict) -> None:
         from utils import r2_storage
 
         if not r2_storage.is_configured():
+            job["status"] = "failed"
             job["error"] = "R2 no configurado (faltan variables R2_* en .env)"
             job["done"] = True
             return
@@ -961,36 +1081,57 @@ def _publish_background(job_id: str, video_path: str, item: dict) -> None:
         # 2. Publicar en Instagram
         log("Publicando en Instagram (puede tardar hasta 5 min)…")
         try:
-            from meta.ig_client import post_to_instagram
-            ig_ok = post_to_instagram(item)
-            job["ig_ok"] = ig_ok
-            log("✓ Instagram OK" if ig_ok else "✗ Instagram falló")
+            from meta.ig_client import post_to_instagram_detailed
+            ig_result = post_to_instagram_detailed(item)
+            job["ig_ok"] = ig_result.ok
+            job["instagram_result"] = ig_result.to_dict()
+            log("✓ Instagram OK" if ig_result.ok else "✗ Instagram falló")
         except Exception as exc:
             job["ig_ok"] = False
+            job["instagram_result"] = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+            }
             log(f"✗ Instagram: {exc}")
 
         # 3. Publicar en Facebook
         log("Publicando en Facebook…")
         try:
-            from meta.fb_client import post_to_facebook
-            fb_ok = post_to_facebook(item)
-            job["fb_ok"] = fb_ok
-            log("✓ Facebook OK" if fb_ok else "✗ Facebook falló")
+            from meta.fb_client import post_to_facebook_detailed
+            fb_result = post_to_facebook_detailed(item)
+            job["fb_ok"] = fb_result.ok
+            job["facebook_result"] = fb_result.to_dict()
+            log("✓ Facebook OK" if fb_result.ok else "✗ Facebook falló")
         except Exception as exc:
             job["fb_ok"] = False
+            job["facebook_result"] = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+            }
             log(f"✗ Facebook: {exc}")
+
+        if job["ig_ok"] and job["fb_ok"]:
+            job["status"] = "success"
+        elif job["ig_ok"] or job["fb_ok"]:
+            job["status"] = "degraded"
+            job["error_type"] = "partial_external_publication"
+        else:
+            job["status"] = "failed"
+            job["error_type"] = "all_social_channels_failed"
 
         # 4. Limpiar R2 si ninguno publicó correctamente
         if not job["ig_ok"] and not job["fb_ok"]:
-            try:
-                r2_storage.delete(r2_key)
+            cleanup = r2_storage.delete(r2_key)
+            if cleanup.ok:
                 log("Video eliminado de R2 (publicación fallida).")
-            except Exception:
-                pass
+            else:
+                job["cleanup_error"] = cleanup.error_type or "r2_delete_error"
+                log(f"No se pudo eliminar el video temporal de R2: {job['cleanup_error']}")
 
         job["done"] = True
 
     except Exception as exc:
+        job["status"] = "failed"
         job["error"] = str(exc)
         job["done"] = True
         logger.exception("Error en publish_background job %s", job_id[:8])
@@ -1013,11 +1154,14 @@ def _custom_publish_background(job_id: str, item: dict) -> None:
                 from utils.manual_post_queue import record_published
                 record_published(item, result.get("public_url", ""))
             except Exception:
+                job["status"] = "degraded"
+                job["history_error"] = "manual_history_write_failed"
                 logger.exception("No se pudo registrar la publicacion en el historial")
 
         job["done"] = True
 
     except Exception as exc:
+        job["status"] = "failed"
         job["error"] = str(exc)
         job["done"] = True
         logger.exception("Error en custom_publish_background job %s", job_id[:8])
@@ -1031,7 +1175,17 @@ class VideoReelHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data: https:; "
+            "media-src 'self' blob: https:; connect-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+            "frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -1045,6 +1199,11 @@ class VideoReelHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
 
     def do_GET(self) -> None:
+        try:
+            validate_local_request_headers(self.headers.get("Host", ""))
+        except ValueError as exc:
+            self._json(403, {"error": str(exc)})
+            return
         path = urlparse(self.path).path
 
         if path == "/":
@@ -1057,7 +1216,10 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
         # Servir video renderizado: /api/preview/{video_id}.mp4
         if path.startswith("/api/preview/") and path.endswith(".mp4"):
-            video_id = path[len("/api/preview/"):-4]
+            video_id = _safe_object_id(path[len("/api/preview/"):-4])
+            if not video_id:
+                self._json(400, {"error": "video_id inválido"})
+                return
             video_path = _renders.get(video_id)
             if not video_path:
                 # buscar en directorio de renders
@@ -1078,7 +1240,10 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
         # Estado de publicación: /api/publish-status/{job_id}
         if path.startswith("/api/publish-status/"):
-            job_id = path[len("/api/publish-status/"):]
+            job_id = _safe_object_id(path[len("/api/publish-status/"):])
+            if not job_id:
+                self._json(400, {"error": "job_id inválido"})
+                return
             job = _publish_jobs.get(job_id)
             if not job:
                 self._json(404, {"error": "job not found"})
@@ -1093,7 +1258,10 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
         # Servir preview de imagen: /api/custom/preview/{preview_id}.jpg
         if path.startswith("/api/custom/preview/") and path.endswith(".jpg"):
-            preview_id = path[len("/api/custom/preview/"):-4]
+            preview_id = _safe_object_id(path[len("/api/custom/preview/"):-4])
+            if not preview_id:
+                self._json(400, {"error": "preview_id inválido"})
+                return
             data = _custom_previews.get(preview_id)
             if not data:
                 self._json(404, {"error": "preview not found"})
@@ -1103,7 +1271,10 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
         # Estado de publicación: /api/custom/publish-status/{job_id}
         if path.startswith("/api/custom/publish-status/"):
-            job_id = path[len("/api/custom/publish-status/"):]
+            job_id = _safe_object_id(path[len("/api/custom/publish-status/"):])
+            if not job_id:
+                self._json(400, {"error": "job_id inválido"})
+                return
             job = _custom_jobs.get(job_id)
             if not job:
                 self._json(404, {"error": "job not found"})
@@ -1114,11 +1285,21 @@ class VideoReelHandler(BaseHTTPRequestHandler):
         # Servir archivo subido a mano: /api/uploads/{filename}
         if path.startswith("/api/uploads/"):
             filename = path[len("/api/uploads/"):]
-            if "/" in filename or "\\" in filename or ".." in filename:
+            allowed_extensions = "|".join(
+                re.escape(ext.lstrip("."))
+                for extensions in _UPLOAD_EXTENSIONS.values()
+                for ext in sorted(extensions)
+            )
+            if not re.fullmatch(
+                rf"[a-f0-9]{{32}}\.(?:{allowed_extensions})",
+                filename,
+                re.IGNORECASE,
+            ):
                 self._json(400, {"error": "nombre invalido"})
                 return
-            file_path = os.path.join(UPLOADS_DIR, filename)
-            if not os.path.exists(file_path):
+            root = os.path.realpath(UPLOADS_DIR)
+            file_path = os.path.realpath(os.path.join(root, filename))
+            if os.path.dirname(file_path) != root or not os.path.isfile(file_path):
                 self._json(404, {"error": "not found"})
                 return
             ext = os.path.splitext(filename)[1].lower()
@@ -1164,18 +1345,42 @@ class VideoReelHandler(BaseHTTPRequestHandler):
             max_mb = _UPLOAD_MAX_BYTES[kind] // (1024 * 1024)
             self._json(400, {"error": f"archivo demasiado grande (max {max_mb}MB)"})
             return
+        try:
+            validate_upload_content(content, filename, kind)
+        except InvalidUploadError as exc:
+            self._json(400, {"error": str(exc)})
+            return
 
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         stored_name = f"{uuid.uuid4().hex}{ext}"
         dest = os.path.join(UPLOADS_DIR, stored_name)
-        with open(dest, "wb") as f:
-            f.write(content)
+        tmp_dest = f"{dest}.tmp"
+        try:
+            with open(tmp_dest, "xb") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_dest, dest)
+        finally:
+            try:
+                os.unlink(tmp_dest)
+            except FileNotFoundError:
+                pass
 
-        host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
-        url = f"http://{host}/api/uploads/{stored_name}"
+        server_host, server_port = self.server.server_address[:2]
+        public_host = f"[{server_host}]" if ":" in server_host else server_host
+        url = f"http://{public_host}:{server_port}/api/uploads/{stored_name}"
         self._json(200, {"ok": True, "url": url, "filename": filename})
 
     def do_POST(self) -> None:
+        try:
+            validate_local_request_headers(
+                self.headers.get("Host", ""),
+                self.headers.get("Origin", ""),
+            )
+        except ValueError as exc:
+            self._json(403, {"error": str(exc)})
+            return
         path = urlparse(self.path).path
 
         if path == "/api/upload":
@@ -1206,6 +1411,11 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 if not source_url:
                     self._json(400, {"error": "source_url requerida"})
                     return
+                try:
+                    source_url = validate_public_http_url(source_url)
+                except UnsafeURLError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
                 from openIA.reel_generator import analyze_url_for_reel
                 data = analyze_url_for_reel(source_url)
                 self._json(200, {"ok": True, **data})
@@ -1217,6 +1427,25 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 if not titulo:
                     self._json(400, {"error": "titulo_reel requerido"})
                     return
+                try:
+                    payload["source_url"], _source_local = _validated_optional_url(
+                        payload.get("source_url")
+                    )
+                    payload["video_url"], local_video = _validated_optional_url(
+                        payload.get("video_url"),
+                        kind="video",
+                    )
+                    payload["imagen_url"], local_image = _validated_optional_url(
+                        payload.get("imagen_url"),
+                        kind="image",
+                    )
+                except UnsafeURLError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                if local_video:
+                    payload["local_video_path"] = local_video
+                if local_image:
+                    payload["local_image_path"] = local_image
                 from utils.video_renderer import render_video
                 video_path, video_id, actual_duration = render_video(payload)
                 _renders[video_id] = video_path
@@ -1232,9 +1461,9 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
             # ── Publicar reel ─────────────────────────────────
             if path == "/api/publish-reel":
-                video_id = str(payload.get("video_id") or "").strip()
+                video_id = _safe_object_id(str(payload.get("video_id") or "").strip())
                 if not video_id:
-                    self._json(400, {"error": "video_id requerido"})
+                    self._json(400, {"error": "video_id inválido"})
                     return
                 video_path = _renders.get(video_id)
                 if not video_path:
@@ -1248,6 +1477,15 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
                 import uuid as _uuid
                 job_id = _uuid.uuid4().hex
+                try:
+                    source_url, _ = _validated_optional_url(payload.get("source_url"))
+                    image_url, local_image = _validated_optional_url(
+                        payload.get("imagen_url"),
+                        kind="image",
+                    )
+                except UnsafeURLError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
                 item = {
                     "media_type": "video",
                     "titulo": payload.get("titulo_reel", ""),
@@ -1257,14 +1495,16 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                     "caption": payload.get("caption", ""),
                     "seccion": payload.get("seccion", "sociedad"),
                     "share_to_feed": True,
-                    "source_video_url": payload.get("source_url", ""),
-                    "url": payload.get("source_url", ""),
-                    "canonical_url": payload.get("source_url", ""),
-                    "imagen_url": payload.get("imagen_url", ""),
+                    "source_video_url": source_url,
+                    "url": source_url,
+                    "canonical_url": source_url,
+                    "imagen_url": image_url,
+                    "imagen": local_image,
                     "dedup_key": f"video:{job_id[:16]}",
                 }
 
                 _publish_jobs[job_id] = {
+                    "status": "processing",
                     "done": False,
                     "ig_ok": False,
                     "fb_ok": False,
@@ -1285,6 +1525,11 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 source_url = str(payload.get("source_url") or "").strip()
                 if not source_url:
                     self._json(400, {"error": "source_url requerida"})
+                    return
+                try:
+                    source_url = validate_public_http_url(source_url)
+                except UnsafeURLError as exc:
+                    self._json(400, {"error": str(exc)})
                     return
                 from pipeline.custom_post import fetch_image_from_url
                 data = fetch_image_from_url(source_url)
@@ -1325,6 +1570,7 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 import uuid as _uuid
                 job_id = _uuid.uuid4().hex
                 _custom_jobs[job_id] = {
+                    "status": "processing",
                     "done": False,
                     "web_ok": False,
                     "ig_ok": False,
@@ -1361,8 +1607,10 @@ def main() -> None:
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
 
-    server = ThreadingHTTPServer((args.host, args.port), VideoReelHandler)
-    url = f"http://{args.host}:{args.port}/"
+    host = validate_bind_host(args.host)
+    server = ThreadingHTTPServer((host, args.port), VideoReelHandler)
+    url_host = f"[{host}]" if ":" in host else host
+    url = f"http://{url_host}:{args.port}/"
     print(f"\n  Video Reel Manager · La Voz Riojana")
     print(f"  URL: {url}")
     print(f"  Ctrl+C para detener\n")

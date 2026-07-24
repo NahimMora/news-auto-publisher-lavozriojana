@@ -1,36 +1,47 @@
-"""
-Dispatcher de publicación web.
-WEB_PUBLISH_TARGET=node_webapp → publica en la WebApp Node.js de Hostinger
-WEB_PUBLISH_TARGET=off         → omite publicación web
-"""
+"""Dispatcher seguro de publicación web."""
+from __future__ import annotations
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from utils.logging_setup import setup_logger
+from utils.stage_result import StageResult, StageStatus, emit_stage_result
 
 logger = setup_logger("publish_web", "publish_web.log")
 
-TARGET = os.getenv("WEB_PUBLISH_TARGET", "off")
 
+def main() -> StageResult:
+    target = str(os.getenv("WEB_PUBLISH_TARGET", "off")).strip().lower()
+    logger.info("Publicación web: target=%s", target)
 
-def main():
-    logger.info(f"Publicación web → target: {TARGET}")
-
-    if TARGET == "node_webapp":
+    if target == "node_webapp":
         from pipeline.node_webapp.publisher import publish_pending
-        publish_pending()
 
-    elif TARGET == "off":
-        logger.info("Publicación web deshabilitada (WEB_PUBLISH_TARGET=off)")
+        return publish_pending()
 
-    else:
-        logger.warning(f"WEB_PUBLISH_TARGET desconocido: {TARGET}. Opciones: node_webapp, off")
+    if target == "off":
+        logger.info("Publicación web deshabilitada")
+        return StageResult(
+            "web",
+            StageStatus.NO_WORK,
+            details={"disabled": True, "target": target},
+        )
+
+    logger.error("WEB_PUBLISH_TARGET desconocido: %s", target)
+    return StageResult(
+        "web",
+        StageStatus.FAILED,
+        failed=1,
+        error_type="invalid_configuration",
+        details={"target": target},
+    )
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(emit_stage_result(main()))

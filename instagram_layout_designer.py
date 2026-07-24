@@ -560,10 +560,18 @@ function draw() {{
   }} else {{ dateEl.style.display='none'; }}
 
   document.getElementById('nav-c').textContent = `${{idx+1}} / ${{filtered.length}}`;
-  document.getElementById('art-info').innerHTML =
-    `<h2>${{art.titulo}}</h2>
-     <p>${{art.parrafo.slice(0,160)}}...</p>
-     <a href="${{art.url}}" target="_blank">${{art.url}}</a>`;
+  const info = document.getElementById('art-info');
+  const infoTitle = document.createElement('h2');
+  infoTitle.textContent = String(art.titulo || '');
+  const infoBody = document.createElement('p');
+  infoBody.textContent = String(art.parrafo || '').slice(0,160) + '...';
+  const infoLink = document.createElement('a');
+  const safeUrl = /^https?:\/\//i.test(String(art.url || '')) ? String(art.url) : '';
+  infoLink.href = safeUrl || '#';
+  infoLink.target = '_blank';
+  infoLink.rel = 'noopener noreferrer';
+  infoLink.textContent = safeUrl;
+  info.replaceChildren(infoTitle, infoBody, infoLink);
 }}
 
 function next(){{idx=(idx+1)%filtered.length;draw();}}

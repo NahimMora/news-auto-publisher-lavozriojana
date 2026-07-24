@@ -6,14 +6,14 @@ automáticamente por el PAGE token via /me/accounts y lo cachea en disco.
 import os
 import time
 import requests
-from utils.file_manager import load_json, save_json
+from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
+from utils.paths import data_dir
 
-logger = setup_logger("fb_token_manager")
+logger = setup_logger("fb_token_manager", "facebook_token_manager.log")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-TOKEN_CACHE = os.path.join(DATA_DIR, "fb_token_cache.json")
-GRAPH_API = "https://graph.facebook.com/v19.0"
+TOKEN_CACHE = str(data_dir() / "fb_token_cache.json")
+GRAPH_API = os.getenv("META_GRAPH_API", "https://graph.facebook.com/v19.0").rstrip("/")
 
 APP_ID     = os.getenv("FB_APP_ID", "")
 APP_SECRET = os.getenv("FB_APP_SECRET", "")
@@ -63,11 +63,18 @@ def get_page_token() -> str:
                     raise ValueError(f"Página {PAGE_ID} encontrada pero sin access_token")
                 logger.info(f"Page token obtenido para: {page.get('name')} ({PAGE_ID})")
                 # Cachear
-                cache["page_token"] = page_token
-                cache["page_id"]    = PAGE_ID
-                cache["page_name"]  = page.get("name", "")
-                cache["updated_at"] = int(time.time())
-                save_json(TOKEN_CACHE, cache)
+                def update_cache(current):
+                    current.update(
+                        {
+                            "page_token": page_token,
+                            "page_id": PAGE_ID,
+                            "page_name": page.get("name", ""),
+                            "updated_at": int(time.time()),
+                        }
+                    )
+                    return current
+
+                update_json(TOKEN_CACHE, update_cache, {}, expected_type=dict)
                 return page_token
 
         raise ValueError(
@@ -78,9 +85,18 @@ def get_page_token() -> str:
     except ValueError:
         raise
     except Exception as e:
-        # Si /me/accounts falla, usar el token del .env directamente como fallback
-        logger.warning(f"No se pudo obtener page token ({e}), usando token del .env")
-        return USER_TOKEN
+        if str(os.getenv("FB_ALLOW_DIRECT_TOKEN_FALLBACK", "false")).lower() in {
+            "1", "true", "yes", "si", "sí",
+        }:
+            logger.warning(
+                "No se pudo obtener page token (%s); fallback directo habilitado explícitamente",
+                type(e).__name__,
+            )
+            return USER_TOKEN
+        raise ValueError(
+            f"No se pudo obtener page token: {type(e).__name__}. "
+            "El fallback directo está deshabilitado."
+        ) from e
 
 
 def invalidate_cache():

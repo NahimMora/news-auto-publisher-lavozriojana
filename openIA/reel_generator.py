@@ -9,6 +9,9 @@ import os
 
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+
+from utils.safe_http import UnsafeURLError, safe_get, validate_public_http_url
 
 _SECTIONS_REEL = [
     "politica", "policiales", "interior", "sociedad",
@@ -32,7 +35,13 @@ _SCRAPE_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LVRBot/1.0)"}
 
 def scrape_url(url: str) -> dict:
     """Extrae título, imagen og y párrafos de cualquier URL."""
-    r = requests.get(url, headers=_SCRAPE_HEADERS, timeout=20)
+    safe_url = validate_public_http_url(url)
+    r = safe_get(
+        safe_url,
+        requester=requests.get,
+        headers=_SCRAPE_HEADERS,
+        timeout=20,
+    )
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -48,7 +57,11 @@ def scrape_url(url: str) -> dict:
     imagen_url = ""
     og_img = soup.find("meta", property="og:image")
     if og_img and og_img.get("content"):
-        imagen_url = og_img["content"].strip()
+        candidate = urljoin(safe_url, og_img["content"].strip())
+        try:
+            imagen_url = validate_public_http_url(candidate)
+        except UnsafeURLError:
+            imagen_url = ""
 
     parrafos: list[str] = []
     content = (
@@ -63,7 +76,7 @@ def scrape_url(url: str) -> dict:
             if len(text) >= 40:
                 parrafos.append(text)
 
-    return {"titulo": title, "imagen_url": imagen_url, "parrafos": parrafos, "url": url}
+    return {"titulo": title, "imagen_url": imagen_url, "parrafos": parrafos, "url": safe_url}
 
 
 def generate_reel_meta(article: dict) -> dict:

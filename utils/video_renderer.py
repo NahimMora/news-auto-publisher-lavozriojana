@@ -25,11 +25,13 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from utils.logging_setup import setup_logger
+from utils.paths import output_dir
+from utils.safe_http import safe_get, validate_public_http_url
 
-logger = setup_logger("video_renderer")
+logger = setup_logger("video_renderer", "video_renderer.log")
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-RENDERS_DIR = os.path.join(BASE_DIR, "output", "renders")
+RENDERS_DIR = str(output_dir() / "renders")
 LOGO_PATH    = os.path.join(BASE_DIR, "data", "media", "logo.png")
 FB_ICON_PATH = os.path.join(BASE_DIR, "data", "media", "fb_icon_base.png")
 IG_ICON_PATH = os.path.join(BASE_DIR, "data", "media", "ig_icon_base.png")
@@ -111,7 +113,12 @@ def _download_image(url: str) -> Image.Image | None:
     if not url:
         return None
     try:
-        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        r = safe_get(
+            url,
+            requester=requests.get,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
         r.raise_for_status()
         return Image.open(io.BytesIO(r.content)).convert("RGBA")
     except Exception as e:
@@ -208,10 +215,21 @@ def _is_ytdlp_url(url: str) -> bool:
 def _download_direct_video(url: str, dest: str) -> bool:
     """Descarga un MP4/MOV directo con requests."""
     try:
-        r = requests.get(url, timeout=90, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+        r = safe_get(
+            url,
+            requester=requests.get,
+            timeout=90,
+            stream=True,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
         r.raise_for_status()
+        max_bytes = int(os.getenv("VIDEO_DOWNLOAD_MAX_BYTES", str(250 * 1024 * 1024)))
+        total = 0
         with open(dest, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("El video supera VIDEO_DOWNLOAD_MAX_BYTES")
                 f.write(chunk)
         return os.path.getsize(dest) > 0
     except Exception as e:
@@ -225,9 +243,12 @@ def _download_ytdlp(url: str, dest: str) -> bool:
         logger.warning("yt-dlp no disponible — instalalo con: pip install yt-dlp")
         return False
     try:
+        validate_public_http_url(url)
+        max_size = str(os.getenv("VIDEO_DOWNLOAD_MAX_BYTES", str(250 * 1024 * 1024)))
         result = subprocess.run(
             ["yt-dlp", "-f", "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
-             "-o", dest, "--no-playlist", "--no-warnings", url],
+             "-o", dest, "--no-playlist", "--no-warnings", "--ignore-config",
+             "--max-filesize", max_size, url],
             capture_output=True, text=True, timeout=180,
         )
         if result.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 0:
@@ -246,6 +267,17 @@ def get_source_video(item: dict) -> str | None:
     Retorna ruta a archivo temporal o None.
     """
     os.makedirs(RENDERS_DIR, exist_ok=True)
+    local_video = str(item.get("local_video_path") or "").strip()
+    if local_video:
+        allowed_root = os.path.realpath(str(output_dir() / "uploads"))
+        candidate = os.path.realpath(local_video)
+        if (
+            os.path.dirname(candidate) == allowed_root
+            and os.path.isfile(candidate)
+            and candidate.lower().endswith(_VIDEO_EXTS)
+        ):
+            return candidate
+        logger.warning("Ruta de video local rechazada por estar fuera de uploads")
     candidates = [
         str(item.get("video_url") or "").strip(),
         str(item.get("source_video_url") or "").strip(),
@@ -292,7 +324,7 @@ def _icon_colored(path: str, size: int, color: tuple) -> Image.Image | None:
     try:
         base = Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)
         r, g, b, a = base.split()
-        min_alpha = min(a.getdata())
+        min_alpha = a.getextrema()[0]
         if min_alpha < 10:
             mask = a                           # fondo transparente: usar alpha original
         else:
@@ -597,7 +629,11 @@ def render_video(item: dict) -> tuple[str, str, int]:
         # Intentar obtener video fuente
         source_video = get_source_video(item)
         if source_video:
-            temp_files.append(source_video)
+            if (
+                os.path.dirname(os.path.realpath(source_video)) == os.path.realpath(RENDERS_DIR)
+                and os.path.basename(source_video).startswith("_src_")
+            ):
+                temp_files.append(source_video)
             # Usar duración real del video descargado
             real_dur = get_video_duration(source_video)
             duration = max(3, min(90, int(real_dur))) if real_dur else fallback_duration
@@ -610,7 +646,19 @@ def render_video(item: dict) -> tuple[str, str, int]:
             duration = fallback_duration
             # Fallback: imagen del artículo con Ken Burns
             imagen_url = str(item.get("imagen_url") or "")
-            src_img = _download_image(imagen_url)
+            local_image = str(item.get("local_image_path") or "").strip()
+            if local_image:
+                allowed_root = os.path.realpath(str(output_dir() / "uploads"))
+                candidate = os.path.realpath(local_image)
+                if os.path.dirname(candidate) == allowed_root and os.path.isfile(candidate):
+                    try:
+                        src_img = Image.open(candidate).convert("RGBA")
+                    except OSError:
+                        src_img = None
+                else:
+                    src_img = None
+            else:
+                src_img = _download_image(imagen_url)
             if src_img:
                 img_path = os.path.join(RENDERS_DIR, f"_img_{video_id}.jpg")
                 temp_files.append(img_path)

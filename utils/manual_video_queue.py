@@ -6,15 +6,16 @@ from copy import deepcopy
 from urllib.parse import urlparse
 
 from utils.editorial_priority import normalize_category
-from utils.file_manager import load_json, save_json
+from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
+from utils.paths import data_dir
+from utils.safe_http import UnsafeURLError, validate_public_http_url
 from utils.url_normalization import canonical_url, url_hash
 
-logger = setup_logger("manual_video_queue")
+logger = setup_logger("manual_video_queue", "manual_video_queue.log")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-SOCIAL_QUEUE_PATH = os.path.join(DATA_DIR, "noticias_sociales_pendientes.json")
-DRAFTS_PATH = os.path.join(DATA_DIR, "videos_manuales_borradores.json")
+SOCIAL_QUEUE_PATH = str(data_dir() / "noticias_sociales_pendientes.json")
+DRAFTS_PATH = str(data_dir() / "videos_manuales_borradores.json")
 
 DIRECT_VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v")
 
@@ -135,12 +136,17 @@ def _bool_value(value: object, default: bool = True) -> bool:
 
 def build_video_item(payload: dict, *, require_direct_video: bool = True) -> dict:
     source_url = _clean_text(payload.get("source_url") or payload.get("url"))
-    if not is_http_url(source_url):
-        raise ValueError("source_url debe ser una URL http/https valida")
+    try:
+        source_url = validate_public_http_url(source_url)
+    except UnsafeURLError as exc:
+        raise ValueError(f"source_url insegura o inválida: {exc}") from exc
 
     video_url = _video_url(payload, source_url)
-    if video_url and not is_http_url(video_url):
-        raise ValueError("video_url debe ser una URL http/https valida")
+    if video_url:
+        try:
+            video_url = validate_public_http_url(video_url)
+        except UnsafeURLError as exc:
+            raise ValueError(f"video_url insegura o inválida: {exc}") from exc
     if require_direct_video and not video_url:
         raise ValueError("Para publicar ahora hace falta una URL directa a MP4/MOV publica")
 
@@ -192,38 +198,49 @@ def build_video_item(payload: dict, *, require_direct_video: bool = True) -> dic
 
 def enqueue_video(payload: dict) -> tuple[dict, bool]:
     item = build_video_item(payload, require_direct_video=True)
-    queue = load_json(SOCIAL_QUEUE_PATH, [])
-    if not isinstance(queue, list):
-        queue = []
+    added = {"value": False}
 
-    if any(existing.get("dedup_key") == item["dedup_key"] for existing in queue if isinstance(existing, dict)):
-        logger.info("Video manual ya en cola: %s", item.get("titulo", "")[:70])
-        return item, False
+    def append(queue):
+        if any(
+            existing.get("dedup_key") == item["dedup_key"]
+            for existing in queue
+            if isinstance(existing, dict)
+        ):
+            return queue
+        queue.append(item)
+        added["value"] = True
+        return queue
 
-    queue.append(item)
-    save_json(SOCIAL_QUEUE_PATH, queue)
-    logger.info("Video manual encolado: %s", item.get("titulo", "")[:70])
-    return item, True
+    update_json(SOCIAL_QUEUE_PATH, append, [], expected_type=list)
+    logger.info(
+        "Video manual %s: %s",
+        "encolado" if added["value"] else "ya en cola",
+        item.get("titulo", "")[:70],
+    )
+    return item, added["value"]
 
 
 def save_video_draft(payload: dict) -> tuple[dict, bool]:
     item = build_video_item(payload, require_direct_video=False)
     item["manual_status"] = "draft"
-    drafts = load_json(DRAFTS_PATH, [])
-    if not isinstance(drafts, list):
-        drafts = []
+    added = {"value": True}
 
-    for index, existing in enumerate(drafts):
-        if isinstance(existing, dict) and existing.get("dedup_key") == item["dedup_key"]:
-            drafts[index] = item
-            save_json(DRAFTS_PATH, drafts)
-            logger.info("Borrador de video actualizado: %s", item.get("titulo", "")[:70])
-            return item, False
+    def upsert(drafts):
+        for index, existing in enumerate(drafts):
+            if isinstance(existing, dict) and existing.get("dedup_key") == item["dedup_key"]:
+                drafts[index] = item
+                added["value"] = False
+                return drafts
+        drafts.append(item)
+        return drafts
 
-    drafts.append(item)
-    save_json(DRAFTS_PATH, drafts)
-    logger.info("Borrador de video guardado: %s", item.get("titulo", "")[:70])
-    return item, True
+    update_json(DRAFTS_PATH, upsert, [], expected_type=list)
+    logger.info(
+        "Borrador de video %s: %s",
+        "guardado" if added["value"] else "actualizado",
+        item.get("titulo", "")[:70],
+    )
+    return item, added["value"]
 
 
 def load_video_state() -> dict:
