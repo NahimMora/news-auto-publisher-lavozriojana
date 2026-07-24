@@ -1,55 +1,60 @@
-# BACKLOG.md
+# Backlog
 
-> Backlog inicial derivado de gaps encontrados al documentar el sistema
-> (2026-07-20). No tiene aún priorización formal por sprint/fecha — usar como punto de
-> partida y reordenar según necesidad real del operador.
+Última actualización: 2026-07-23. Los ítems resueltos se conservan para mantener
+trazabilidad.
 
-## Alta prioridad (operación)
+## Cerrado por la línea de base de confiabilidad
 
-- [ ] Confirmar y restaurar la ejecución continua del supervisor (`python cli.py
-      status`) — el log no muestra actividad desde 2026-07-13.
-- [ ] Diagnosticar y resolver el backlog creciente de publicaciones en Facebook
-      (ver `KNOWN_ISSUES.md`).
-- [ ] Enrutar los loggers de `meta/fb_client.py` y `meta/facebook_token_manager.py` a
-      archivo (hoy solo consola, se pierden con `stdout=DEVNULL`).
-- [ ] Agregar `psutil` a `requirements.txt` (se usa en `cli.py` pero no está declarado).
+- [x] Contrato estructurado de etapas y códigos de salida.
+- [x] Eliminar falso `OK` de `0/N` y del parsing de palabras del CLI.
+- [x] Heartbeat persistente, detección stale y tamaños de cola.
+- [x] Logs rotativos para todos los clientes externos con redacción de secretos.
+- [x] `psutil` declarado en `requirements.txt`.
+- [x] JSON atómico, locks interproceso, cuarentena, backup y restore.
+- [x] Reescritura recuperable después de interrupción.
+- [x] Estados Pending/Processing/Completed/Failed/Expired/Dead-letter.
+- [x] Trazabilidad de expiraciones, descartes y fallbacks.
+- [x] Configuración tipada y comando `doctor`.
+- [x] Contratos mockeados de CMS, Facebook, Instagram y R2.
+- [x] Fixtures/tests para diez secciones de scraping.
+- [x] E2E local de 17 escenarios sin producción.
+- [x] Seguridad de UI manual, uploads, paths y SSRF.
+- [x] README y runbook operativo.
 
-## Media prioridad (observabilidad y calidad)
+## Alta prioridad antes de habilitar producción
 
-- [ ] Definir y calcular métricas agregadas de publicaciones/día y tasa de éxito por
-      plataforma (ver `METRICS.md`) en vez de leerlas del log crudo.
-- [ ] Integrar Meta Insights API para medir alcance/impresiones reales por post, no solo
-      confirmación de publicación.
-- [ ] Automatizar backups periódicos de `data/` (hoy son manuales/ad hoc, solo 3
-      snapshots existentes).
-- [ ] Ampliar cobertura de tests: hoy solo `pipeline/node_webapp` y clientes de
-      Meta/social_queue tienen tests; scrapers, generación de imagen/video y el
-      supervisor/CLI no tienen tests automatizados.
+- [ ] Ejecutar smoke tests con cuentas y endpoints **de prueba** para CMS, Meta, R2 y
+  OpenAI. Estado: bloqueado por falta de infraestructura/credenciales no productivas.
+- [ ] Conciliar el backlog histórico de Facebook con la cuenta real. El código ahora
+  registra causa y evidencia, pero la causa externa original no puede inferirse de los
+  logs perdidos.
+- [ ] Verificar el primer despliegue operativo: backup, `doctor`, heartbeat y un ciclo
+  observado sin forzar publicaciones.
 
-## Media prioridad (producto)
+## Media prioridad de mantenimiento
 
-- [ ] Evaluar agregar verificación/aprobación humana opcional antes de publicar (hoy es
-      100% automático una vez que la nota pasa el filtro editorial de OpenAI).
-- [ ] Conectar analítica del sitio (`lavozriojana.com`) para medir visitas/CTR
-      atribuibles a las notas publicadas por este pipeline.
-- [ ] Evaluar extender fuentes de scraping más allá de `tiempopopular.com.ar` y
-      `nuevarioja.com.ar`.
+- [x] Reemplazar `Image.Image.getdata` antes de Pillow 14.
+- [ ] Agregar CI que cree un venv limpio y ejecute suite, compileall, dry-run y
+  `git diff --check`.
+- [ ] Probar explícitamente locks y reemplazo atómico sobre el filesystem real de
+  producción si no es disco local.
+- [ ] Definir retención/archivo externo de `queue_events.json` y logs según capacidad
+  real del host.
+- [ ] Agregar un comando de conciliación asistida para publicaciones sociales
+  ambiguas; hasta entonces se resuelven con el runbook.
+- [ ] Mantener fixtures cuando cambie el HTML vivo de terceros.
 
-## Baja prioridad / exploratorio
+## Riesgos aceptados o bloqueados
 
-- [ ] Evaluar reemplazo del almacenamiento en JSON planos por una base de datos liviana
-      (ej. SQLite) si el volumen de notas/colas empieza a generar problemas de
-      integridad o performance.
-- [ ] Investigar si `IG_CHROME_PROFILE_DIR` (hook de Selenium sin implementar,
-      actualmente `PENDIENTE` en `.env`) sigue siendo necesario o se puede eliminar.
-- [ ] Documentar formalmente el contrato de la API privada que expone el CMS externo
-      (`WEBAPP_BASE_URL`), para que cambios ahí no rompan `pipeline/node_webapp/publisher.py`
-      sin aviso.
+- [ ] La aprobación editorial humana sigue siendo opcional. No existe una decisión
+  vigente que autorice volverla obligatoria.
+- [ ] No hay entorno de staging externo documentado.
+- [ ] Visitas, CTR, alcance y monetización permanecen fuera de alcance.
+- [ ] No migrar JSON a base de datos mientras las pruebas de integridad y volumen no
+  demuestren que la solución actual es insuficiente.
 
-## Deuda técnica
+## No incluido en esta etapa
 
-- [ ] `.git` de este proyecto estaba roto/mezclado con otro repo (Desktop-level) al
-      momento de crear esta documentación — verificar que el nuevo repo dedicado quede
-      correctamente aislado y no vuelva a mezclarse con otros proyectos del mismo disco.
-- [ ] No hay README.md en el repo — considerar uno breve que apunte a `/docs` y
-      `AGENTS.md` como punto de entrada.
+Nuevas fuentes, nuevas redes, dashboard visual, analítica de audiencia, monetización,
+multi-tenancy, cambio de CMS, microservicios, automatización masiva de Reels y
+funcionalidades para otros medios.

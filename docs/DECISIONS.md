@@ -67,3 +67,94 @@ repos.
   (`IG_ALLOWED_CATEGORIES`), a diferencia de Facebook que aparentemente publica más
   categorías: sugiere una decisión editorial de mantener el feed de Instagram más
   curado. Confirmar el criterio real.
+
+---
+
+### 2026-07-23 — Mantener JSON y endurecer su integridad
+
+**Decisión**: mantener los contratos JSON existentes e incorporar locks interproceso,
+escritura atómica, cuarentena, backups y operaciones read-modify-write protegidas.
+
+**Motivo**: las pruebas reprodujeron pérdida concurrente y corrupción silenciosa, pero
+también demostraron que el almacenamiento por archivos puede cumplir la línea de base
+sin una migración de infraestructura.
+
+**Alternativas rechazadas**: migrar inmediatamente a SQLite o servicios de colas. No
+había evidencia de volumen o rendimiento que justificara el cambio y habría aumentado
+el riesgo de compatibilidad con datos productivos.
+
+**Consecuencias**: se conserva el deploy simple y los nombres existentes. Todo
+consumidor debe usar `file_manager`; el filesystem debe soportar locks y reemplazo
+atómico.
+
+**Revisar nuevamente cuando**: las pruebas de volumen, latencia o filesystem muestren
+que estas garantías no alcanzan.
+
+### 2026-07-23 — Resultado funcional estructurado
+
+**Decisión**: todas las etapas supervisadas usan `success`, `no_work`, `degraded` o
+`failed`, con contadores y códigos de salida 0/0/2/1.
+
+**Motivo**: un exit 0 del proceso y textos como “publicadas” producían falsos
+positivos aun para 0/N o credenciales inválidas.
+
+**Alternativas rechazadas**: seguir parseando stdout o convertir todos los fallos en
+warnings.
+
+**Consecuencias**: los scripts hijos deben emitir `LVR_STAGE_RESULT`; salir 0 sin
+contrato se considera fallo de integración.
+
+**Revisar nuevamente cuando**: se incorpore un protocolo de observabilidad externo que
+preserve la misma semántica.
+
+### 2026-07-23 — Cola durable para reescritura y cuarentena social ambigua
+
+**Decisión**: la reescritura transfiere staging a una cola durable antes de vaciarlo.
+En redes, un claim interrumpido después de una llamada externa pasa a dead-letter para
+conciliación y no se reintenta automáticamente.
+
+**Motivo**: la primera medida evita pérdida; la segunda evita duplicar una publicación
+que pudo haber sido aceptada sin que el cliente recibiera el ID.
+
+**Alternativas rechazadas**: vaciar staging antes de procesar; reintentar a ciegas toda
+entrada `processing`.
+
+**Consecuencias**: existe recuperación automática cuando el outcome es localmente
+conocido y recuperación manual cuando es externamente ambiguo.
+
+**Revisar nuevamente cuando**: CMS/Meta ofrezcan una clave de idempotencia o consulta
+confiable por clave propia.
+
+### 2026-07-23 — Política explícita de fallbacks
+
+**Decisión**: configurar `block`, `allow_non_sensitive` o `allow_all`; por defecto se
+permite fallback sólo en contenido no sensible. Policiales, judiciales, menores y
+breaking requieren resultado enriquecido sin fallback.
+
+**Motivo**: conservar continuidad sin publicar silenciosamente contenido degradado de
+alto riesgo.
+
+**Alternativas rechazadas**: fallback implícito siempre permitido; aprobación humana
+obligatoria, porque no existe una decisión editorial que la autorice.
+
+**Consecuencias**: todo fallback se marca y registra; un fallback bloqueado termina en
+dead-letter.
+
+**Revisar nuevamente cuando**: el equipo editorial cambie explícitamente la política.
+
+### 2026-07-23 — Dry-run exclusivamente local y UI manual sólo loopback
+
+**Decisión**: `cli.py run-once --dry-run` ejecuta el E2E simulado y nunca el pipeline
+real. La UI manual rechaza binds externos y entradas de URL/path no seguras.
+
+**Motivo**: un dry-run no debe devolver éxito ficticio ni tocar cuentas, colas o
+archivos reales.
+
+**Alternativas rechazadas**: simular éxito dentro de los publicadores reales; exponer
+la UI sin autenticación.
+
+**Consecuencias**: para una prueba externa se necesita un entorno explícito y
+credenciales de prueba. El acceso remoto a la UI no está soportado.
+
+**Revisar nuevamente cuando**: se diseñe autenticación y despliegue seguro de esa
+interfaz.

@@ -1,132 +1,114 @@
 # AGENTS.md
 
-Instrucciones permanentes para Codex u otro agente de programación que trabaje en este
-repositorio (`AutoPublicador_LaVozRiojana`). Ver también `/docs` para contexto de
-producto, arquitectura y estado actual.
+Instrucciones permanentes para agentes de programación en
+`AutoPublicador_LaVozRiojana`.
 
-## Qué es este proyecto
+## Contexto obligatorio
 
-Pipeline Python 24/7 que scrapea noticias de La Rioja, las reescribe/clasifica con
-OpenAI, genera imágenes/videos, y las publica en el sitio (`lavozriojana.com`),
-Facebook e Instagram. Ver `docs/PRODUCT.md` y `docs/ARCHITECTURE.md` para el detalle
-completo antes de tocar código de negocio.
+Antes de modificar negocio, leer `docs/PRODUCT.md`, `docs/CURRENT_STATE.md`,
+`docs/ARCHITECTURE.md`, `docs/KNOWN_ISSUES.md`, `docs/DECISIONS.md` y este archivo.
+El sistema scrapea noticias, las reescribe/clasifica y publica en CMS, Facebook e
+Instagram. Producción usa cuentas externas reales: no ejecutar publicadores sin
+autorización explícita.
 
-## Comandos de instalación
+## Instalación
 
-```bash
+```powershell
 python -m venv venv
-venv\Scripts\activate          # Windows (este proyecto es Windows-first)
+venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-pip install psutil              # usado en cli.py pero falta en requirements.txt (deuda conocida)
-cp .env.example .env            # completar credenciales reales, NUNCA commitear .env
-python init_data.py             # crea los JSON de estado/colas vacíos en data/
+Copy-Item .env.example .env
+python init_data.py
+python cli.py doctor --scope core
 ```
 
-## Comandos de prueba
+Python 3.10+ es requerido. `ffmpeg` y `ffprobe` son dependencias del sistema para
+video. `psutil` ya está declarado en requirements.
 
-```bash
-python -m unittest discover tests          # suite automatizada (cobertura limitada, ver docs/KNOWN_ISSUES.md)
-python -m unittest tests.test_node_webapp_publisher   # test específico
-python test_scraper.py                      # chequeo manual de salud de scrapers (genera output/scraper_report.html)
-python preview_pipeline.py --n 5            # QA visual de imágenes generadas antes de ir a producción
-python cli.py run-once                      # corre un ciclo completo sin loop, útil para probar cambios end-to-end
+## Tests y QA
+
+```powershell
+python -m unittest discover tests -v
+python cli.py run-once --dry-run
+python cli.py doctor --scope all --json
+python -m compileall -q .
 ```
 
-No hay linter/formatter configurado en el repo (no `pyproject.toml`/`.flake8`/`ruff` a
-la fecha). Si se agrega uno, actualizar esta sección.
+La suite usa mocks/fixtures y debe ejecutarse con directorios temporales cuando una
+prueba manual pueda tocar estado:
+
+```powershell
+$env:LVR_DATA_DIR="$env:TEMP\lvr-qa\data"
+$env:LVR_LOGS_DIR="$env:TEMP\lvr-qa\logs"
+$env:LVR_OUTPUT_DIR="$env:TEMP\lvr-qa\output"
+$env:LVR_FOTOS_DIR="$env:TEMP\lvr-qa\fotos"
+```
+
+Para scrapers e imágenes existen además `test_scraper.py` y
+`preview_pipeline.py --n 5`. Acceden a terceros/datos y generan artefactos: usarlos
+sólo como QA read-only controlada, nunca como sustituto de fixtures. No ejecutar
+`cli.py run-once` sin `--dry-run` para validar un cambio: puede publicar si hay targets
+habilitados.
 
 ## Convenciones
 
-- **Idioma**: docstrings, comentarios, logs y mensajes al usuario van en español
-  (Argentina). Mantener esa convención en código nuevo.
-- **Entry points**: cada script de nivel raíz (`main_*.py`, `run_*.py`, `cli.py`) hace
-  `load_dotenv()` y `sys.path.insert(0, ...)` al principio — replicar ese patrón en
-  scripts nuevos que se ejecuten standalone.
-- **Logging**: usar `utils/logging_setup.py::setup_logger(name, "archivo.log")`
-  **siempre con el segundo argumento** (archivo de log). Loggers sin archivo se pierden
-  en producción porque el supervisor corre con `stdout=DEVNULL` (ver
-  `docs/KNOWN_ISSUES.md` #1 — no repetir ese bug en código nuevo).
-- **Estado y colas**: todo el estado persiste en JSON planos bajo `data/`, vía
-  `utils/file_manager.py` (`load_json`/`save_json`). No introducir una base de datos sin
-  antes registrar la decisión en `docs/DECISIONS.md`.
-- **Categorías editoriales**: usar los nombres ya establecidos en español
-  (`policiales`, `interior`, `sociedad`, `economia`, `salud`, `educacion`, `deportes`,
-  `cultura`, `espectaculos`, `politica`) — están hardcodeados en varios módulos
-  (`utils/classifier.py`, `utils/editorial_priority.py`, `pipeline/node_webapp/editorial.py`).
-  Si se agrega una categoría nueva, actualizar los tres lugares.
-- **Prompts de OpenAI**: mantener la regla explícita de "no inventar datos, armas,
-  personas ni hechos que no estén en el texto original" en cualquier prompt nuevo de
-  reescritura/generación de contenido.
-- **Módulos por sección**: los scrapers de `scraping/{deportes,interior,locales,policiales}/`
-  son wrappers delgados sobre `scraping/base_tiempopopular.py`. Una sección nueva de ese
-  sitio se agrega como carpeta nueva reusando la base, no duplicando lógica de parseo.
+- Docstrings, comentarios, logs y mensajes al operador: español de Argentina.
+- Entry points standalone: `load_dotenv()` y `sys.path.insert(0, ...)`.
+- Logging: `setup_logger(nombre, "archivo.log")`, siempre con archivo.
+- Resultados: usar `StageResult`; no inferir salud de texto ni devolver éxito falso.
+- `no_work` no es error; parcial o rate limit es `degraded`; credencial inválida es
+  `failed`.
+- Estado: usar `utils/file_manager.py`; nunca implementar read-modify-write con
+  `load_json` seguido de `save_json`. Usar `update_json`/`update_json_files`.
+- Un JSON corrupto debe fallar y quedar en cuarentena, no transformarse en `[]`.
+- No vaciar una entrada antes de una transferencia durable.
+- Toda publicación completada requiere ID/URL/slug o evidencia equivalente.
+- Los outcomes externos ambiguos no se reintentan a ciegas.
+- Categorías: `policiales`, `interior`, `sociedad`, `economia`, `salud`, `educacion`,
+  `deportes`, `cultura`, `espectaculos`, `politica`.
+- Prompts nuevos deben decir explícitamente que no se inventen datos, armas, personas
+  ni hechos ajenos al original.
+- Los scrapers de Tiempo Popular son wrappers de `base_tiempopopular.py`; no duplicar
+  parseo.
 
-## Qué carpetas NO tocar sin confirmar con el operador
+## Rutas protegidas
 
-- `data/` — es estado de producción (colas, historial, tokens cacheados). No editar ni
-  borrar archivos ahí manualmente salvo que se sepa exactamente qué se está haciendo;
-  usar `init_data.py` solo para bootstrap inicial en un entorno nuevo.
-- `logs/` — solo lectura para diagnóstico. No hace falta versionar ni limpiar a mano.
-- `FotosLVR/`, `output/` — artefactos generados, no versionados (ver `.gitignore`).
-- `.env` — **nunca** commitear ni imprimir su contenido completo en logs, PRs o
-  respuestas. Contiene credenciales reales de OpenAI, Meta (Facebook/Instagram) y
-  Cloudflare R2. Usar `.env.example` como referencia de qué variables existen.
+- `data/`: estado productivo. No editar, borrar ni migrar manualmente.
+- `logs/`: sólo lectura para diagnóstico.
+- `output/`, `FotosLVR/`: artefactos no versionados.
+- `.env`: secretos reales; no leer completo, imprimir ni commitear.
 
-## Cómo validar cambios
+Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
+`LVR_OUTPUT_DIR` y `LVR_FOTOS_DIR`.
 
-1. Correr `python -m unittest discover tests` — debe seguir pasando.
-2. Para cambios en scrapers: correr `python test_scraper.py` y revisar
-   `output/scraper_report.html` para confirmar que sigue extrayendo notas reales.
-3. Para cambios en generación de imagen/video: correr `python preview_pipeline.py --n 5`
-   (o usar `video_reel_manager.py` para Reels) y revisar visualmente el resultado antes
-   de asumir que está bien.
-4. Para cambios en publicación (web/Facebook/Instagram): probar primero con
-   `python cli.py run-once` en un entorno con credenciales de prueba si es posible; si
-   se prueba contra las cuentas reales, avisar al operador antes, dado que publica en
-   vivo.
-5. Nunca asumir que un cambio en `meta/` o `pipeline/node_webapp/` es seguro solo porque
-   pasa los tests mockeados — son mocks de la API, no la API real.
+## Seguridad
 
-## Arquitectura esperada (no romper estos contratos)
+- No loguear tokens ni claves; la redacción central no habilita a incluirlos.
+- No retirar backoff/retries de Meta/OpenAI/R2.
+- Validar URLs no confiables con `utils/safe_http.py`.
+- Validar uploads por contenido y ruta; no invocar ffmpeg mediante shell.
+- `video_reel_manager.py` permanece sólo en loopback.
+- Verificar `git remote -v` y `git status` antes de push: el proyecto tuvo un repo de
+  Desktop mezclado históricamente.
 
-- Ver `docs/ARCHITECTURE.md` para el diagrama de flujo completo. En resumen: scraping →
-  reescritura/IA → colas JSON → publicación web/Facebook/Instagram, todo orquestado por
-  `run_24x7.py` con pasos aislados (un paso fallido no debe frenar los demás).
-- No romper la separación entre `data/noticias_norewrite_*.json` (staging pre-IA) y
-  `data/noticias_meta.json` / `data/noticias_web_pending.json` (post-IA, listas para
-  publicar) — otros módulos asumen ese contrato.
-- No cambiar la forma de los JSON de estado sin migrar los archivos existentes en
-  `data/` (son producción real, no fixtures de test).
+## Compatibilidad
 
-## Reglas de seguridad
-
-- No commitear secretos: `.env`, tokens, API keys. `.gitignore` ya excluye `.env`,
-  `data/`, `logs/`, `output/`, `FotosLVR/` — no revertir eso.
-- No loguear valores completos de tokens/API keys, ni siquiera en logs de debug.
-- Las llamadas a Graph API (Meta) y OpenAI deben mantener manejo de rate limit/backoff
-  existente (`IG_RATE_LIMIT_BACKOFF_SECONDS`, `FB_TEMP_BLOCK_BACKOFF_SECONDS`,
-  `OPENAI_RETRY_COUNT`) — no quitar reintentos/backoff para "simplificar" sin entender
-  por qué están.
-- Este repo tuvo históricamente un `.git` roto que apuntaba, por herencia de carpeta, a
-  un repositorio de Desktop compartido con archivos personales ajenos a este proyecto.
-  Verificar siempre `git remote -v` y `git status` antes de un push si algo se ve raro
-  (archivos ajenos a este proyecto apareciendo en `git status`).
+- Mantener staging pre-IA separado de `noticias_meta.json` y
+  `noticias_web_pending.json`.
+- No cambiar forma de JSON sin migración idempotente, backup previo, test y decisión.
+- No introducir base de datos por preferencia; registrar evidencia en
+  `docs/DECISIONS.md`.
+- Mantener los estados Pending/Processing/Completed/Failed/Expired/Dead-letter y el
+  journal `queue_events.json`.
 
 ## Definition of Done
 
-Un cambio se considera terminado cuando:
-
-- [ ] El código sigue las convenciones de este archivo (idioma, logging con archivo,
-      categorías editoriales, contratos de `data/`).
-- [ ] Los tests existentes pasan (`python -m unittest discover tests`).
-- [ ] Si se tocó scraping, imagen o video: se validó manualmente con las herramientas de
-      QA correspondientes (`test_scraper.py`, `preview_pipeline.py`,
-      `video_reel_manager.py`).
-- [ ] No se commiteó ningún secreto (`.env`, tokens) ni archivo de `data/`/`logs/`
-      generado en producción.
-- [ ] Si el cambio afecta una decisión de arquitectura o de proceso editorial, se
-      agregó una entrada en `docs/DECISIONS.md`.
-- [ ] Si el cambio resuelve o introduce un problema conocido, se actualizó
-      `docs/KNOWN_ISSUES.md`.
-- [ ] `docs/CURRENT_STATE.md` refleja el estado real después del cambio (qué funciona,
-      qué no, próximo objetivo).
+- Suite completa y E2E local pasan.
+- `doctor` y `compileall` pasan para el alcance.
+- Tests no usan secretos ni publican.
+- Cambios de scraping/imagen/video tienen fixture o criterio visual controlado.
+- Contratos externos tienen mocks de éxito y fallos.
+- Recuperación, concurrencia y corrupción se prueban si se toca persistencia.
+- Sin secretos ni cambios de `data/`, `logs/`, `output/` o `FotosLVR/` en el diff.
+- `CURRENT_STATE`, `KNOWN_ISSUES`, `DECISIONS` y runbook reflejan el comportamiento.
+- No hay hallazgos críticos/altos reproducibles abiertos sin tratamiento.

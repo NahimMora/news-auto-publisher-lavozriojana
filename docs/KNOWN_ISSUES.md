@@ -1,78 +1,245 @@
-# KNOWN_ISSUES.md
+# Problemas conocidos
 
-Problemas conocidos a la fecha de este documento (2026-07-20), detectados por
-inspección de código, logs y datos. Marcar como resuelto (con fecha) en vez de borrar,
-para mantener historial.
+Última actualización: 2026-07-23. Los problemas resueltos no se borran.
 
-## 1. Publicaciones en Facebook fallan sin registrar el error real
+## 1. Fallos de Facebook sin detalle
 
-- **Síntoma**: en los ciclos del 2026-07-13 visibles en `logs/run_fb.log`, la cola de
-  Facebook crecía en vez de bajar (ej. 127 → 134 en cola entre ciclos consecutivos),
-  con tasas de éxito bajas (0/6, 1/7, 4/10) y **cero líneas `ERROR`** en el log.
-- **Causa probable**: `meta/fb_client.py` y `meta/facebook_token_manager.py` inicializan
-  su logger sin archivo de salida (`setup_logger("fb_client")` sin segundo argumento),
-  es decir loguean solo a consola. El supervisor (`run_24x7.py`), lanzado vía
-  `cli.py start`, corre desatachado con `stdout=DEVNULL, stderr=DEVNULL` — el detalle
-  del error de Graph API (rate limit, token inválido, contenido rechazado, etc.) se
-  descarta antes de poder verlo.
-- **Impacto**: imposible diagnosticar por qué crece el backlog sin reproducir el
-  problema manualmente o instrumentar logging a archivo primero.
-- **Estado**: abierto. Ver acción propuesta en `BACKLOG.md` (alta prioridad).
+- Estado anterior: abierto; el backlog crecía y los clientes no escribían archivo.
+- Corrección 2026-07-23: log rotativo para runner, cliente y token manager, redacción
+  de secretos y resultados tipados para credencial, rate limit, servidor y red.
+- Evidencia: `tests.test_meta_contracts.FacebookContractTests`,
+  `tests.test_logging_security`.
+- Estado actual: **mitigado**. La observabilidad quedó corregida; la causa histórica
+  externa sigue bloqueada por falta de logs originales y acceso a cuenta de prueba.
 
-## 2. `psutil` no está declarado en `requirements.txt`
+## 2. `psutil` ausente de requirements
 
-- **Síntoma**: `cli.py` importa `psutil` (usado para gestión de procesos del
-  supervisor), pero el paquete no aparece en `requirements.txt`.
-- **Impacto**: un `pip install -r requirements.txt` limpio puede no dejar el entorno
-  funcional para el CLI.
-- **Estado**: abierto.
+- Corrección 2026-07-23: agregado a `requirements.txt`; instalación limpia y
+  `pip check`.
+- Evidencia: suite de supervisor/CLI e instalación registrada en la auditoría.
+- Estado actual: **resuelto**.
 
-## 3. Sin evidencia de actividad del supervisor en la última semana
+## 3. Sin evidencia de actividad del supervisor
 
-- **Síntoma**: `logs/run_24x7.log` no tiene entradas después de 2026-07-13 20:11:15
-  (ciclo #245). Hoy es 2026-07-20.
-- **Impacto**: no se puede confirmar desde los archivos estáticos si el proceso sigue
-  corriendo o se detuvo; requiere verificación directa (`python cli.py status`) en la
-  máquina donde corre.
-- **Estado**: abierto — verificar como primer paso operativo.
+- Corrección 2026-07-23: heartbeat atómico con antigüedad, ciclo, PID, etapas y colas;
+  stale configurado y `status` de sólo lectura.
+- Evidencia: `tests.test_supervisor_cli.HeartbeatTests` y `CliStatusTests`.
+- Estado actual: **resuelto en código**. El estado del host productivo sigue
+  desconocido porque no se inició ni modificó producción.
 
-## 4. `.git` de este proyecto estaba roto y mezclado con otro repo
+## 4. Repositorio git roto/mezclado
 
-- **Síntoma**: la carpeta tenía un `.git/` local incompleto (sin `HEAD` ni `objects`),
-  por lo que git resolvía la raíz del repo hacia `C:\Users\pc10\Desktop`, un repo
-  compartido con proyectos y archivos personales no relacionados, con remotes que no
-  correspondían a este proyecto (`duo-news-app`, `migration-wix-to-wordpress`).
-- **Impacto**: no había historial de versiones real de este código; riesgo de exponer
-  archivos ajenos si se hacía push desde ese repo sin cuidado.
-- **Estado**: resuelto el 2026-07-20 — se inicializó un repo git dedicado en esta
-  carpeta con remote propio (`news-auto-publisher-lavozriojana`). Ver `DECISIONS.md`.
+- Corrección 2026-07-20: repositorio dedicado y remote propio.
+- Verificación 2026-07-23: GitHub App confirmó
+  `NahimMora/news-auto-publisher-lavozriojana`; branch principal `main`.
+- Estado actual: **resuelto**.
 
-## 5. Cobertura de tests limitada
+## 5. Cobertura automatizada limitada
 
-- **Síntoma**: solo existe `tests/test_node_webapp_publisher.py` (mockeado, cubre
-  publisher/editorial/media/fb_client/ig_client/rewrite_news/social_queue). Scrapers,
-  generación de imagen/video y el CLI/supervisor no tienen tests automatizados.
-- **Impacto**: cambios en `scraping/`, `layout/`, o `video_reel_manager.py` pueden
-  romper silenciosamente hasta que se note en producción o vía las herramientas de QA
-  manual (`test_scraper.py`, `preview_pipeline.py`).
-- **Estado**: abierto.
+- Corrección 2026-07-23: suite ampliada de 35 a 147 pruebas, con persistencia,
+  reanudación, concurrencia, configuración, scrapers, imágenes, contratos externos,
+  seguridad, supervisor/CLI y 17 escenarios E2E.
+- Evidencia: `python -m unittest discover tests -v`.
+- Estado actual: **resuelto para la línea de base**. Video visual completo y smoke
+  externo continúan requiriendo QA controlada.
 
-## 6. Backups de `data/` manuales y esporádicos
+## 6. Backups manuales y restauración no probada
 
-- **Síntoma**: `data/backups/` solo tiene 3 snapshots, todos del 2026-07-01. No hay
-  proceso automatizado de backup periódico.
-- **Impacto**: pérdida o corrupción de los JSON en `data/` (colas, historial de dedup,
-  tokens cacheados) implicaría pérdida de estado sin forma de recuperarlo más allá de
-  ese snapshot puntual.
-- **Estado**: abierto.
+- Corrección 2026-07-23: backup configurable integrado a escrituras, retención,
+  comandos CLI y restore validado con backup previo.
+- Evidencia: `SafeJsonTests.test_backup_can_be_restored`.
+- Estado actual: **resuelto en código**; falta validar política/capacidad en el host.
 
-## 7. Falta de verificación editorial humana antes de publicar
+## 7. Sin aprobación editorial humana obligatoria
 
-- **Síntoma**: el pipeline publica automáticamente en los 3 canales apenas una nota
-  pasa el filtro y la reescritura de OpenAI; no hay paso de aprobación manual
-  obligatorio.
-- **Impacto**: aunque el prompt de reescritura instruye explícitamente "no inventar
-  datos", un error del modelo o una mala clasificación se publica igual sin que nadie
-  lo revise antes.
-- **Estado**: abierto — riesgo aceptado implícitamente por el diseño actual; evaluar
-  si vale la pena un paso de aprobación opcional (ver `BACKLOG.md`).
+- Tratamiento 2026-07-23: política de fallback explícita; contenidos sensibles no
+  publican fallback por defecto y cada decisión queda trazada.
+- Evidencia: `tests.test_editorial_policy` y
+  `RewriteRecoveryTests.test_disallowed_fallback_goes_to_dead_letter_not_output`.
+- Estado actual: **riesgo aceptado/documentado**. No se agregó aprobación obligatoria
+  porque no existe una decisión editorial que la requiera.
+
+## 8. Pérdida de staging por interrupción
+
+- Corrección 2026-07-23: cola durable y transferencia output-before-clear.
+- Evidencia: diez noticias, corte después de la tercera, reinicio y diez completadas
+  exactamente una vez en `test_rewrite_recovery`.
+- Estado actual: **resuelto**.
+
+## 9. JSON corrupto interpretado como vacío
+
+- Corrección 2026-07-23: error explícito, preservación en origen, cuarentena y bloqueo
+  de sobrescritura.
+- Evidencia: `SafeJsonTests.test_truncated_json_is_quarantined_and_never_becomes_empty`.
+- Estado actual: **resuelto**.
+
+## 10. Escrituras concurrentes perdidas
+
+- Corrección 2026-07-23: locks, temporales únicos, fsync, replace, `update_json` y
+  `update_json_files`.
+- Evidencia: 100 updates concurrentes y claims únicos en `test_reliability_core`.
+- Estado actual: **resuelto para filesystem local**. Un share de red no fue validado.
+
+## 11. Falsos positivos de salud
+
+- Corrección 2026-07-23: contrato estructurado, códigos de salida y runner que exige
+  resultado funcional.
+- Evidencia: tests de `StageResult`, social stages y `ProcessResultTests`.
+- Estado actual: **resuelto**.
+
+## 12. Scraper caído confundido con fuente vacía
+
+- Corrección 2026-07-23: `ArticleScrapeResult`/`LinkScrapeResult`; HTTP, timeout y
+  selector mismatch son fallos.
+- Evidencia: fixtures de las diez secciones y pruebas negativas.
+- Estado actual: **resuelto en contrato local**; el HTML vivo sigue siendo externo.
+
+## 13. Expiraciones/descartes sin trazabilidad
+
+- Corrección 2026-07-23: estados terminales y `queue_events.json`.
+- Evidencia: tests de expiración social, fallback bloqueado y escenario E2E expirado.
+- Estado actual: **resuelto**.
+
+## 14. Publicación confirmada sin evidencia
+
+- Corrección 2026-07-23: CMS/Meta requieren ID, URL o slug verificable; 409 sólo es
+  idempotente con evidencia.
+- Evidencia: `tests.test_external_contracts`.
+- Estado actual: **resuelto**.
+
+## 15. SSRF, exposición manual y uploads débiles
+
+- Corrección 2026-07-23: validación DNS/IP y redirects, loopback-only, paths propios,
+  límites y firmas de contenido.
+- Evidencia: `tests.test_security_controls`.
+- Estado actual: **resuelto para vectores reproducidos**.
+
+## 16. Estado de reanudación aparente pero no usado
+
+- Corrección 2026-07-23: eliminado `utils/pipeline_resume.py`; reemplazado por la cola
+  durable realmente integrada.
+- Evidencia: recuperación real del pipeline en `test_rewrite_recovery`.
+- Estado actual: **resuelto**. Un archivo legacy existente no se borra automáticamente.
+
+## 17. Configuración declarada sin efecto
+
+- Corrección 2026-07-23: inventario obligatorio/opcional/desarrollo/obsoleto,
+  `.env.example` alineado, variables visuales activas conectadas y `doctor`.
+- Evidencia: `tests.test_config_validation`.
+- Estado actual: **resuelto**. `IG_CHROME_PROFILE_DIR` y variables visuales legacy se
+  documentan como obsoletas, no se simula soporte.
+
+## 18. Riesgos residuales abiertos
+
+- Smoke externo de CMS, Meta, R2 y OpenAI: **bloqueado por entorno**.
+- Causa del backlog histórico de Facebook: **no reproducida**.
+- Lock/reemplazo sobre filesystem de red: **desconocido**.
+- Staging externo/CI: **mejora operativa**, pendiente.
+- Publicación social ambigua requiere conciliación manual: **mitigada por
+  dead-letter**, no automatizada.
+
+## 19. Contención de locks en Windows
+
+- Reproducción 2026-07-23: bajo ocho writers, Windows devolvió `PermissionError` para
+  un archivo de lock contendiente.
+- Corrección: se espera/reintenta sólo si el lock existe; un permiso real sigue
+  fallando explícitamente.
+- Evidencia: test de 100 updates repetido cinco veces y suite limpia.
+- Estado actual: **resuelto**.
+
+## 20. Fallback original de Instagram sin opt-in
+
+- Reproducción 2026-07-23: con R2 ausente, Instagram usaba la URL original aunque el
+  flag estuviera en false.
+- Corrección: fallo explícito y `doctor` exige R2; la imagen original requiere opt-in.
+- Evidencia: contrato Instagram y tests de configuración.
+- Estado actual: **resuelto**.
+
+## 21. Lock válido podía considerarse stale sólo por antigüedad
+
+- Reproducción 2026-07-23: un lock de un proceso vivo con mtime antiguo era removible.
+- Corrección: el owner PID y su fecha de creación se verifican antes de retirar un
+  lock; un PID reutilizado se distingue del owner original.
+- Evidencia: tests de lock viejo con proceso vivo y proceso muerto.
+- Estado actual: **resuelto**.
+
+## 22. Adquisición multiarchivo parcial podía dejar un lock tomado
+
+- Reproducción 2026-07-23: timeout en el segundo path de `MultiFileLock`.
+- Corrección: cerrar el `ExitStack` si `__enter__` falla.
+- Evidencia: `test_multifile_partial_acquire_releases_previous_locks`.
+- Estado actual: **resuelto**.
+
+## 23. Fallo al escribir metadata del lock dejaba un huérfano
+
+- Reproducción 2026-07-23: mock de escritura fallida inmediatamente después de crear
+  el archivo exclusivo.
+- Corrección: cerrar el descriptor y retirar el lock antes de propagar el error.
+- Evidencia: `test_lock_metadata_write_failure_does_not_leave_orphan`.
+- Estado actual: **resuelto**.
+
+## 24. Texto persistido se interpolaba como HTML en la UI manual
+
+- Reproducción 2026-07-23: título/URL con markup en listas de cola o borradores.
+- Corrección: construcción DOM y `textContent` en Reel Manager y diseñador; no se usa
+  `innerHTML` con datos.
+- Evidencia: `test_manual_ui_renders_persisted_text_with_text_content`.
+- Estado actual: **resuelto**.
+
+## 25. UI loopback aceptaba Host/Origin externos
+
+- Reproducción 2026-07-23: request a loopback con `Host`/`Origin` atacante.
+- Corrección: validación loopback de ambos headers, CSP, frame denial y nombres de
+  upload estrictos.
+- Evidencia: `test_dns_rebinding_and_cross_origin_requests_are_rejected`.
+- Estado actual: **resuelto**.
+
+## 26. Cleanup R2 informaba eliminado sin verificar resultado
+
+- Reproducción 2026-07-23: `delete_object` falla después de dos publicaciones fallidas.
+- Corrección: `delete` devuelve resultado tipado y el job conserva `cleanup_error`.
+- Evidencia: `test_delete_failure_is_visible_and_retryable`.
+- Estado actual: **resuelto**.
+
+## 27. Publicación manual parcial se mostraba como OK
+
+- Reproducción 2026-07-23: web/Instagram exitosos y Facebook fallido.
+- Corrección: clientes detallados, status `degraded` y UI verde sólo en `success`.
+- Evidencia: `test_manual_partial_publication_is_degraded`.
+- Estado actual: **resuelto**.
+
+## 28. Web sin post ID no podía rastrear flags editoriales
+
+- Reproducción 2026-07-23: CMS devuelve URL pero no ID para un nuevo featured.
+- Corrección: publicación preservada pero `degraded`, evento de conciliación y
+  propagación al flujo manual.
+- Evidencia:
+  `test_public_url_without_post_id_is_degraded_when_flags_need_tracking`.
+- Estado actual: **mitigado**; requiere que el CMS entregue ID para conciliación
+  automática.
+
+## 29. Imágenes declaradas por scrapers podían apuntar a redes privadas
+
+- Reproducción 2026-07-23: un `og:image` con destino link-local llegaba al cliente
+  HTTP directo de ambos scrapers base.
+- Corrección: descarga mediante el cliente seguro con validación DNS/IP y
+  revalidación de redirects antes de abrir la conexión.
+- Evidencia: `test_scrapers_do_not_fetch_private_image_urls`.
+- Estado actual: **resuelto para los vectores reproducidos**.
+
+## 30. Un test de aislamiento del dry-run dependía de un atributo inexistente
+
+- Reproducción 2026-07-23: suite limpia de 147 casos; 146 pasaron y
+  `test_run_once_dry_run_executes_only_local_e2e_suite` terminó con
+  `AttributeError`.
+- Corrección: la aserción usa el directorio temporal propio de `CliStatusTests`.
+- Evidencia: segunda ejecución completa, 147 pruebas OK.
+- Estado actual: **resuelto**.
+
+## 31. API de Pillow deprecada en el render de íconos
+
+- Reproducción 2026-07-23: la suite emitió `DeprecationWarning` porque
+  `Image.Image.getdata` será removido en Pillow 14.
+- Corrección: lectura del mínimo alfa mediante `getextrema`, API vigente.
+- Evidencia: tests de layout ejecutados con `DeprecationWarning` tratado como error.
+- Estado actual: **resuelto**.
