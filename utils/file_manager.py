@@ -104,6 +104,7 @@ class FileLock:
             {"pid": os.getpid(), "created_at": time.time()},
             ensure_ascii=False,
         ).encode("utf-8")
+        permission_errors_without_lock = 0
 
         while True:
             try:
@@ -126,12 +127,18 @@ class FileLock:
                 return self
             except (FileExistsError, PermissionError) as exc:
                 # En Windows, CreateFile puede traducir un O_EXCL contendiente a
-                # PermissionError mientras otro hilo todavía tiene abierto el lock.
-                # Sólo se trata como contención si el archivo existe realmente.
+                # PermissionError. El dueño puede liberar el archivo antes del
+                # exists(), por lo que se toleran dos carreras sin lock visible.
+                # Un permiso persistentemente inválido sigue siendo error explícito.
                 if isinstance(exc, PermissionError) and not os.path.exists(self.lock_path):
-                    raise JsonWriteError(
-                        f"No se pudo crear lock {self.lock_path}: {exc}"
-                    ) from exc
+                    permission_errors_without_lock += 1
+                    if permission_errors_without_lock >= 3:
+                        raise JsonWriteError(
+                            f"No se pudo crear lock {self.lock_path}: {exc}"
+                        ) from exc
+                    time.sleep(self.poll_interval)
+                    continue
+                permission_errors_without_lock = 0
                 try:
                     age = time.time() - os.path.getmtime(self.lock_path)
                     if age > self.stale_seconds:

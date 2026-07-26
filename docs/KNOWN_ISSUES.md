@@ -379,3 +379,16 @@
 - Estado actual: **resuelto en código**; los entornos existentes deben reinstalar
   requirements.
 - Riesgo residual: una instalación no actualizada podría seguir cargando `.env`.
+
+## 48. Carrera de lock Windows podía parecer un permiso permanente
+
+- Reproducción: Actions run `30209866700`; el test de 100 actualizaciones
+  concurrentes recibió `PermissionError` sobre un lock que otro thread estaba
+  liberando.
+- Causa raíz: la comprobación `exists()` corría después de la liberación y convertía
+  una sharing violation transitoria en `JsonWriteError`.
+- Corrección: dos reintentos acotados para esa carrera; un permiso persistente sigue
+  siendo error explícito.
+- Evidencia: test determinista y 25 repeticiones/2.500 actualizaciones sin pérdida.
+- Estado actual: **corregido; revalidación remota pendiente**.
+- Riesgo residual: repetir `preflight filesystem` en el volumen del despliegue.

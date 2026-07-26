@@ -37,7 +37,7 @@ de terceros y la resolución de 19 entradas Facebook sin URL web.
 - 5 commits, 106 archivos modificados, sin reviews, comentarios ni checks.
 - `main` sin protección verificable.
 - Instalación limpia desde `requirements.txt` con Python 3.10.
-- Suite final local: 192 tests OK con deprecaciones como error.
+- Suite final local: 193 tests OK con deprecaciones como error.
 - E2E local: 17 escenarios, `production_calls=false`.
 - Fuentes vivas: 10/10 `success`.
 - Filesystem temporal en el mismo volumen: `success`.
@@ -423,6 +423,25 @@ Nuevas suites:
 - Estado: corregido; instalación limpia final pendiente.
 - Riesgo residual: entornos existentes deben reinstalar `requirements.txt`.
 
+### LVR-060 — Carrera de lock Windows informada como permiso inválido
+
+- Severidad: alta.
+- Archivo/función: `utils/file_manager.py::FileLock.acquire`.
+- Síntoma: Actions run `30209866700` falló durante 100 writers concurrentes con
+  `PermissionError` sobre `state.json.lock`.
+- Causa raíz: Windows puede devolver `PermissionError` por sharing violation; si el
+  dueño libera el lock antes de `exists()`, el código lo confundía con permisos
+  permanentes.
+- Reproducción: suite Windows y test que inyecta `PermissionError` transitorio sin
+  lock visible.
+- Corrección: tolerar dos carreras transitorias; el tercer permiso consecutivo sin
+  lock visible sigue generando `JsonWriteError` explícito.
+- Test: `test_windows_permission_race_retries_but_persistent_denial_fails` y 25
+  repeticiones de `test_concurrent_updates_do_not_lose_data`.
+- Evidencia: 2.500 actualizaciones acumuladas sin pérdida en el stress local.
+- Estado: corregido; revalidación remota pendiente.
+- Riesgo residual: validar también sobre el filesystem real del host antes de deploy.
+
 ## Priorización de hallazgos nuevos
 
 Escala 1–5. Puntaje:
@@ -447,6 +466,7 @@ Escala 1–5. Puntaje:
 | LVR-057 | 5 | 5 | 5 | 4 | 4 | 1 | 1 | 1 | 500,0 |
 | LVR-058 | 5 | 5 | 5 | 4 | 4 | 1 | 1 | 1 | 500,0 |
 | LVR-059 | 5 | 5 | 5 | 4 | 5 | 1 | 1 | 1 | 500,0 |
+| LVR-060 | 5 | 5 | 5 | 5 | 5 | 1 | 2 | 2 | 312,5 |
 
 ## Evidencia de validación
 
@@ -454,7 +474,7 @@ Escala 1–5. Puntaje:
 |---|---|
 | instalación limpia | OK |
 | `pip check` | OK |
-| suite final | 192 tests, OK, 14,658 s |
+| suite final | 193 tests, OK, 17,568 s |
 | E2E local | 17/17, `production_calls=false` |
 | `compileall` | OK |
 | doctor core | `success` |
@@ -562,7 +582,7 @@ con colas legacy. No deben borrarse porque contienen evidencia.
 El PR debe permanecer draft e incluir:
 
 - alcance y motivación;
-- matriz LVR-043–LVR-059;
+- matriz LVR-043–LVR-060;
 - CI y comandos exactos;
 - compatibilidad/migración;
 - rollback;

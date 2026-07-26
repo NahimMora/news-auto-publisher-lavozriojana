@@ -204,6 +204,31 @@ class SafeJsonTests(unittest.TestCase):
 
         self.assertFalse(Path(f"{self.path}.lock").exists())
 
+    def test_windows_permission_race_retries_but_persistent_denial_fails(self):
+        from utils.file_manager import FileLock, JsonWriteError
+
+        original_open = os.open
+        attempts = 0
+
+        def transient_permission(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("sharing violation")
+            return original_open(*args, **kwargs)
+
+        with mock.patch("utils.file_manager.os.open", side_effect=transient_permission):
+            with FileLock(str(self.path), timeout=0.2, poll_interval=0.001):
+                self.assertTrue(Path(f"{self.path}.lock").exists())
+        self.assertEqual(2, attempts)
+
+        with mock.patch(
+            "utils.file_manager.os.open",
+            side_effect=PermissionError("access denied"),
+        ):
+            with self.assertRaises(JsonWriteError):
+                FileLock(str(self.path), timeout=0.2, poll_interval=0.001).acquire()
+
 
 class DurableQueueTests(unittest.TestCase):
     def setUp(self):
