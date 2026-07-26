@@ -21,9 +21,9 @@ Se implementaron y probaron los controles dentro del repositorio. Las diez fuent
 vivas y el filesystem del host pasaron preflight read-only/temporal. El backlog de
 Facebook se clasificó sobre copias sin modificar producción.
 
-El sistema **no se declara listo para producción 24/7** porque todavía faltan CI
-remoto verde y revisión, backup/restore productivo, preflight real de OpenAI/R2/CMS/
-Meta, canary autorizado y los ciclos progresivos de Gates E–I.
+El sistema **no se declara listo para producción 24/7** porque todavía faltan
+revisión, backup/restore productivo, preflight real de OpenAI/R2/CMS/Meta, canary
+autorizado y los ciclos progresivos de Gates E–I.
 
 El cuello de botella principal ya no es el código local: es la validación coordinada
 de terceros y la resolución de 19 entradas Facebook sin URL web.
@@ -45,6 +45,8 @@ de terceros y la resolución de 19 entradas Facebook sin URL web.
 - Alerta local: evento creado y persistido sin webhook.
 - Facebook sobre copias: 23 entradas clasificadas; cero cambios a la cola original.
 - El supervisor real encontrado al inicio fue detenido antes de cambiar contratos.
+- CI `reliability-windows`: verde en Actions run `30210229086`.
+- `main`: branch protection strict con CI obligatorio y conversaciones resueltas.
 
 ### Inferencias
 
@@ -86,7 +88,6 @@ de terceros y la resolución de 19 entradas Facebook sin URL web.
 - Credenciales/autorización para OpenAI, R2 y Meta.
 - Endpoint CMS read-only.
 - Canary externo y cleanup.
-- CI remoto y branch protection hasta publicar commits.
 - Decisiones humanas para las entradas Facebook bloqueadas.
 
 ## Estado inicial del PR
@@ -215,9 +216,9 @@ Nuevas suites:
 - Impacto: una regresión podía llegar a `main`.
 - Corrección: `.github/workflows/reliability.yml` y gate de seguridad.
 - Test: `tests.test_ci_safety`.
-- Evidencia: workflow local inspeccionado; CI remoto pendiente.
-- Estado: mitigado, bloqueado hasta check verde/protección.
-- Riesgo residual: un workflow no es obligatorio hasta proteger `main`.
+- Evidencia: Actions run `30210229086`, job `reliability-windows`, verde.
+- Estado: corregido y verificado local/remoto.
+- Riesgo residual: ninguno; `main` exige el check strict.
 
 ### LVR-044 — Meta habilitado por default efectivo
 
@@ -403,7 +404,7 @@ Nuevas suites:
 - Test: `DoctorScopeTests.
   test_core_does_not_require_optional_system_binaries`.
 - Evidencia: test focal verde y `doctor core` local con exit 0.
-- Estado: corregido; revalidación remota pendiente.
+- Estado: corregido y verificado en Actions run `30210229086`.
 - Riesgo residual: el host debe ejecutar `doctor all` antes de funciones multimedia.
 
 ### LVR-059 — El mínimo de dotenv no garantizaba aislamiento
@@ -439,7 +440,7 @@ Nuevas suites:
 - Test: `test_windows_permission_race_retries_but_persistent_denial_fails` y 25
   repeticiones de `test_concurrent_updates_do_not_lose_data`.
 - Evidencia: 2.500 actualizaciones acumuladas sin pérdida en el stress local.
-- Estado: corregido; revalidación remota pendiente.
+- Estado: corregido y verificado en Actions run `30210229086`.
 - Riesgo residual: validar también sobre el filesystem real del host antes de deploy.
 
 ## Priorización de hallazgos nuevos
@@ -485,6 +486,8 @@ Escala 1–5. Puntaje:
 | Facebook report-only | 23/23 clasificadas sobre copia |
 | secret/path scan | OK |
 | `git diff --check` | OK |
+| CI remoto | `reliability-windows`, run `30210229086`, success |
+| branch protection | check strict obligatorio; conversaciones; admins |
 
 Los logs de tests que dicen “Publicado” son ejecuciones contra mocks. El gate E2E
 confirma `production_calls=false`.
@@ -507,7 +510,7 @@ confirma `production_calls=false`.
 
 | Gate | Estado | Evidencia | Bloqueos |
 |---|---|---|---|
-| A Código | parcial | suite/compile/doctor/E2E | CI remoto y review |
+| A Código | parcial | suite/compile/doctor/E2E/CI | review humana |
 | B Entorno | parcial | filesystem temporal | backup/restore productivo |
 | C Read-only | parcial | fuentes | OpenAI/R2/CMS/Meta |
 | D Canary | bloqueado | tests | autorización/terceros |
@@ -545,7 +548,6 @@ con colas legacy. No deben borrarse porque contienen evidencia.
 
 ### Internos
 
-- Falta validar CI después de publicar.
 - Falta un watchdog externo.
 - El rollout real no fue observado.
 

@@ -30,12 +30,14 @@
 - [x] Heartbeat con trazabilidad de despliegue.
 - [x] Variante de host/slash final de Tiempo Popular cubierta por test y preflight
   vivo.
+- [x] CI remoto verde en PR #1.
+- [x] `main` protegido con `reliability-windows` obligatorio y strict.
+- [x] Scope `doctor core` separado de binarios multimedia opcionales.
+- [x] Carrera transitoria de lock Windows reproducida y corregida.
 
 ## Bloqueos para habilitar producción
 
-- [ ] Publicar la rama y obtener CI verde en PR #1.
 - [ ] Obtener revisión/aprobación del PR.
-- [ ] Configurar branch protection para exigir el check de confiabilidad.
 - [ ] Crear backup productivo completo y probar restore en temporal.
 - [ ] Ejecutar `preflight openai` con credencial autorizada.
 - [ ] Probar R2 reversible bajo `healthchecks/`.

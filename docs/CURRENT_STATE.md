@@ -10,7 +10,11 @@
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
 - Estado observado antes de estos cambios: mergeable, 5 commits, 106 archivos, sin
   revisiones, comentarios ni checks.
-- `main` no tenía protección de rama verificable.
+- Estado actual de CI: `reliability-windows` verde en Actions run
+  [`30210229086`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30210229086).
+- `main` exige el check `reliability-windows` en modo strict, resolución de
+  conversaciones y aplica la protección también a administradores; force-push y
+  borrado están deshabilitados.
 - Propuesta de release posterior al merge: `v1.0.0-reliability-baseline`.
 
 El PR permanece en borrador. No se hizo merge ni se creó el tag.
@@ -60,7 +64,7 @@ Información todavía desconocida o bloqueada:
 - Facebook/Instagram real: identidad y permisos no se consultaron con token;
 - canary real: no autorizado ni ejecutado;
 - webhook real: no configurado;
-- branch protection/check de GitHub: pendiente hasta publicar la rama y completar CI.
+- revisión/aprobación humana del PR: pendiente.
 
 Los mocks no se presentan como evidencia real de estas integraciones.
 
@@ -101,12 +105,13 @@ generar el reporte. No se reencoló, eliminó ni marcó ninguna entrada.
 
 ## Gate actual
 
-- Gate A (código): pendiente de CI remoto, revisión y publicación del nuevo commit.
+- Gate A (código): CI remoto verde, suite/compile/doctor/E2E verdes y branch
+  protection activa; pendiente de revisión/aprobación humana.
 - Gate B (entorno): filesystem temporal pasó; backup productivo y restore operativo
   todavía no fueron autorizados/ensayados.
 - Gate C (integraciones): fuentes pasaron; las demás están bloqueadas.
 - Gates D a I: no ejecutados.
 
 Por lo tanto, el proyecto **no se declara listo para producción 24/7**. El siguiente
-paso seguro es publicar la rama, obtener CI verde y revisión del PR; luego completar
-Gate B y los preflights externos autorizados.
+paso seguro es obtener revisión del PR; luego completar Gate B y los preflights
+externos autorizados.

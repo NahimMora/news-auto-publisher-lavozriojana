@@ -248,9 +248,9 @@
 
 - Reproducción 2026-07-26: PR #1 sin `statusCheckRollup`; `main` sin protección.
 - Corrección: `.github/workflows/reliability.yml` y gate local de seguridad.
-- Evidencia: `tests.test_ci_safety` y comandos de auditoría.
-- Estado actual: **corregido en código, bloqueado en GitHub** hasta publicar la rama,
-  obtener check verde y configurar protección.
+- Evidencia: `tests.test_ci_safety`, Actions run `30210229086` y protección strict
+  de `main`.
+- Estado actual: **resuelto**.
 
 ## 33. Facebook e Instagram habilitados por default efectivo
 
@@ -337,11 +337,13 @@
 - Estado actual: **bloqueado por entorno/repositorio externo**. No se simula éxito ni
   se crea una publicación durante el preflight general.
 
-## 44. Release y branch protection pendientes
+## 44. Release pendiente y branch protection resuelta
 
 - Propuesta: `v1.0.0-reliability-baseline` después de merge aprobado.
-- Estado actual: **bloqueado por proceso externo**. No se creó tag, no se hizo merge y
-  no se declaró producción lista.
+- Branch protection: **resuelta**; `main` exige `reliability-windows` strict y
+  resolución de conversaciones, también para administradores.
+- Estado actual: el release sigue **bloqueado por proceso externo**. No se creó tag,
+  no se hizo merge y no se declaró producción lista.
 
 ## 45. El primer workflow remoto fue rechazado antes de crear jobs
 
@@ -365,7 +367,7 @@
 - Corrección: `core` ya no exige binarios multimedia; `all` conserva el diagnóstico.
 - Evidencia: `DoctorScopeTests.
   test_core_does_not_require_optional_system_binaries`.
-- Estado actual: **corregido; revalidación remota pendiente**.
+- Estado actual: **resuelto**; Actions run `30210229086` pasó `doctor core`.
 - Riesgo residual: ejecutar `doctor all` en el host antes de usar imagen/video.
 
 ## 47. El mínimo de python-dotenv no garantizaba aislamiento de `.env`
@@ -390,5 +392,5 @@
 - Corrección: dos reintentos acotados para esa carrera; un permiso persistente sigue
   siendo error explícito.
 - Evidencia: test determinista y 25 repeticiones/2.500 actualizaciones sin pérdida.
-- Estado actual: **corregido; revalidación remota pendiente**.
+- Estado actual: **resuelto**; Actions run `30210229086` pasó la suite Windows.
 - Riesgo residual: repetir `preflight filesystem` en el volumen del despliegue.
