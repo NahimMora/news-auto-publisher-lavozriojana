@@ -370,6 +370,25 @@ Nuevas suites:
 - Estado: abierto mitigado.
 - Riesgo residual: requiere Task Scheduler/servicio externo simple.
 
+### LVR-057 — Workflow rechazado antes de crear jobs
+
+- Severidad: alta.
+- Archivo/función: `.github/workflows/reliability.yml`,
+  `jobs.reliability-windows.env`.
+- Síntoma: la primera ejecución remota terminó en `failure`, sin jobs ni logs.
+- Causa raíz: `runner.temp` se evaluaba dentro de `jobs.<job>.env`, contexto no
+  disponible antes de asignar el runner.
+- Reproducción: Actions run `30209150539`, con `jobs=[]` y nombre igual a la ruta
+  del workflow.
+- Corrección: las rutas temporales se escriben en `$GITHUB_ENV` desde un step
+  `pwsh` posterior a la asignación del runner.
+- Test: `test_workflow_contains_required_windows_gates` impide reintroducir
+  `${{ runner.temp }}` en el bloque de entorno del job.
+- Evidencia: el workflow corregido debe crear el job Windows y completar el check
+  remoto antes de cerrar esta auditoría.
+- Estado: corregido; revalidación remota pendiente.
+- Riesgo residual: una ejecución nueva debe confirmar la semántica real de Actions.
+
 ## Priorización de hallazgos nuevos
 
 Escala 1–5. Puntaje:
@@ -391,6 +410,7 @@ Escala 1–5. Puntaje:
 | LVR-054 | 4 | 5 | 4 | 4 | 4 | 2 | 1 | 1 | 160,0 |
 | LVR-055 | 5 | 4 | 5 | 3 | 5 | 2 | 2 | 2 | 75,0 |
 | LVR-056 | 4 | 5 | 4 | 4 | 4 | 2 | 2 | 2 | 80,0 |
+| LVR-057 | 5 | 5 | 5 | 4 | 4 | 1 | 1 | 1 | 500,0 |
 
 ## Evidencia de validación
 
@@ -398,7 +418,7 @@ Escala 1–5. Puntaje:
 |---|---|
 | instalación limpia | OK |
 | `pip check` | OK |
-| suite final | 190 tests, OK, 15,394 s |
+| suite final | 190 tests, OK, 16,376 s |
 | E2E local | 17/17, `production_calls=false` |
 | `compileall` | OK |
 | doctor core | `success` |
@@ -506,7 +526,7 @@ con colas legacy. No deben borrarse porque contienen evidencia.
 El PR debe permanecer draft e incluir:
 
 - alcance y motivación;
-- matriz LVR-043–LVR-056;
+- matriz LVR-043–LVR-057;
 - CI y comandos exactos;
 - compatibilidad/migración;
 - rollback;

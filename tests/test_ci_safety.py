@@ -50,9 +50,16 @@ class CiSafetyTests(unittest.TestCase):
             "run-once --dry-run --json",
             "git diff --check",
             "PIPELINE_DEPLOYMENT_MODE: observe",
+            "GITHUB_ENV",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, workflow)
+        job_env = workflow.split("    steps:", 1)[0]
+        self.assertNotIn(
+            "${{ runner.temp }}",
+            job_env,
+            "runner.temp no está disponible al evaluar jobs.<job>.env",
+        )
 
     def test_repository_has_no_tracked_operational_state(self):
         from scripts.verify_ci_safety import verify_tracked_paths

@@ -16,15 +16,8 @@ jobs:
     timeout-minutes: 30
     env:
       PYTHON_DOTENV_DISABLED: "1"
-      PYTHONPYCACHEPREFIX: ${{ runner.temp }}\lvr-pycache
-      LVR_DATA_DIR: ${{ runner.temp }}\lvr-data
-      LVR_LOGS_DIR: ${{ runner.temp }}\lvr-logs
-      LVR_OUTPUT_DIR: ${{ runner.temp }}\lvr-output
-      LVR_FOTOS_DIR: ${{ runner.temp }}\lvr-fotos
-      LVR_BACKUP_DIR: ${{ runner.temp }}\lvr-backups
-      LVR_QUARANTINE_DIR: ${{ runner.temp }}\lvr-quarantine
       PIPELINE_DEPLOYMENT_MODE: observe
-      WEB_PUBLISH_TARGET: off
+      WEB_PUBLISH_TARGET: "off"
       FB_PUBLISH_ENABLED: "false"
       IG_PUBLISH_ENABLED: "false"
       CANARY_ENABLED: "false"
@@ -42,6 +35,23 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
+
+      - name: Preparar aislamiento temporal
+        shell: pwsh
+        run: |
+          $paths = @{
+            PYTHONPYCACHEPREFIX = Join-Path $env:RUNNER_TEMP "lvr-pycache"
+            LVR_DATA_DIR = Join-Path $env:RUNNER_TEMP "lvr-data"
+            LVR_LOGS_DIR = Join-Path $env:RUNNER_TEMP "lvr-logs"
+            LVR_OUTPUT_DIR = Join-Path $env:RUNNER_TEMP "lvr-output"
+            LVR_FOTOS_DIR = Join-Path $env:RUNNER_TEMP "lvr-fotos"
+            LVR_BACKUP_DIR = Join-Path $env:RUNNER_TEMP "lvr-backups"
+            LVR_QUARANTINE_DIR = Join-Path $env:RUNNER_TEMP "lvr-quarantine"
+          }
+          foreach ($entry in $paths.GetEnumerator()) {
+            "$($entry.Key)=$($entry.Value)" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Instalar dependencias
         shell: pwsh

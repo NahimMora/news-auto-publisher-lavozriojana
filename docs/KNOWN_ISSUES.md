@@ -342,3 +342,15 @@
 - Propuesta: `v1.0.0-reliability-baseline` después de merge aprobado.
 - Estado actual: **bloqueado por proceso externo**. No se creó tag, no se hizo merge y
   no se declaró producción lista.
+
+## 45. El primer workflow remoto fue rechazado antes de crear jobs
+
+- Reproducción: Actions run `30209150539` finalizó en `failure` con `jobs=[]`.
+- Causa raíz: `runner.temp` se había usado en `jobs.<job>.env`, donde el contexto
+  todavía no está disponible.
+- Corrección: las rutas aisladas se exportan a `$GITHUB_ENV` desde un step PowerShell
+  ejecutado después de asignar `windows-latest`.
+- Evidencia: `tests.test_ci_safety.CiSafetyTests.
+  test_workflow_contains_required_windows_gates`.
+- Estado actual: **corregido en código; revalidación remota pendiente**.
+- Riesgo residual: no cerrar hasta que el workflow corregido termine verde.
