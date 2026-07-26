@@ -29,6 +29,21 @@ class FakeResponse:
 
 
 class TiempoPopularFixtureTests(unittest.TestCase):
+    def test_article_url_accepts_live_host_variant_and_optional_trailing_slash(self):
+        from scraping.base_tiempopopular import _is_article_url
+
+        self.assertTrue(
+            _is_article_url(
+                "https://tiempopopular.com.ar/2026/07/26/nota-de-prueba-en-vivo"
+            )
+        )
+        self.assertTrue(
+            _is_article_url(
+                "https://www.tiempopopular.com.ar/2026/07/26/nota-de-prueba-en-vivo/"
+            )
+        )
+        self.assertFalse(_is_article_url("https://example.com/2026/07/26/nota/"))
+
     def test_each_section_has_a_representative_fixture(self):
         from scraping import base_tiempopopular as scraper
         from utils.stage_result import StageStatus

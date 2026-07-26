@@ -7,6 +7,7 @@ import re
 import shutil
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlsplit
 from utils.url_normalization import canonical_url, url_hash
 from utils.image_processor import process_image, optimize_image, FOTOS_DIR
 from utils.logging_setup import setup_logger
@@ -21,7 +22,7 @@ from utils.stage_result import StageStatus
 BASE_SITE = "https://www.tiempopopular.com.ar"
 
 # Patrón de URL de artículo: /YYYY/MM/DD/slug/
-ARTICLE_URL_RE = re.compile(r"/\d{4}/\d{2}/\d{2}/.+/$")
+ARTICLE_URL_RE = re.compile(r"^/\d{4}/\d{2}/\d{2}/[^?#]+/?$")
 
 HEADERS = {
     "User-Agent": (
@@ -93,12 +94,13 @@ def scrap_links(section_url: str, section_name: str) -> list[str]:
 
 def _is_article_url(href: str) -> bool:
     """Valida que la URL sea un artículo (no una sección ni página de categoría)."""
-    if not href or not href.startswith("http"):
+    if not href:
         return False
-    if BASE_SITE not in href:
+    parsed = urlsplit(urljoin(BASE_SITE + "/", href))
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if parsed.scheme not in {"http", "https"} or host != "tiempopopular.com.ar":
         return False
-    path = href.replace(BASE_SITE, "")
-    return bool(ARTICLE_URL_RE.search(path))
+    return bool(ARTICLE_URL_RE.fullmatch(parsed.path))
 
 
 # ── NOTICIA SCRAPER ──────────────────────────────────────────────────────────
