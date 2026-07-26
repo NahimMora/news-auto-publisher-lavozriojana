@@ -326,5 +326,26 @@ class BootstrapTests(unittest.TestCase):
                 self.assertIsInstance(state[bucket], list)
 
 
+class DoctorScopeTests(unittest.TestCase):
+    def test_core_does_not_require_optional_system_binaries(self):
+        from utils.config import diagnose_environment
+        from utils.stage_result import StageStatus
+
+        env = {
+            "PIPELINE_DEPLOYMENT_MODE": "observe",
+            "WEB_PUBLISH_TARGET": "off",
+            "FB_PUBLISH_ENABLED": "false",
+            "IG_PUBLISH_ENABLED": "false",
+        }
+        with mock.patch("utils.config.shutil.which", return_value=None):
+            core = diagnose_environment(env, scope="core")
+            complete = diagnose_environment(env, scope="all")
+
+        self.assertEqual(StageStatus.SUCCESS, core.status)
+        self.assertEqual(0, core.exit_code)
+        self.assertEqual(StageStatus.DEGRADED, complete.status)
+        self.assertEqual("optional_dependency_warning", complete.error_type)
+
+
 if __name__ == "__main__":
     unittest.main()

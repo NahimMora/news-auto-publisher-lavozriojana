@@ -66,6 +66,13 @@ class CiSafetyTests(unittest.TestCase):
 
         self.assertEqual([], verify_tracked_paths())
 
+    def test_requirements_support_explicit_dotenv_isolation(self):
+        requirements = (
+            Path(__file__).resolve().parents[1] / "requirements.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("python-dotenv>=1.2.2", requirements)
+
 
 if __name__ == "__main__":
     unittest.main()

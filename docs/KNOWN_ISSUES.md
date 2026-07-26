@@ -352,5 +352,30 @@
   ejecutado después de asignar `windows-latest`.
 - Evidencia: `tests.test_ci_safety.CiSafetyTests.
   test_workflow_contains_required_windows_gates`.
-- Estado actual: **corregido en código; revalidación remota pendiente**.
-- Riesgo residual: no cerrar hasta que el workflow corregido termine verde.
+- Estado actual: **resuelto**. Actions run `30209610342` creó y ejecutó el job
+  Windows; ese run detectó el problema independiente #46.
+- Riesgo residual: ninguno específico a la disponibilidad de `runner.temp`.
+
+## 46. `doctor core` degradaba por binarios multimedia opcionales
+
+- Reproducción: Actions run `30209610342`; configuración y dependencias Python
+  correctas, pero `ffmpeg`/`ffprobe` ausentes produjeron exit no cero.
+- Causa raíz: `diagnose_environment` no separaba el scope Python core de
+  dependencias de sistema.
+- Corrección: `core` ya no exige binarios multimedia; `all` conserva el diagnóstico.
+- Evidencia: `DoctorScopeTests.
+  test_core_does_not_require_optional_system_binaries`.
+- Estado actual: **corregido; revalidación remota pendiente**.
+- Riesgo residual: ejecutar `doctor all` en el host antes de usar imagen/video.
+
+## 47. El mínimo de python-dotenv no garantizaba aislamiento de `.env`
+
+- Reproducción: `python-dotenv 1.0.0`, permitido por el requirements anterior, no
+  respetó `PYTHON_DOTENV_DISABLED=1`; el diagnóstico sólo mostró valores sensibles
+  como `[CONFIGURADO]`.
+- Corrección: `requirements.txt` exige `python-dotenv>=1.2.2`.
+- Evidencia: `test_requirements_support_explicit_dotenv_isolation` y entorno limpio
+  con 1.2.2.
+- Estado actual: **resuelto en código**; los entornos existentes deben reinstalar
+  requirements.
+- Riesgo residual: una instalación no actualizada podría seguir cargando `.env`.

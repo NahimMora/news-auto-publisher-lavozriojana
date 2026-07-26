@@ -37,7 +37,7 @@ de terceros y la resolución de 19 entradas Facebook sin URL web.
 - 5 commits, 106 archivos modificados, sin reviews, comentarios ni checks.
 - `main` sin protección verificable.
 - Instalación limpia desde `requirements.txt` con Python 3.10.
-- Suite final local: 190 tests OK con deprecaciones como error.
+- Suite final local: 192 tests OK con deprecaciones como error.
 - E2E local: 17 escenarios, `production_calls=false`.
 - Fuentes vivas: 10/10 `success`.
 - Filesystem temporal en el mismo volumen: `success`.
@@ -384,10 +384,44 @@ Nuevas suites:
   `pwsh` posterior a la asignación del runner.
 - Test: `test_workflow_contains_required_windows_gates` impide reintroducir
   `${{ runner.temp }}` en el bloque de entorno del job.
-- Evidencia: el workflow corregido debe crear el job Windows y completar el check
-  remoto antes de cerrar esta auditoría.
+- Evidencia: Actions run `30209610342` creó el job Windows; instalación, suite y
+  `compileall` pasaron.
+- Estado: corregido y verificado; el mismo run encontró LVR-058 en `doctor core`.
+- Riesgo residual: ninguno específico a la disponibilidad de `runner.temp`.
+
+### LVR-058 — `doctor core` exigía binarios opcionales
+
+- Severidad: alta.
+- Archivo/función: `utils/config.py::diagnose_environment`.
+- Síntoma: Actions run `30209610342` falló en `doctor core` aunque configuración y
+  ocho dependencias Python estaban correctas.
+- Causa raíz: la ausencia de `ffmpeg`/`ffprobe` degradaba todos los scopes, incluido
+  `core`, pese a ser dependencias de sistema separadas.
+- Reproducción: mock de `shutil.which` sin binarios o runner Windows limpio.
+- Corrección: `core` valida configuración y dependencias Python; `doctor all`
+  conserva el aviso no exitoso por binarios opcionales ausentes.
+- Test: `DoctorScopeTests.
+  test_core_does_not_require_optional_system_binaries`.
+- Evidencia: test focal verde y `doctor core` local con exit 0.
 - Estado: corregido; revalidación remota pendiente.
-- Riesgo residual: una ejecución nueva debe confirmar la semántica real de Actions.
+- Riesgo residual: el host debe ejecutar `doctor all` antes de funciones multimedia.
+
+### LVR-059 — El mínimo de dotenv no garantizaba aislamiento
+
+- Severidad: alta.
+- Archivo/función: `requirements.txt`, carga inicial de `cli.py`.
+- Síntoma: con `python-dotenv 1.0.0`, `PYTHON_DOTENV_DISABLED=1` no evitó cargar el
+  `.env` local; el snapshot seguro mostró credenciales configuradas, siempre
+  redactadas.
+- Causa raíz: `requirements.txt` permitía una versión anterior a la barrera usada
+  por CI.
+- Reproducción: ejecutar `doctor core` con 1.0.0 y la variable de aislamiento.
+- Corrección: mínimo `python-dotenv>=1.2.2`.
+- Test: `test_requirements_support_explicit_dotenv_isolation` y ejecución limpia
+  con 1.2.2.
+- Evidencia: el entorno limpio no carga `.env` con la barrera activa.
+- Estado: corregido; instalación limpia final pendiente.
+- Riesgo residual: entornos existentes deben reinstalar `requirements.txt`.
 
 ## Priorización de hallazgos nuevos
 
@@ -411,6 +445,8 @@ Escala 1–5. Puntaje:
 | LVR-055 | 5 | 4 | 5 | 3 | 5 | 2 | 2 | 2 | 75,0 |
 | LVR-056 | 4 | 5 | 4 | 4 | 4 | 2 | 2 | 2 | 80,0 |
 | LVR-057 | 5 | 5 | 5 | 4 | 4 | 1 | 1 | 1 | 500,0 |
+| LVR-058 | 5 | 5 | 5 | 4 | 4 | 1 | 1 | 1 | 500,0 |
+| LVR-059 | 5 | 5 | 5 | 4 | 5 | 1 | 1 | 1 | 500,0 |
 
 ## Evidencia de validación
 
@@ -418,7 +454,7 @@ Escala 1–5. Puntaje:
 |---|---|
 | instalación limpia | OK |
 | `pip check` | OK |
-| suite final | 190 tests, OK, 16,376 s |
+| suite final | 192 tests, OK, 14,658 s |
 | E2E local | 17/17, `production_calls=false` |
 | `compileall` | OK |
 | doctor core | `success` |
@@ -526,7 +562,7 @@ con colas legacy. No deben borrarse porque contienen evidencia.
 El PR debe permanecer draft e incluir:
 
 - alcance y motivación;
-- matriz LVR-043–LVR-057;
+- matriz LVR-043–LVR-059;
 - CI y comandos exactos;
 - compatibilidad/migración;
 - rollback;

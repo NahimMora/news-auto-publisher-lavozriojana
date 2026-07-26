@@ -714,7 +714,9 @@ def diagnose_environment(values: Mapping[str, str] | None = None, *, scope: str 
     if issues:
         status = StageStatus.FAILED
         error_type = "configuration_or_dependency_error"
-    elif report.warnings or not binaries["ffmpeg"] or not binaries["ffprobe"]:
+    elif report.warnings or (
+        scope != "core" and (not binaries["ffmpeg"] or not binaries["ffprobe"])
+    ):
         status = StageStatus.DEGRADED
         error_type = "optional_dependency_warning"
     else:
