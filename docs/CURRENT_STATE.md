@@ -3,6 +3,7 @@
 Última actualización: 2026-07-23. Línea de base:
 `reliability/baseline-2026-07-23`, creada desde
 `fbb83eac3cf3ce399dac5a9d778f81a1957d7c2a`.
+PR borrador: https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1.
 
 ## Estado verificable
 

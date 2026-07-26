@@ -862,8 +862,10 @@ ficticias e integraciones deshabilitadas.
 
 ## Pull request
 
-La GitHub App y `gh auth status` confirmaron acceso de `NahimMora` al repositorio. La
-línea de base se dividió en commits de núcleo, integraciones/seguridad, pruebas y
-documentación. La URL del PR borrador se agrega en el commit final de publicación,
-con alcance, motivación, compatibilidad, migración, rollback, evidencia, checklist
-de seguridad y exclusiones.
+PR borrador: https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1
+
+La GitHub App y `gh auth status` confirmaron acceso de `NahimMora`. La app devolvió
+403 al crear el PR y el fallback documentado con GitHub CLI lo abrió correctamente.
+Los commits separan núcleo, integraciones/seguridad, pruebas, documentación y esta
+evidencia final. El PR incluye alcance, motivación, compatibilidad, migración,
+rollback, evidencia, checklist de seguridad y exclusiones.
