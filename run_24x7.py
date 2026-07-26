@@ -14,10 +14,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from utils.alerts import monitor_operational_state
 from utils.config import validate_config
+from utils.deployment import deployment_plan, stage_environment
 from utils.heartbeat import heartbeat_snapshot, write_heartbeat
 from utils.logging_setup import setup_logger
 from utils.process_runner import run_stage_process
+from utils.queue_events import record_queue_event
 from utils.stage_result import (
     StageResult,
     StageStatus,
@@ -29,10 +32,10 @@ logger = setup_logger("run_24x7", "run_24x7.log")
 
 BASE_DIR = os.path.dirname(__file__)
 CYCLE_STEPS = [
-    "run_all.py",
-    "pipeline/publish_web.py",
-    "meta/run_fb.py",
-    "meta/run_ig.py",
+    ("run_all.py", None),
+    ("pipeline/publish_web.py", "web"),
+    ("meta/run_fb.py", "facebook"),
+    ("meta/run_ig.py", "instagram"),
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,
@@ -59,6 +62,7 @@ def run_step(
     *,
     heartbeat_callback=None,
     heartbeat_interval: float = 30.0,
+    extra_env: dict[str, str] | None = None,
 ) -> StageResult:
     timeout = _STEP_TIMEOUTS.get(script, _DEFAULT_STEP_TIMEOUT)
     stop_heartbeat = threading.Event()
@@ -75,7 +79,12 @@ def run_step(
         worker.start()
 
     try:
-        result = run_stage_process(script, base_dir=BASE_DIR, timeout=timeout)
+        result = run_stage_process(
+            script,
+            base_dir=BASE_DIR,
+            timeout=timeout,
+            extra_env=extra_env,
+        )
     finally:
         stop_heartbeat.set()
         if worker:
@@ -96,6 +105,7 @@ def run_cycle(cycle_number: int, *, heartbeat_interval: float = 30.0) -> StageRe
     started_wall = time.time()
     started_mono = time.monotonic()
     results: list[StageResult] = []
+    plan = deployment_plan()
 
     def pulse() -> None:
         write_heartbeat(
@@ -112,11 +122,25 @@ def run_cycle(cycle_number: int, *, heartbeat_interval: float = 30.0) -> StageRe
     logger.info("=" * 60)
     pulse()
 
-    for script in CYCLE_STEPS:
+    for script, channel in CYCLE_STEPS:
+        if channel and not plan.channel_enabled(channel):
+            result = StageResult(
+                stage=channel,
+                status=StageStatus.NO_WORK,
+                details={
+                    "disabled": True,
+                    "deployment_mode": plan.mode.value,
+                    "kill_switch": plan.kill_switches[channel],
+                },
+            )
+            results.append(result)
+            pulse()
+            continue
         result = run_step(
             script,
             heartbeat_callback=pulse,
             heartbeat_interval=heartbeat_interval,
+            extra_env=stage_environment(channel, plan) if channel else None,
         )
         results.append(result)
         pulse()
@@ -134,6 +158,13 @@ def run_cycle(cycle_number: int, *, heartbeat_interval: float = 30.0) -> StageRe
         cycle_finished_at=finished,
         stage_results=results,
     )
+    try:
+        alert_result = monitor_operational_state()
+        if alert_result.status == StageStatus.DEGRADED:
+            logger.warning("Entrega de alertas degradada: %s", alert_result.error_type)
+    except Exception:
+        # El canal de alertas nunca debe bloquear ni falsear el resultado del pipeline.
+        logger.exception("Falló el motor de alertas; el ciclo conserva su resultado")
     logger.info(
         "Ciclo #%s status=%s etapas aceptables=%s/%s",
         cycle_number,
@@ -169,9 +200,24 @@ def main() -> StageResult:
 
     interval = int(os.getenv("PIPELINE_24X7_INTERVAL_SECONDS", "3600"))
     heartbeat_interval = int(os.getenv("PIPELINE_24X7_HEARTBEAT_SECONDS", "30"))
+    plan = deployment_plan()
     cycle_number = _initial_cycle_number()
     cycle_results: list[StageResult] = []
-    logger.info("=== Supervisor 24x7 iniciado; intervalo=%ss ===", interval)
+    previous = (heartbeat_snapshot().get("data") or {}).get("deployment") or {}
+    previous_mode = str(previous.get("deployment_mode") or "")
+    if previous_mode != plan.mode.value:
+        record_queue_event(
+            stage="deployment",
+            status="changed",
+            reason="deployment_mode_changed",
+            metadata={"from": previous_mode or None, "to": plan.mode.value},
+        )
+    logger.info(
+        "=== Supervisor 24x7 iniciado; intervalo=%ss modo=%s canales=%s ===",
+        interval,
+        plan.mode.value,
+        sorted(plan.enabled_channels),
+    )
 
     while _running:
         cycle_number += 1

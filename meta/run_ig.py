@@ -70,7 +70,14 @@ def _sync_posted_state() -> int:
 
 def main() -> StageResult:
     started = time.monotonic()
-    if str(os.getenv("IG_PUBLISH_ENABLED", "true")).lower() in {"0", "false", "no", "off"}:
+    if str(os.getenv("IG_PUBLISH_ENABLED", "false")).strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "si",
+        "sí",
+    }:
         return StageResult("instagram", StageStatus.NO_WORK, details={"disabled": True})
     if (
         not IG_ACCOUNT_ID

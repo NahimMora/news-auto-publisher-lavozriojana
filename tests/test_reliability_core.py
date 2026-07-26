@@ -65,8 +65,13 @@ class SafeJsonTests(unittest.TestCase):
 
         self.path.write_text('[{"id": 1}', encoding="utf-8")
 
-        with self.assertRaises(JsonCorruptionError):
-            load_json(str(self.path), [])
+        with mock.patch.dict(
+            os.environ,
+            {"LVR_QUARANTINE_DIR": str(self.root / "quarantine")},
+            clear=False,
+        ):
+            with self.assertRaises(JsonCorruptionError):
+                load_json(str(self.path), [])
 
         self.assertEqual('[{"id": 1}', self.path.read_text(encoding="utf-8"))
         quarantined = list((self.root / "quarantine").glob("state.json.*.corrupt"))

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from utils.deployment import deployment_metadata
 from utils.file_manager import JsonCorruptionError, JsonStateError, load_json, save_json
 from utils.paths import data_dir
 from utils.stage_result import StageResult
@@ -38,7 +39,7 @@ def write_heartbeat(
         for result in stage_results
     ]
     payload = {
-        "version": 1,
+        "version": 2,
         "pid": int(pid or os.getpid()),
         "supervisor_status": str(supervisor_status),
         "cycle_number": int(cycle_number),
@@ -50,6 +51,7 @@ def write_heartbeat(
         "cycle_finished_at": _iso_from_timestamp(cycle_finished_at),
         "stages": stages,
         "queues": collect_queue_metrics(),
+        "deployment": deployment_metadata(),
     }
     save_json(heartbeat_path(), payload)
     return payload

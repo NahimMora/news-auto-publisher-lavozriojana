@@ -19,6 +19,7 @@ class StageStatus(str, Enum):
     NO_WORK = "no_work"
     DEGRADED = "degraded"
     FAILED = "failed"
+    BLOCKED = "blocked"
 
 
 _EXIT_CODES = {
@@ -26,6 +27,7 @@ _EXIT_CODES = {
     StageStatus.NO_WORK: 0,
     StageStatus.DEGRADED: 2,
     StageStatus.FAILED: 1,
+    StageStatus.BLOCKED: 3,
 }
 
 
@@ -159,6 +161,8 @@ def aggregate_results(stage: str, results: Iterable[StageResult], *, duration_se
         status = StageStatus.DEGRADED if any(child.acceptable for child in children) else StageStatus.FAILED
     elif StageStatus.DEGRADED in statuses:
         status = StageStatus.DEGRADED
+    elif StageStatus.BLOCKED in statuses:
+        status = StageStatus.BLOCKED
     elif StageStatus.SUCCESS in statuses:
         status = StageStatus.SUCCESS
     else:

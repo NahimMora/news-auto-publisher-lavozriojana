@@ -192,7 +192,11 @@ class CliStatusTests(unittest.TestCase):
         child_env = run.call_args.kwargs["env"]
         self.assertEqual("off", child_env["WEB_PUBLISH_TARGET"])
         self.assertEqual("false", child_env["FB_PUBLISH_ENABLED"])
+        self.assertEqual("observe", child_env["PIPELINE_DEPLOYMENT_MODE"])
+        self.assertEqual("false", child_env["CANARY_ENABLED"])
+        self.assertEqual("false", child_env["ALERTS_ENABLED"])
         self.assertNotEqual(str(self.root), child_env["LVR_DATA_DIR"])
+        self.assertNotEqual(str(self.root), child_env["LVR_BACKUP_DIR"])
 
 
 class SupervisorSignalTests(unittest.TestCase):

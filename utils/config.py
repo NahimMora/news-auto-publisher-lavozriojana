@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 from urllib.parse import urlsplit
 
+from utils.deployment import deployment_plan
 from utils.stage_result import StageResult, StageStatus
 
 
@@ -26,6 +27,7 @@ SECRET_FIELDS = {
     "IG_APP_SECRET",
     "R2_ACCESS_KEY_ID",
     "R2_SECRET_ACCESS_KEY",
+    "ALERT_WEBHOOK_URL",
 }
 
 
@@ -323,6 +325,9 @@ def validate_config(
     _positive_int(report, env, "R2_RETRY_COUNT", 3, maximum=20)
     _positive_int(report, env, "R2_CONNECT_TIMEOUT_SECONDS", 10, maximum=600)
     _positive_int(report, env, "R2_READ_TIMEOUT_SECONDS", 30, maximum=1800)
+    _positive_int(report, env, "ALERT_DEDUP_SECONDS", 3600, minimum=1, maximum=86400 * 30)
+    _positive_int(report, env, "ALERT_MAX_DELIVERY_ATTEMPTS", 3, minimum=1, maximum=20)
+    _positive_int(report, env, "DISK_FREE_MIN_MB", 1024, minimum=1, maximum=1024 * 1024)
 
     for name, default in (
         ("JSON_BACKUP_ENABLED", "true"),
@@ -346,6 +351,9 @@ def validate_config(
         ("SCRAPER_NR_DEPORTES_ENABLED", "true"),
         ("SCRAPER_NR_INTERIOR_ENABLED", "true"),
         ("SCRAPER_NR_INTERNACIONALES_ENABLED", "true"),
+        ("ALERTS_ENABLED", "false"),
+        ("ALERT_RECOVERY_ENABLED", "true"),
+        ("CANARY_ENABLED", "false"),
     ):
         _boolean(report, env, name, default)
 
@@ -453,6 +461,37 @@ def validate_config(
     if validate_openai:
         _required(report, env, "OPENAI_API_KEY")
 
+    if scope in {"core", "all", "supervisor"}:
+        plan = deployment_plan(env)
+        for issue in plan.errors:
+            report.add(
+                "error",
+                issue["code"],
+                issue["field"],
+                issue["message"],
+            )
+
+    if _value(env, "ALERT_WEBHOOK_URL"):
+        _url(report, env, "ALERT_WEBHOOK_URL", required=False)
+    preflight_path = _value(env, "WEBAPP_PREFLIGHT_PATH")
+    if preflight_path and not preflight_path.startswith("/"):
+        report.add(
+            "error",
+            "invalid_endpoint_path",
+            "WEBAPP_PREFLIGHT_PATH",
+            "WEBAPP_PREFLIGHT_PATH debe ser una ruta absoluta que empiece con /",
+        )
+    cleanup_path = _value(env, "WEBAPP_CANARY_DELETE_PATH")
+    if cleanup_path and (
+        not cleanup_path.startswith("/") or "{id}" not in cleanup_path
+    ):
+        report.add(
+            "error",
+            "invalid_endpoint_path",
+            "WEBAPP_CANARY_DELETE_PATH",
+            "WEBAPP_CANARY_DELETE_PATH debe empezar con / e incluir {id}",
+        )
+
     return report
 
 
@@ -479,7 +518,14 @@ def config_inventory() -> dict[str, list[str]]:
         "optional": sorted(
             {
                 "ARTICLE_MAX_AGE_DAYS",
+                "ALERTS_ENABLED",
+                "ALERT_DEDUP_SECONDS",
+                "ALERT_MAX_DELIVERY_ATTEMPTS",
+                "ALERT_RECOVERY_ENABLED",
+                "ALERT_WEBHOOK_URL",
+                "CANARY_ENABLED",
                 "DEDUP_SIMILARITY_THRESHOLD",
+                "DISK_FREE_MIN_MB",
                 "EDITORIAL_ENRICHER_MAX_REVISIONS",
                 "EDITORIAL_ENRICHER_MIN_SCORE",
                 "EDITORIAL_ENRICHER_MODEL",
@@ -516,6 +562,11 @@ def config_inventory() -> dict[str, list[str]]:
                 "JSON_LOCK_TIMEOUT_SECONDS",
                 "LOG_BACKUP_COUNT",
                 "LOG_MAX_MB",
+                "LVR_BACKUP_REFERENCE",
+                "LVR_COMMIT_SHA",
+                "LVR_DEPLOYED_AT",
+                "LVR_DEPLOYMENT_OPERATOR",
+                "LVR_RELEASE_TAG",
                 "MAX_DEPORTES_PER_RUN",
                 "META_GRAPH_API",
                 "OPENAI_FALLBACK_MODE",
@@ -526,6 +577,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "PIPELINE_24X7_INTERVAL_SECONDS",
                 "PIPELINE_24X7_HEARTBEAT_SECONDS",
                 "PIPELINE_24X7_STALE_SECONDS",
+                "PIPELINE_DEPLOYMENT_MODE",
                 "PUBLISH_BATCH_PAUSE_SECONDS",
                 "PUBLISH_BATCH_SIZE",
                 "PUBLISH_DELAY_MAX_SECONDS",
@@ -568,12 +620,17 @@ def config_inventory() -> dict[str, list[str]]:
                 "WEBAPP_REQUEST_RETRIES",
                 "WEBAPP_REQUEST_TIMEOUT",
                 "WEBAPP_RETRY_SLEEP_SECONDS",
+                "WEBAPP_PREFLIGHT_PATH",
+                "WEBAPP_CANARY_DELETE_PATH",
             }
         ),
         "development": sorted(
             {
                 "CUSTOM_POST_DRY_RUN",
+                "LVR_ALERT_OUTBOX_PATH",
+                "LVR_ALERT_STATE_PATH",
                 "LVR_BACKUP_DIR",
+                "LVR_CANARY_STATE_PATH",
                 "LVR_DATA_DIR",
                 "LVR_FOTOS_DIR",
                 "LVR_LOGS_DIR",
@@ -584,6 +641,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "META_QUEUE_PATH",
                 "SOCIAL_QUEUE_PATH",
                 "WEB_PUBLISHED_HISTORY_PATH",
+                "FB_POSTED_PATH",
                 "WEB_QUEUE_PATH",
             }
         ),
@@ -630,6 +688,9 @@ def safe_config_snapshot(values: Mapping[str, str] | None = None) -> dict[str, s
                 "ARTICLE_",
                 "DEDUP_",
                 "PUBLISH_",
+                "ALERT",
+                "CANARY_",
+                "DISK_",
             )
         ):
             continue

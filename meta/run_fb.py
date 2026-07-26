@@ -52,7 +52,14 @@ def _sync_posted_state() -> int:
 
 def main() -> StageResult:
     started = time.monotonic()
-    if str(os.getenv("FB_PUBLISH_ENABLED", "true")).lower() in {"0", "false", "no", "off"}:
+    if str(os.getenv("FB_PUBLISH_ENABLED", "false")).strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "si",
+        "sí",
+    }:
         return StageResult(
             "facebook",
             StageStatus.NO_WORK,
