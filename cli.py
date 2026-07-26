@@ -13,10 +13,24 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from dotenv import load_dotenv
+
+# Las rutas y varios clientes se fijan al importar sus módulos. El entorno debe
+# estar cargado antes de cualquier import de ``utils`` para que .env sea efectivo.
+load_dotenv()
+
 from utils.config import diagnose_environment, validate_config
+from utils.alerts import alert_test, monitor_operational_state
+from utils.canary import run_canary
+from utils.deployment import deployment_plan, stage_environment
 from utils.heartbeat import collect_queue_metrics, heartbeat_snapshot
 from utils.file_manager import JsonStateError, backup_json, restore_json
+from utils.facebook_reconcile import (
+    apply_facebook_decisions,
+    build_facebook_report,
+)
 from utils.paths import ROOT_DIR, data_dir, logs_dir
+from utils.preflight import PREFLIGHT_SCOPES, run_preflight
 from utils.process_runner import run_stage_process
 from utils.stage_result import StageResult, StageStatus, aggregate_results
 
@@ -38,10 +52,10 @@ LOG_FILES = {
 }
 
 CYCLE_SCRIPTS = [
-    ("run_all.py", 3600),
-    ("pipeline/publish_web.py", 3600),
-    ("meta/run_fb.py", 600),
-    ("meta/run_ig.py", 600),
+    ("run_all.py", 3600, None),
+    ("pipeline/publish_web.py", 3600, "web"),
+    ("meta/run_fb.py", 600, "facebook"),
+    ("meta/run_ig.py", 600, "instagram"),
 ]
 
 
@@ -178,6 +192,7 @@ def build_status_snapshot(*, now: float | int | None = None) -> dict:
         "stages": (heartbeat.get("data") or {}).get("stages", []),
         "queues": queues,
         "queue_errors": queue_errors,
+        "deployment": (heartbeat.get("data") or {}).get("deployment"),
     }
 
 
@@ -308,9 +323,14 @@ def cmd_run_once(args) -> int:
                     "LVR_LOGS_DIR": os.path.join(temp_root, "logs"),
                     "LVR_OUTPUT_DIR": os.path.join(temp_root, "output"),
                     "LVR_FOTOS_DIR": os.path.join(temp_root, "fotos"),
+                    "LVR_BACKUP_DIR": os.path.join(temp_root, "backups"),
+                    "LVR_QUARANTINE_DIR": os.path.join(temp_root, "quarantine"),
+                    "PIPELINE_DEPLOYMENT_MODE": "observe",
                     "WEB_PUBLISH_TARGET": "off",
                     "FB_PUBLISH_ENABLED": "false",
                     "IG_PUBLISH_ENABLED": "false",
+                    "CANARY_ENABLED": "false",
+                    "ALERTS_ENABLED": "false",
                     "PRIVATE_API_KEY": "PENDIENTE",
                     "WEBAPP_API_KEY": "PENDIENTE",
                     "OPENAI_API_KEY": "PENDIENTE",
@@ -346,10 +366,40 @@ def cmd_run_once(args) -> int:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return result.exit_code
 
-    results = [
-        run_stage_process(script, base_dir=BASE_DIR, timeout=timeout)
-        for script, timeout in CYCLE_SCRIPTS
-    ]
+    report = validate_config(scope="supervisor")
+    if not report.ok:
+        result = StageResult(
+            "run_once",
+            StageStatus.FAILED,
+            failed=len(report.errors),
+            error_type="configuration_error",
+            details={"config": report.to_dict(), "production_calls": False},
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return result.exit_code
+    plan = deployment_plan()
+    results = []
+    for script, timeout, channel in CYCLE_SCRIPTS:
+        if channel and not plan.channel_enabled(channel):
+            results.append(
+                StageResult(
+                    channel,
+                    StageStatus.NO_WORK,
+                    details={
+                        "disabled": True,
+                        "deployment_mode": plan.mode.value,
+                    },
+                )
+            )
+            continue
+        results.append(
+            run_stage_process(
+                script,
+                base_dir=BASE_DIR,
+                timeout=timeout,
+                extra_env=stage_environment(channel, plan) if channel else None,
+            )
+        )
     aggregate = aggregate_results("run_once", results)
     payload = aggregate.to_dict()
     if getattr(args, "json", False):
@@ -377,6 +427,97 @@ def cmd_doctor(args) -> int:
             print(yellow(f"  AVISO {issue['field']}: {issue['message']}"))
         print(f"Dependencias Python: {result.details['python_dependencies']}")
         print(f"Binarios de sistema: {result.details['system_binaries']}")
+    return result.exit_code
+
+
+def cmd_preflight(args) -> int:
+    result = run_preflight(getattr(args, "scope", "all"))
+    payload = result.to_dict()
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"Preflight {args.scope}: {result.status.value}")
+        print(
+            f"Procesados={result.processed} exitosos={result.succeeded} "
+            f"fallidos={result.failed} diferidos={result.deferred}"
+        )
+    return result.exit_code
+
+
+def cmd_canary(args) -> int:
+    channels = [
+        value.strip()
+        for value in str(getattr(args, "channels", "") or "").split(",")
+        if value.strip()
+    ]
+    result = run_canary(
+        args.input,
+        channels,
+        dry_run=bool(getattr(args, "dry_run", False)),
+        confirm_external_publication=bool(
+            getattr(args, "confirm_external_publication", False)
+        ),
+        cleanup=bool(getattr(args, "cleanup", False)),
+    )
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    return result.exit_code
+
+
+def cmd_reconcile_facebook(args) -> int:
+    try:
+        if getattr(args, "report_only", False):
+            report = build_facebook_report(
+                verify_meta=not bool(getattr(args, "no_verify_meta", False))
+            )
+            if getattr(args, "output", None):
+                destination = Path(args.output).expanduser().resolve()
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+                temporary.write_text(
+                    json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                os.replace(temporary, destination)
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            ambiguous = (
+                report["counts"]["ambiguous"]
+                + report["counts"]["invalid"]
+                + report["counts"]["blocked_missing_web_url"]
+            )
+            return 2 if ambiguous else 0
+        result = apply_facebook_decisions(args.apply)
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    except (OSError, ValueError, JsonStateError, json.JSONDecodeError) as exc:
+        result = StageResult(
+            "reconcile_facebook",
+            StageStatus.FAILED,
+            failed=1,
+            error_type=type(exc).__name__,
+            details={"message": str(exc)},
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return result.exit_code
+
+
+def cmd_alert_test(args) -> int:
+    result = alert_test()
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    return result.exit_code
+
+
+def cmd_alert_check(args) -> int:
+    try:
+        result = monitor_operational_state()
+    except JsonStateError as exc:
+        result = StageResult(
+            "alerts",
+            StageStatus.FAILED,
+            failed=1,
+            error_type="state_error",
+            details={"message": str(exc)},
+        )
+    print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return result.exit_code
 
 
@@ -436,9 +577,6 @@ def cmd_videos(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from dotenv import load_dotenv
-
-    load_dotenv()
     parser = argparse.ArgumentParser(
         prog="python cli.py",
         description="Control del AutoPublicador La Voz Riojana",
@@ -466,6 +604,55 @@ def main(argv: list[str] | None = None) -> int:
         default="all",
     )
 
+    preflight_parser = sub.add_parser(
+        "preflight",
+        help="Verifica entorno e integraciones sin publicar contenido",
+    )
+    preflight_parser.add_argument("--scope", choices=PREFLIGHT_SCOPES, default="all")
+    preflight_parser.add_argument("--json", action="store_true")
+
+    canary_parser = sub.add_parser(
+        "canary",
+        help="Ejecuta una única noticia canary fuera de las colas generales",
+    )
+    canary_parser.add_argument("--input", required=True, help="Fixture JSON canary")
+    canary_parser.add_argument(
+        "--channels",
+        required=True,
+        help="Lista separada por comas: web,facebook,instagram",
+    )
+    canary_parser.add_argument("--dry-run", action="store_true")
+    canary_parser.add_argument("--cleanup", action="store_true")
+    canary_parser.add_argument("--confirm-external-publication", action="store_true")
+    canary_parser.add_argument("--json", action="store_true")
+
+    reconcile_parser = sub.add_parser(
+        "reconcile-facebook",
+        help="Clasifica el backlog de Facebook o aplica decisiones aprobadas",
+    )
+    reconcile_mode = reconcile_parser.add_mutually_exclusive_group(required=True)
+    reconcile_mode.add_argument("--report-only", action="store_true")
+    reconcile_mode.add_argument("--apply", help="Archivo JSON de decisiones aprobadas")
+    reconcile_parser.add_argument("--output", help="Exporta el reporte JSON")
+    reconcile_parser.add_argument(
+        "--no-verify-meta",
+        action="store_true",
+        help="No consulta IDs externos; queda indicado en el reporte",
+    )
+    reconcile_parser.add_argument("--json", action="store_true")
+
+    alert_test_parser = sub.add_parser(
+        "alert-test",
+        help="Genera una alerta de prueba sin afectar el pipeline",
+    )
+    alert_test_parser.add_argument("--json", action="store_true")
+
+    alert_check_parser = sub.add_parser(
+        "alert-check",
+        help="Evalúa heartbeat, colas y eventos y entrega alertas pendientes",
+    )
+    alert_check_parser.add_argument("--json", action="store_true")
+
     video_parser = sub.add_parser("videos", help="Abre la UI local de Reels")
     video_parser.add_argument("--host", default="127.0.0.1")
     video_parser.add_argument("--port", type=int, default=8765)
@@ -491,6 +678,11 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "run-once": cmd_run_once,
         "doctor": cmd_doctor,
+        "preflight": cmd_preflight,
+        "canary": cmd_canary,
+        "reconcile-facebook": cmd_reconcile_facebook,
+        "alert-test": cmd_alert_test,
+        "alert-check": cmd_alert_check,
         "videos": cmd_videos,
         "logs": cmd_logs,
         "backup": cmd_backup,
