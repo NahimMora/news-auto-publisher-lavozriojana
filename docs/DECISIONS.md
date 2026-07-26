@@ -158,3 +158,92 @@ credenciales de prueba. El acceso remoto a la UI no está soportado.
 
 **Revisar nuevamente cuando**: se diseñe autenticación y despliegue seguro de esa
 interfaz.
+
+### 2026-07-26 — CI Windows-first sin despliegue automático
+
+**Decisión**: ejecutar instalación, `pip check`, suite con deprecaciones como error,
+`compileall`, `doctor core`, E2E dry-run y `git diff --check` en `windows-latest`.
+
+**Motivo**: el host y los contratos de proceso son Windows-first.
+
+**Alternativas rechazadas**: CI sólo Linux; usar secretos productivos; desplegar desde
+el workflow.
+
+**Consecuencias**: el mismo conjunto de comandos se reproduce localmente. La
+protección de `main` debe exigir el check después de publicar el workflow.
+
+### 2026-07-26 — Preflight externo no destructivo
+
+**Decisión**: fuentes, OpenAI, CMS y Meta se verifican sin publicar. R2 usa únicamente
+un objeto UUID bajo `healthchecks/` y exige cleanup confirmado.
+
+**Motivo**: un mock no verifica autenticación, permisos, cuota, DNS ni HTML vivo.
+
+**Alternativas rechazadas**: crear una noticia CMS en el preflight general; simular
+salud cuando falta endpoint o credencial.
+
+**Consecuencias**: lo no verificable es `blocked` con exit 3. Un cleanup R2 incierto
+no puede ser `success`.
+
+### 2026-07-26 — Canary explícito y outcomes ambiguos
+
+**Decisión**: el canary requiere `CANARY_ENABLED=true` y confirmación por argumento,
+queda fuera de colas y reserva idempotencia antes de llamar al tercero.
+
+**Motivo**: validar escritura real con máximo impacto de una publicación por canal.
+
+**Alternativas rechazadas**: consumir la cola general; reintentar timeouts a ciegas;
+usar contenido sensible o breaking.
+
+**Consecuencias**: una respuesta ambigua queda registrada y requiere conciliación.
+El cleanup puede ser manual si no existe endpoint seguro.
+
+### 2026-07-26 — Alertas por outbox y adaptador opcional
+
+**Decisión**: separar detección, dedupe, persistencia y entrega. La fuente durable es
+`alert_outbox.json`; el webhook es opcional y está apagado por defecto.
+
+**Motivo**: la falta o caída del proveedor de avisos no debe bloquear el pipeline.
+
+**Alternativas rechazadas**: dashboard nuevo; acoplar detección a un proveedor; enviar
+secretos o URLs internas.
+
+**Consecuencias**: un watchdog externo sigue siendo necesario para detectar la muerte
+del proceso completo.
+
+### 2026-07-26 — Arranque progresivo y kill switches autoritativos
+
+**Decisión**: iniciar en `observe` y avanzar manualmente por `web_only`, un modo social
+parcial y `all`. El modo nunca sobrepasa los switches de web, Facebook o Instagram.
+
+**Motivo**: reducir radio de impacto y evitar que la presencia de una credencial
+habilite publicaciones.
+
+**Alternativas rechazadas**: encender todos los canales al iniciar; escalar modos
+automáticamente; aumentar límites en el primer despliegue.
+
+**Consecuencias**: las contradicciones fallan en `doctor`; el límite inicial es una
+publicación por canal y ciclo.
+
+### 2026-07-26 — Conciliación conservadora de Facebook
+
+**Decisión**: reportar por identidad estable y evidencia; aplicar sólo decisiones
+ligadas al `report_id` actual.
+
+**Motivo**: el backlog histórico puede contener publicaciones realizadas, expiradas o
+sin URL web y no debe reencolarse en masa.
+
+**Alternativas rechazadas**: similitud de título como evidencia; vaciar la cola;
+reintentar ambiguos; marcar publicado sin ID.
+
+**Consecuencias**: los elementos no decididos permanecen intactos y trazables.
+
+### 2026-07-26 — Condición para declarar 24/7
+
+**Decisión**: no declarar 24/7 hasta completar gates A–I, merge aprobado, tag posterior
+al merge y evidencia externa por canal.
+
+**Motivo**: código verde y contratos mockeados no prueban el host ni los terceros.
+
+**Consecuencias**: el tag propuesto `v1.0.0-reliability-baseline` no se crea durante
+esta preparación; cualquier integración `blocked` impide habilitar su canal.

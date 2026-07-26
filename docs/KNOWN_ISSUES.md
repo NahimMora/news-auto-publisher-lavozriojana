@@ -1,6 +1,6 @@
 # Problemas conocidos
 
-Última actualización: 2026-07-23. Los problemas resueltos no se borran.
+Última actualización: 2026-07-26. Los problemas resueltos no se borran.
 
 ## 1. Fallos de Facebook sin detalle
 
@@ -243,3 +243,102 @@
 - Corrección: lectura del mínimo alfa mediante `getextrema`, API vigente.
 - Evidencia: tests de layout ejecutados con `DeprecationWarning` tratado como error.
 - Estado actual: **resuelto**.
+
+## 32. CI y checks obligatorios ausentes
+
+- Reproducción 2026-07-26: PR #1 sin `statusCheckRollup`; `main` sin protección.
+- Corrección: `.github/workflows/reliability.yml` y gate local de seguridad.
+- Evidencia: `tests.test_ci_safety` y comandos de auditoría.
+- Estado actual: **corregido en código, bloqueado en GitHub** hasta publicar la rama,
+  obtener check verde y configurar protección.
+
+## 33. Facebook e Instagram habilitados por default efectivo
+
+- Reproducción: sin la variable, ambos runners usaban default `"true"`, distinto de
+  `utils/config.py` y `.env.example`.
+- Corrección: sólo publican ante un valor booleano verdadero explícito.
+- Evidencia: `DeploymentModeTests.test_runners_are_disabled_when_switch_is_missing`.
+- Estado actual: **resuelto**.
+
+## 34. `.env` se cargaba después de fijar rutas del CLI
+
+- Reproducción: `cli.py` importaba `utils.paths` antes de `load_dotenv()`.
+- Corrección: carga del entorno antes de cualquier módulo operativo.
+- Evidencia: orden de imports, CI con `PYTHON_DOTENV_DISABLED=1` y pruebas aisladas.
+- Estado actual: **resuelto**.
+
+## 35. Suite no era hermética con cuarentena global
+
+- Reproducción: 146/147 tests; el test de JSON truncado asumía cuarentena vecina aun
+  con `LVR_QUARANTINE_DIR` configurado.
+- Corrección: el test declara su cuarentena temporal.
+- Evidencia: suite completa aislada.
+- Estado actual: **resuelto**.
+
+## 36. No existía preflight real seguro
+
+- Corrección: scopes sources/OpenAI/R2/CMS/Facebook/Instagram/filesystem/supervisor y
+  estado `blocked`.
+- Evidencia: `tests.test_preflight`; fuentes 10/10, filesystem y supervisor reales
+  pasaron en modo seguro.
+- Estado actual: **parcialmente resuelto**. OpenAI, R2, CMS y Meta siguen bloqueados
+  por autorización, credenciales o endpoint.
+
+## 37. No había arranque progresivo
+
+- Corrección: modos explícitos, contradicciones fatales, límites de uno por ciclo y
+  kill switches autoritativos.
+- Evidencia: `tests.test_deployment_modes`.
+- Estado actual: **resuelto en código**; los ciclos de observación no se ejecutaron.
+
+## 38. No existía canary aislado
+
+- Corrección: gate doble, categorías seguras, un elemento, idempotencia, evidencia y
+  cleanup separado.
+- Evidencia: `tests.test_canary`.
+- Estado actual: **resuelto en código, bloqueado externamente** hasta una ventana
+  autorizada.
+
+## 39. Backlog Facebook sin clasificación reproducible
+
+- Corrección: reporte read-only y aplicación por decisiones.
+- Evidencia: tests y reporte sobre copia: 23 total, 1 publicada, 3 pendientes válidas,
+  19 sin URL web, cero ambiguas/inválidas; cola original intacta.
+- Estado actual: **mitigado**. Facebook sigue bloqueado hasta resolver las 19 URLs y
+  aprobar decisiones.
+
+## 40. Sin alertas operativas mínimas
+
+- Corrección: detector, dedupe, recovery, outbox y webhook público opcional.
+- Evidencia: `tests.test_alerts` y `alert-test` local.
+- Estado actual: **resuelto en código**. Falta proveedor real y watchdog externo.
+
+## 41. Tiempo Popular cambió variante de host/slash
+
+- Reproducción: preflight vivo devolvió cero enlaces para las cuatro secciones al
+  encontrar URLs sin `www` y sin slash final.
+- Corrección: validación por host normalizado y slash opcional en el scraper
+  compartido.
+- Evidencia: test específico y segundo preflight 4/4 `success`; total fuentes 10/10.
+- Estado actual: **resuelto**.
+
+## 42. Documentación contradecía una ejecución productiva previa
+
+- Reproducción: supervisor real activo y heartbeat con publicaciones, mientras
+  `CURRENT_STATE.md` decía que producción no se había iniciado.
+- Tratamiento: supervisor detenido antes de cambios, hecho documentado y defaults
+  seguros de `observe`.
+- Estado actual: **mitigado**. La ejecución previa no es evidencia de canary ni de
+  readiness.
+
+## 43. CMS sin endpoint read-only confirmado
+
+- El código exige `WEBAPP_PREFLIGHT_PATH` y capacidad declarada.
+- Estado actual: **bloqueado por entorno/repositorio externo**. No se simula éxito ni
+  se crea una publicación durante el preflight general.
+
+## 44. Release y branch protection pendientes
+
+- Propuesta: `v1.0.0-reliability-baseline` después de merge aprobado.
+- Estado actual: **bloqueado por proceso externo**. No se creó tag, no se hizo merge y
+  no se declaró producción lista.

@@ -1,6 +1,6 @@
 # Arquitectura
 
-Última actualización: 2026-07-23.
+Última actualización: 2026-07-26.
 
 ## Stack y límites
 
@@ -19,8 +19,8 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 
 | Componente | Responsabilidad |
 |---|---|
-| `cli.py` | start/stop/status, diagnóstico, dry-run local, backup y restore |
-| `run_24x7.py` | loop, señales, heartbeat, agregación de resultados |
+| `cli.py` | start/stop/status, doctor, preflight, canary, conciliación, alertas, backup y restore |
+| `run_24x7.py` | loop, señales, modo progresivo, heartbeat, alertas y agregación |
 | `run_all.py` | scrapers y reescritura como subetapas estructuradas |
 | `scraping/base_*.py`, `scraping/runner.py` | contrato de fuente, parseo, persistencia cola-antes-historial |
 | `openIA/rewrite_news.py` | cola durable, reescritura, clasificación, captions y fan-out web/meta |
@@ -29,10 +29,15 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `utils/social_queue.py` | estados independientes de Facebook/Instagram |
 | `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff |
 | `utils/file_manager.py` | locks, lectura estricta, atomicidad, backups, cuarentena y restore |
-| `utils/stage_result.py` | contrato `success/no_work/degraded/failed` |
+| `utils/stage_result.py` | contrato `success/no_work/degraded/failed/blocked` |
 | `utils/heartbeat.py` | estado del supervisor y métricas de colas |
 | `utils/queue_events.py` | trazabilidad terminal y de fallbacks |
 | `utils/config.py` | validación y diagnóstico seguro |
+| `utils/deployment.py` | modos progresivos, kill switches, límites y fingerprint |
+| `utils/preflight.py` | verificaciones read-only y prueba reversible de R2 |
+| `utils/canary.py` | una publicación aislada, gated e idempotente |
+| `utils/facebook_reconcile.py` | reporte conservador y decisiones explícitas |
+| `utils/alerts.py` | detección, dedupe, outbox y entrega opcional |
 | `video_reel_manager.py` | UI manual local y uploads controlados |
 
 ## Contrato de resultados
@@ -51,6 +56,7 @@ duration_seconds, error_type, error_code, next_retry_at, details, exit_code
 | `no_work` | ejecución sana sin elementos seleccionables | 0 |
 | `degraded` | éxito parcial, rate limit o capacidad reducida | 2 |
 | `failed` | fallo funcional sin resultado aceptable | 1 |
+| `blocked` | faltó credencial, endpoint, entorno o autorización | 3 |
 
 `0/N` con `N > 0` no puede ser `success`. El runner también rechaza un proceso que
 sale 0 sin emitir resultado estructurado.
@@ -140,7 +146,64 @@ no asumir que el éxito de Facebook implica el de Instagram.
 
 ## Despliegue y rollback
 
-No hay CI/CD ni staging externo dentro de este repositorio. El procedimiento de
-backup, restore y rollback está en `docs/RUNBOOK.md`. Antes de habilitar un target
-externo, `doctor` debe validar su alcance y se requiere un smoke test controlado fuera
-de producción.
+Hay CI de validación, pero no despliegue automático ni staging externo. El
+procedimiento de backup, restore y rollback está en `docs/RUNBOOK.md`.
+
+### Control de canales
+
+```text
+PIPELINE_DEPLOYMENT_MODE
+  → canales solicitados
+  → intersección con kill switches individuales
+  → máximo 1 por canal/ciclo
+  → StageResult + heartbeat
+```
+
+`observe` ejecuta scraping y reescritura, pero no llama publicadores ni consume
+permanentemente las colas de publicación. Cualquier contradicción entre modo y kill
+switch falla antes del arranque.
+
+### Preflight
+
+```text
+sources ─┐
+openai ──┤
+r2 ──────┤
+cms ─────┼→ aggregate_preflight → success/degraded/failed/blocked
+facebook ┤
+instagram┤
+filesystem
+supervisor
+```
+
+Las fuentes se parsean en memoria. OpenAI usa un prompt mínimo sanitizado. CMS y Meta
+son GET read-only. R2 crea un objeto único bajo `healthchecks/`, verifica lectura,
+elimina y confirma ausencia. El filesystem opera sólo en un temporal del mismo
+volumen.
+
+### Canary
+
+El canary no entra en las colas generales. `canary_runs.json` reserva cada canal
+antes de la llamada. Si el proceso se corta con outcome desconocido, el estado queda
+`ambiguous` y una repetición se niega a publicar. Los IDs y URLs externos son la
+evidencia de completitud.
+
+### Conciliación Facebook
+
+El reporte combina cola, `fb_posted.json`, keys canónicas, estados y evidencia
+externa. El título no es identidad. La aplicación exige un `report_id` vigente y
+decisiones por elemento; no elimina entradas.
+
+### Alertas
+
+```text
+snapshot/queue_events/quarantine
+  → condiciones
+  → dedupe + recovery
+  → alert_outbox.json
+  → webhook público opcional
+```
+
+El fallo del notificador queda diferenciado y no cambia el resultado del pipeline.
+Un watchdog externo todavía es necesario para alertar si el proceso completo muere y
+ya no puede ejecutar su propio detector.

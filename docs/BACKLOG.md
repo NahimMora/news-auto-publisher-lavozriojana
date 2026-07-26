@@ -1,60 +1,67 @@
 # Backlog
 
-Última actualización: 2026-07-23. Los ítems resueltos se conservan para mantener
-trazabilidad.
+Última actualización: 2026-07-26. Los ítems resueltos se conservan.
 
-## Cerrado por la línea de base de confiabilidad
+## Cerrado por la línea de base del 2026-07-23
 
-- [x] Contrato estructurado de etapas y códigos de salida.
-- [x] Eliminar falso `OK` de `0/N` y del parsing de palabras del CLI.
-- [x] Heartbeat persistente, detección stale y tamaños de cola.
-- [x] Logs rotativos para todos los clientes externos con redacción de secretos.
-- [x] `psutil` declarado en `requirements.txt`.
-- [x] JSON atómico, locks interproceso, cuarentena, backup y restore.
-- [x] Reescritura recuperable después de interrupción.
-- [x] Estados Pending/Processing/Completed/Failed/Expired/Dead-letter.
-- [x] Trazabilidad de expiraciones, descartes y fallbacks.
-- [x] Configuración tipada y comando `doctor`.
-- [x] Contratos mockeados de CMS, Facebook, Instagram y R2.
-- [x] Fixtures/tests para diez secciones de scraping.
-- [x] E2E local de 17 escenarios sin producción.
-- [x] Seguridad de UI manual, uploads, paths y SSRF.
-- [x] README y runbook operativo.
+- [x] Contrato estructurado y códigos de salida.
+- [x] Heartbeat, stale y métricas de colas.
+- [x] Logs rotativos y redacción de secretos.
+- [x] `requirements.txt` completo, incluido `psutil`.
+- [x] JSON atómico, locks, backup, restore y cuarentena.
+- [x] Reescritura recuperable y estados terminales trazables.
+- [x] Configuración tipada y `doctor`.
+- [x] Contratos mockeados de CMS, Meta y R2.
+- [x] Fixtures para diez secciones y E2E local de 17 escenarios.
+- [x] Seguridad de UI, uploads, paths y SSRF.
 
-## Alta prioridad antes de habilitar producción
+## Cerrado en preparación 24/7 del 2026-07-26
 
-- [ ] Ejecutar smoke tests con cuentas y endpoints **de prueba** para CMS, Meta, R2 y
-  OpenAI. Estado: bloqueado por falta de infraestructura/credenciales no productivas.
-- [ ] Conciliar el backlog histórico de Facebook con la cuenta real. El código ahora
-  registra causa y evidencia, pero la causa externa original no puede inferirse de los
-  logs perdidos.
-- [ ] Verificar el primer despliegue operativo: backup, `doctor`, heartbeat y un ciclo
-  observado sin forzar publicaciones.
+- [x] Workflow CI Windows reproducible y aislado.
+- [x] Gate que verifica `production_calls=false`.
+- [x] Estado `blocked` no exitoso.
+- [x] `preflight` para sources, OpenAI, R2, CMS, Facebook, Instagram, filesystem y
+  supervisor.
+- [x] Canary gated, una vez por canal, idempotente y sin cola general.
+- [x] Conciliación Facebook report-only y aplicación por decisiones.
+- [x] Motor de alertas con dedupe, recovery, outbox y webhook opcional.
+- [x] Modos `observe`, `web_only`, `web_facebook`, `web_instagram`, `all`.
+- [x] Kill switches autoritativos y límite inicial de uno por ciclo.
+- [x] Heartbeat con trazabilidad de despliegue.
+- [x] Variante de host/slash final de Tiempo Popular cubierta por test y preflight
+  vivo.
 
-## Media prioridad de mantenimiento
+## Bloqueos para habilitar producción
 
-- [x] Reemplazar `Image.Image.getdata` antes de Pillow 14.
-- [ ] Agregar CI que cree un venv limpio y ejecute suite, compileall, dry-run y
-  `git diff --check`.
-- [ ] Probar explícitamente locks y reemplazo atómico sobre el filesystem real de
-  producción si no es disco local.
-- [ ] Definir retención/archivo externo de `queue_events.json` y logs según capacidad
-  real del host.
-- [ ] Agregar un comando de conciliación asistida para publicaciones sociales
-  ambiguas; hasta entonces se resuelven con el runbook.
-- [ ] Mantener fixtures cuando cambie el HTML vivo de terceros.
+- [ ] Publicar la rama y obtener CI verde en PR #1.
+- [ ] Obtener revisión/aprobación del PR.
+- [ ] Configurar branch protection para exigir el check de confiabilidad.
+- [ ] Crear backup productivo completo y probar restore en temporal.
+- [ ] Ejecutar `preflight openai` con credencial autorizada.
+- [ ] Probar R2 reversible bajo `healthchecks/`.
+- [ ] Definir o implementar un endpoint CMS GET seguro y ejecutar su preflight.
+- [ ] Ejecutar preflight read-only de Facebook e Instagram.
+- [ ] Resolver 19 entradas Facebook sin URL web y aprobar las 3 pendientes válidas.
+- [ ] Ejecutar un canary exactamente una vez durante una ventana autorizada.
+- [ ] Probar webhook real o aceptar formalmente operación con outbox local.
+- [ ] Completar varios ciclos sanos en `observe`.
+- [ ] Completar varios ciclos sanos en `web_only`.
+- [ ] Habilitar Facebook e Instagram por separado y observar varios ciclos.
+- [ ] Ensayar rollback de modo y release.
+- [ ] Merge aprobado y creación posterior del tag propuesto.
 
-## Riesgos aceptados o bloqueados
+## Mantenimiento medio
 
-- [ ] La aprobación editorial humana sigue siendo opcional. No existe una decisión
-  vigente que autorice volverla obligatoria.
-- [ ] No hay entorno de staging externo documentado.
-- [ ] Visitas, CTR, alcance y monetización permanecen fuera de alcance.
-- [ ] No migrar JSON a base de datos mientras las pruebas de integridad y volumen no
-  demuestren que la solución actual es insuficiente.
+- [ ] Incorporar un watchdog externo simple para alertar si muere todo el proceso.
+- [ ] Definir retención/archivo de logs, eventos y outbox según capacidad del host.
+- [ ] Mantener fixtures frente a cambios de HTML.
+- [ ] Validar filesystem si el estado se mueve a un share de red.
+- [ ] Documentar un staging externo si se crea.
 
-## No incluido en esta etapa
+## Riesgos aceptados o fuera de alcance
 
-Nuevas fuentes, nuevas redes, dashboard visual, analítica de audiencia, monetización,
-multi-tenancy, cambio de CMS, microservicios, automatización masiva de Reels y
-funcionalidades para otros medios.
+- [ ] La aprobación editorial humana sigue opcional; no hay decisión que la haga
+  obligatoria.
+- [ ] No hay staging externo independiente.
+- [ ] Analytics, audiencia, monetización y nuevas plataformas siguen fuera de alcance.
+- [ ] No se migra JSON a base de datos sin evidencia de insuficiencia.

@@ -1,102 +1,112 @@
 # Estado actual
 
-Última actualización: 2026-07-23. Línea de base:
-`reliability/baseline-2026-07-23`, creada desde
-`fbb83eac3cf3ce399dac5a9d778f81a1957d7c2a`.
-PR borrador: https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1.
+Última actualización: 2026-07-26.
 
-## Estado verificable
+## Rama y revisión
 
-El repositorio quedó preparado como línea de base para nuevas actualizaciones, no
-declarado “sin errores”. La evidencia local disponible demuestra:
+- Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
+- Base de `main`: `fbb83eac3cf3ce399dac5a9d778f81a1957d7c2a`.
+- Rama: `reliability/baseline-2026-07-23`.
+- PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
+- Estado observado antes de estos cambios: mergeable, 5 commits, 106 archivos, sin
+  revisiones, comentarios ni checks.
+- `main` no tenía protección de rama verificable.
+- Propuesta de release posterior al merge: `v1.0.0-reliability-baseline`.
 
-- instalación Python basada sólo en `requirements.txt`, incluido `psutil`;
-- 147 pruebas automatizadas sin llamadas a producción;
-- 17 escenarios end-to-end completamente locales;
-- resultados funcionales uniformes: `success`, `no_work`, `degraded`, `failed`;
-- heartbeat persistente, antigüedad del ciclo y tamaños de cola;
-- escrituras JSON atómicas, locks interproceso, backups y cuarentena;
-- reanudación de reescritura con Pending/Processing/Completed/Failed/Expired/Dead-letter;
-- publicación web sólo confirmada con ID, URL o slug verificable;
-- errores y rate limits tipados para CMS, Facebook, Instagram y R2;
-- fixtures representativas para las diez secciones de scraping;
-- política explícita y medible de fallbacks editoriales;
-- interfaz manual limitada a loopback y validaciones de URL/upload.
+El PR permanece en borrador. No se hizo merge ni se creó el tag.
 
-No se publicaron contenidos, no se usaron credenciales productivas y no se modificó
-deliberadamente el estado de producción. Los tests usan `LVR_DATA_DIR`,
-`LVR_LOGS_DIR`, `LVR_OUTPUT_DIR` y `LVR_FOTOS_DIR` temporales.
+## Estado verificable del código
 
-## Operación actual
+La línea de base incluye:
 
-El supervisor ejecuta scraping/rewrite, web, Facebook e Instagram como etapas
-aisladas. “El proceso terminó” ya no equivale a “la etapa funcionó”: cada hijo emite
-un resultado JSON y el supervisor rechaza una salida cero sin contrato.
+- CI Windows reproducible y sin secretos productivos;
+- suite completa y E2E local aislado;
+- estados `success`, `no_work`, `degraded`, `failed` y `blocked`;
+- preflight read-only por integración y prueba reversible de R2;
+- canary externo gated, idempotente y fuera de las colas generales;
+- reporte y aplicación explícita para conciliación de Facebook;
+- alertas con detección, dedupe, outbox y webhook opcional;
+- modos `observe`, `web_only`, `web_facebook`, `web_instagram` y `all`;
+- kill switches que el modo de despliegue no puede sobrepasar;
+- máximo inicial de una publicación por canal y ciclo;
+- heartbeat con commit, release declarado, modo, fingerprint, operador y backup;
+- persistencia JSON atómica, locks, backup, restore, cuarentena y recuperación;
+- contratos mockeados de CMS, Meta, R2 y OpenAI;
+- fixtures de las diez secciones de scraping.
 
-`python cli.py status --json` es de sólo lectura. Informa:
+La validación local más reciente y sus comandos quedan en
+`docs/audits/2026-07-26-preparacion-24x7.md`.
 
-- identidad y estado del PID;
-- heartbeat ausente, fresco, stale, inválido o corrupto;
-- edad del último ciclo;
-- último resultado por etapa;
-- tamaño y legibilidad de las colas.
+## Verificaciones reales realizadas
 
-`python cli.py doctor --scope ...` valida configuración sin publicar.
-`python cli.py run-once --dry-run` ejecuta sólo el E2E local. El comando sin
-`--dry-run` puede ejecutar integraciones habilitadas y debe tratarse como operación
-real.
+Hechos comprobados el 2026-07-26:
 
-## Persistencia y compatibilidad
+- `preflight sources`: 10/10 secciones `success` después de corregir la variante de
+  host y slash final de Tiempo Popular;
+- `preflight filesystem`: `success` en el volumen `C:`, con 28.628 MB libres al
+  medir, dos writers, lock, replace, fsync, backup/restore y cuarentena;
+- `preflight supervisor`: `success` en directorios temporales, modo `observe`, sin
+  iniciar el supervisor;
+- `alert-test`: `success` con outbox local y sin webhook;
+- conciliación Facebook sobre copias temporales: 23 entradas clasificadas, sin
+  modificar la cola original: 1 `already_published`, 3 `pending_valid` y 19
+  `blocked_missing_web_url`.
 
-Se mantienen los JSON legacy y sus nombres. Los scrapers persisten primero la cola y
-después el historial. La reescritura transfiere staging a
-`rewrite_queue_state.json` antes de vaciarlo; una transferencia repetida es
-idempotente. Los estados terminales y descartes se registran en
-`queue_events.json`.
+Información todavía desconocida o bloqueada:
 
-Los archivos existentes no requieren migración masiva. Al primer ciclo:
+- OpenAI real: no ejecutado con credencial autorizada;
+- R2 real: no ejecutado porque crea/elimina un objeto externo;
+- CMS real: no existe evidencia de `WEBAPP_PREFLIGHT_PATH` seguro;
+- Facebook/Instagram real: identidad y permisos no se consultaron con token;
+- canary real: no autorizado ni ejecutado;
+- webhook real: no configurado;
+- branch protection/check de GitHub: pendiente hasta publicar la rama y completar CI.
 
-1. los elementos de staging se incorporan a la cola durable;
-2. los IDs ya conocidos no se duplican;
-3. un `processing` interrumpido vuelve a `pending`;
-4. las salidas web/meta conservan sus contratos legacy.
+Los mocks no se presentan como evidencia real de estas integraciones.
 
-Un JSON corrupto no se interpreta como vacío, se conserva en origen, se copia a
-`quarantine/` y levanta un error explícito. Las escrituras usan temporal único,
-flush/fsync, reemplazo atómico y lock.
+## Estado operativo
 
-## Integraciones externas
+El supervisor está detenido durante la preparación.
 
-Los contratos están probados mediante mocks para 200, 201, 400, 401, 409, 429, 500,
-red, no-JSON y `ok:false`, además de reintentos/backoff y evidencia externa. No se
-verificó el estado real actual de:
+Se comprobó que antes de esta tarea había quedado un supervisor real ejecutándose por
+una orden anterior del operador. Su último ciclo quedó `degraded` y registró
+publicaciones reales: web 16 exitosas de 19 procesadas, Facebook 8 de 10 e Instagram
+8 de 8. Esta ejecución:
 
-- tokens y cuentas de Meta;
-- bucket y credenciales de Cloudflare R2;
-- API desplegada del CMS;
-- cuota de OpenAI;
-- HTML vivo de los sitios fuente.
+- no fue un canary;
+- no satisface los gates de esta preparación;
+- contradijo la documentación del 2026-07-23 que decía que producción no se había
+  iniciado;
+- motivó detener el supervisor antes de modificar contratos.
 
-Esas verificaciones quedan **bloqueadas por entorno** y no se sustituyen por una
-afirmación de salud. Antes de habilitar producción se necesita un smoke test
-controlado con credenciales no productivas o una ventana autorizada.
+No se reinició y no se realizaron nuevas publicaciones externas durante este trabajo.
 
-## Riesgo residual
+## Modo de despliegue
 
-- Los JSON seguros reducen pérdida y corrupción, pero siguen dependiendo de la
-  semántica de locks/reemplazo atómico del filesystem local. No se validó un share de
-  red.
-- No existe staging externo independiente.
-- Una respuesta social ambigua no se reintenta automáticamente: pasa a dead-letter
-  para conciliación, priorizando no duplicar.
-- Los cambios futuros de selectores HTML requieren actualizar fixtures y una prueba
-  read-only contra el tercero.
-- La verificación editorial humana continúa siendo opcional; la política actual
-  bloquea fallbacks sensibles pero no cambia la línea editorial.
+El default del código y `.env.example` es `observe`, con todos los canales externos
+apagados. La configuración productiva existente no se editó; si conserva switches
+encendidos sin declarar un modo compatible, `doctor --scope supervisor` falla y
+evita el arranque.
 
-## Próximo objetivo
+No hay escalamiento automático. Los gates se completan en orden: código, entorno,
+integraciones read-only, canary, observe, web, Facebook, Instagram y recién después
+24/7 completo.
 
-Revisar el PR de esta línea de base, ejecutar un smoke test contra entornos de prueba
-de CMS/Meta/R2 y recién después comenzar funcionalidades nuevas. El runbook operativo
-está en `docs/RUNBOOK.md` y la evidencia detallada en
-`docs/audits/2026-07-23-linea-base.md`.
+## Backlog de Facebook
+
+El comando read-only quedó implementado. El reporte sobre copia del estado real
+clasificó todas las entradas, pero 19 de 23 no tienen URL web. Facebook permanece
+bloqueado hasta resolver esas entradas mediante decisiones explícitas y volver a
+generar el reporte. No se reencoló, eliminó ni marcó ninguna entrada.
+
+## Gate actual
+
+- Gate A (código): pendiente de CI remoto, revisión y publicación del nuevo commit.
+- Gate B (entorno): filesystem temporal pasó; backup productivo y restore operativo
+  todavía no fueron autorizados/ensayados.
+- Gate C (integraciones): fuentes pasaron; las demás están bloqueadas.
+- Gates D a I: no ejecutados.
+
+Por lo tanto, el proyecto **no se declara listo para producción 24/7**. El siguiente
+paso seguro es publicar la rama, obtener CI verde y revisión del PR; luego completar
+Gate B y los preflights externos autorizados.

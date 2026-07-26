@@ -1,6 +1,6 @@
 # Runbook de operación e incidentes
 
-Última actualización: 2026-07-23.
+Última actualización: 2026-07-26.
 
 ## Principios
 
@@ -137,3 +137,121 @@ Si una llamada social se cortó luego de ser aceptada pero antes de devolver ID,
 republique automáticamente. La entrada debe quedar en dead-letter con motivo
 `ambiguous_external_outcome`. Concilie en la plataforma, registre ID/URL si existe y
 recién entonces complete o reencole la entrada.
+
+## CI fallido
+
+1. Reproduzca exactamente los comandos de `README.md`.
+2. Si falla instalación o `pip check`, corrija `requirements.txt`; no instale una
+   dependencia suelta sólo en el runner.
+3. Si falla el dry-run, confirme `details.production_calls=false`.
+4. Si el árbol queda dirty, identifique el artefacto y rediríjalo a `runner.temp`.
+5. No ignore deprecaciones ni convierta `degraded` en éxito.
+
+## Preflight fallido o bloqueado
+
+```powershell
+python cli.py preflight --scope <scope> --json
+```
+
+- `blocked`: falta credencial, endpoint o autorización; no habilite el canal.
+- `failed`: corrija identidad, permiso, contrato, selector o filesystem.
+- `degraded`: atienda cleanup, permiso incompleto, rate limit o fuente parcial.
+- R2 con `cleanup_error`: conserve el object key, elimínelo manualmente y verifique la
+  ausencia antes de repetir.
+- CMS sin endpoint GET seguro: mantenga web apagada y coordine el cambio en el
+  repositorio del CMS.
+
+## Canary parcial o cleanup fallido
+
+1. No repita el comando si figura `ambiguous_external_outcome`.
+2. Busque `canary_id`, `external_id` y `public_url` en la plataforma.
+3. Concilie primero; no cambie `canary_runs.json` a mano.
+4. Si el proveedor admite cleanup:
+
+   ```powershell
+   python cli.py canary --input <fixture> --channels <canales> --cleanup `
+     --confirm-external-publication --json
+   ```
+
+5. Si `cleanup_supported=false`, retire la pieza manualmente y registre evidencia.
+6. Un canary parcial impide avanzar el gate del canal.
+
+## Webhook de alertas caído
+
+1. El pipeline continúa; revise `alert_outbox.json`.
+2. Corrija DNS/TLS/URL o respete `next_retry_at`.
+3. Ejecute `python cli.py alert-check --json`.
+4. No borre eventos fallidos. Rote la URL si contiene un secreto.
+5. Si no hay proveedor aprobado, opere con outbox local y un procedimiento de
+   revisión; documente el riesgo de no tener watchdog externo.
+
+## Conciliación Facebook
+
+1. Detenga Facebook con `FB_PUBLISH_ENABLED=false`.
+2. Genere reporte:
+
+   ```powershell
+   python cli.py reconcile-facebook --report-only --output fb-report.json --json
+   ```
+
+3. Revise `already_published`, `pending_valid`, `expired`, `duplicate`, `ambiguous`,
+   `invalid` y `blocked_missing_web_url`.
+4. Prepare un archivo con el mismo `report_id` y decisiones por `item_id`.
+5. `mark_published` requiere `external_id`; no use título como evidencia.
+6. Aplique:
+
+   ```powershell
+   python cli.py reconcile-facebook --apply fb-decisions.json --json
+   ```
+
+7. Regenere el reporte. No habilite Facebook si quedan entradas sin clasificar o
+   decisiones pendientes.
+
+## Cambio o rollback de deployment mode
+
+1. Detenga el supervisor.
+2. Registre commit, modo, fingerprint, colas y backup.
+3. Para rollback inmediato, configure `PIPELINE_DEPLOYMENT_MODE=observe` y apague:
+
+   ```text
+   WEB_PUBLISH_TARGET=off
+   FB_PUBLISH_ENABLED=false
+   IG_PUBLISH_ENABLED=false
+   ```
+
+4. Ejecute `doctor --scope supervisor` y `preflight supervisor`.
+5. Reinicie sólo si la configuración es coherente.
+6. No salte de `observe` a `all`; avance un canal por vez.
+
+## Deshabilitar una plataforma
+
+1. Detenga el supervisor.
+2. Baje su kill switch y seleccione un modo que no solicite ese canal.
+3. Ejecute `doctor`.
+4. Reinicie y verifique que el heartbeat muestre el canal `no_work` con
+   `disabled=true`.
+5. No elimine pendientes; permanecen para conciliación/reanudación.
+
+## Espacio bajo
+
+1. `disk_space_low` usa `DISK_FREE_MIN_MB`.
+2. Detenga publicación antes de quedar sin espacio.
+3. Archive logs/backups según retención; no borre colas ni cuarentenas sin análisis.
+4. Ejecute `preflight filesystem` y una restauración temporal antes de reiniciar.
+
+## Rotación de credenciales
+
+1. Apague el kill switch del canal.
+2. Rote la credencial fuera de git y logs.
+3. Ejecute el preflight read-only del canal.
+4. Verifique permisos e identidad esperada.
+5. Rehabilite sólo tras canary autorizado y gate aprobado.
+
+## Rollback de release
+
+1. No borre el tag ni reescriba `main`.
+2. Detenga el supervisor y ponga modo `observe`.
+3. Cree backup y pruebe restore temporal.
+4. Despliegue un commit de reversión aprobado.
+5. Registre nuevo `commit_sha`, `release_tag`, operador y backup.
+6. Repita Gate B y preflight antes de iniciar.

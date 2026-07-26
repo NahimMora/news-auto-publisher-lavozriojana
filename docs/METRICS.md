@@ -1,6 +1,6 @@
 # Métricas operativas
 
-Última actualización: 2026-07-23. Este documento define métricas calculables; no
+Última actualización: 2026-07-26. Este documento define métricas calculables; no
 inventa valores ni implica que exista un dashboard.
 
 ## Fuentes de verdad
@@ -106,9 +106,10 @@ Visitas, CTR, alcance social, audiencia e ingresos no se recolectan en este
 repositorio. Agregarlas sería una funcionalidad de producto y no forma parte de la
 línea de base de confiabilidad.
 
-## Alertas operativas sugeridas
+## Alertas operativas
 
-No hay motor de alertas implementado. Un operador debería investigar:
+`utils/alerts.py` calcula y persiste eventos sin dashboard. Un operador debe
+investigar:
 
 - heartbeat stale;
 - cualquier `failed`;
@@ -119,3 +120,23 @@ No hay motor de alertas implementado. Un operador debería investigar:
 - JSON corrupto/cuarentena;
 - scraper `selector_mismatch`;
 - rate limit después de `next_retry_at`.
+
+La deduplicación usa `ALERT_DEDUP_SECONDS`. Una condición resuelta puede emitir
+`recovery`. Dead-letter y cuarentena son eventos irreversibles y no generan una falsa
+recuperación. `alert_outbox.json` conserva `delivery_status`, intentos, error y
+`next_retry_at`; un webhook fallido no convierte el ciclo del pipeline en fallo.
+
+## Métricas de despliegue
+
+El heartbeat versión 2 agrega:
+
+- `commit_sha`;
+- `release_tag`;
+- `deployment_mode`;
+- `configuration_fingerprint`;
+- `operator`;
+- `backup_reference`.
+
+El fingerprint omite nombres de variables sensibles y no contiene valores de tokens.
+El estado de gates no se infiere de métricas: se registra explícitamente en la
+auditoría y el PR.

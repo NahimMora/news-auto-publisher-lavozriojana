@@ -112,3 +112,27 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
 - Sin secretos ni cambios de `data/`, `logs/`, `output/` o `FotosLVR/` en el diff.
 - `CURRENT_STATE`, `KNOWN_ISSUES`, `DECISIONS` y runbook reflejan el comportamiento.
 - No hay hallazgos críticos/altos reproducibles abiertos sin tratamiento.
+
+## Preparación y despliegue 24/7
+
+- CI autoritativo: `.github/workflows/reliability.yml` sobre `windows-latest`.
+- Reproducir CI local con deprecaciones como error, `compileall`, `doctor core`,
+  dry-run y `git diff --check`.
+- El default es `PIPELINE_DEPLOYMENT_MODE=observe` con web, Facebook e Instagram
+  apagados.
+- No cambiar automáticamente de modo. Cada modo debe coincidir con
+  `WEB_PUBLISH_TARGET`, `FB_PUBLISH_ENABLED` e `IG_PUBLISH_ENABLED`.
+- Antes de habilitar un canal, ejecutar su preflight read-only. `blocked` es un gate
+  incumplido, no éxito.
+- El preflight R2 sólo usa `healthchecks/<timestamp>-<uuid>` y debe confirmar la
+  eliminación.
+- Un canary externo exige `CANARY_ENABLED=true` y
+  `--confirm-external-publication`; sin ambos se niega.
+- No ejecutar canary, cleanup externo, merge, tag ni supervisor productivo sin una
+  autorización explícita vigente.
+- Facebook requiere `reconcile-facebook --report-only` antes de habilitar el canal.
+  Aplicar sólo archivos de decisiones aprobadas; no inferir publicación por título.
+- Alertas: detección, dedupe, outbox y entrega permanecen separadas. El fallo del
+  webhook no puede cambiar el resultado funcional del pipeline.
+- La propuesta de tag es `v1.0.0-reliability-baseline`; no crearla antes del merge
+  aprobado.
