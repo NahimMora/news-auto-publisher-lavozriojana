@@ -25,8 +25,10 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from utils.logging_setup import setup_logger
+from utils.operation_result import OperationResult
 from utils.paths import output_dir
 from utils.safe_http import safe_get, validate_public_http_url
+from utils.stage_result import StageStatus
 
 logger = setup_logger("video_renderer", "video_renderer.log")
 
@@ -58,14 +60,18 @@ _FOOTER_H = 90      # alto del footer
 
 _FONT_CACHE: dict = {}
 
-# Extensiones y dominios que yt-dlp puede descargar
+# Extensión de archivo de video directo. Para todo lo demás (YouTube, Instagram, X,
+# TikTok, Facebook, Vimeo y +1800 sitios más) se intenta yt-dlp directamente — su
+# propio extractor genérico falla rápido y controlado si no hay video, así que no hace
+# falta mantener una lista de hosts reconocidos.
 _VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".webm")
-_VIDEO_HOSTS = {
-    "youtube.com", "youtu.be",
-    "instagram.com", "x.com", "twitter.com",
-    "tiktok.com", "vimeo.com",
-    "facebook.com", "fb.watch",
-}
+
+# Frases de stderr de yt-dlp que indican que hace falta sesión autenticada
+# (login/cookies), a diferencia de un extractor roto o un error de red.
+_YTDLP_AUTH_MARKERS = (
+    "login required", "sign in", "rate-limit reached or login",
+    "you need to log in", "private", "requested content is not available",
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -207,12 +213,7 @@ def _is_direct_video(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_VIDEO_EXTS)
 
 
-def _is_ytdlp_url(url: str) -> bool:
-    host = urlparse(url).netloc.lower().replace("www.", "")
-    return host in _VIDEO_HOSTS or any(host.endswith(f".{h}") for h in _VIDEO_HOSTS)
-
-
-def _download_direct_video(url: str, dest: str) -> bool:
+def _download_direct_video(url: str, dest: str) -> OperationResult:
     """Descarga un MP4/MOV directo con requests."""
     try:
         r = safe_get(
@@ -231,40 +232,105 @@ def _download_direct_video(url: str, dest: str) -> bool:
                 if total > max_bytes:
                     raise ValueError("El video supera VIDEO_DOWNLOAD_MAX_BYTES")
                 f.write(chunk)
-        return os.path.getsize(dest) > 0
-    except Exception as e:
-        logger.warning("Error descargando MP4 directo: %s", e)
-        return False
+        if os.path.getsize(dest) > 0:
+            return OperationResult(StageStatus.SUCCESS, details={"path": dest})
+        return OperationResult(
+            StageStatus.FAILED,
+            error_type="empty_download",
+            details={"message": "La descarga terminó vacía"},
+        )
+    except ValueError as exc:
+        logger.warning("Video directo excede el tamaño máximo: %s", exc)
+        return OperationResult(
+            StageStatus.FAILED, error_type="file_too_large", details={"message": str(exc)}
+        )
+    except requests.RequestException as exc:
+        logger.warning("Error de red descargando MP4 directo: %s", exc)
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            retryable=True,
+            details={"message": str(exc)},
+        )
+    except Exception as exc:
+        logger.warning("Error descargando MP4 directo: %s", exc)
+        return OperationResult(
+            StageStatus.FAILED, error_type="download_error", details={"message": str(exc)}
+        )
 
 
-def _download_ytdlp(url: str, dest: str) -> bool:
+def _classify_ytdlp_failure(stderr: str) -> tuple[str, bool]:
+    """Devuelve (error_type, retryable) a partir del stderr de yt-dlp."""
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in _YTDLP_AUTH_MARKERS):
+        return "auth_required", False
+    if "unsupported url" in lowered or "no extractor" in lowered:
+        return "unsupported_url", False
+    if "http error 429" in lowered or "429" in lowered:
+        return "rate_limit", True
+    return "extractor_error", False
+
+
+def _download_ytdlp(url: str, dest: str) -> OperationResult:
     """Descarga un video via yt-dlp."""
     if not check_ytdlp():
         logger.warning("yt-dlp no disponible — instalalo con: pip install yt-dlp")
-        return False
+        return OperationResult(
+            StageStatus.FAILED,
+            error_type="not_installed",
+            details={"message": "yt-dlp no está en PATH; instalalo con pip install yt-dlp"},
+        )
     try:
         validate_public_http_url(url)
         max_size = str(os.getenv("VIDEO_DOWNLOAD_MAX_BYTES", str(250 * 1024 * 1024)))
+        cmd = [
+            "yt-dlp", "-f", "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
+            "-o", dest, "--no-playlist", "--no-warnings", "--ignore-config",
+            "--max-filesize", max_size,
+        ]
+        cookies_file = str(os.getenv("YTDLP_COOKIES_FILE", "")).strip()
+        if cookies_file and os.path.isfile(cookies_file):
+            cmd.extend(["--cookies", cookies_file])
+        cmd.append(url)
         result = subprocess.run(
-            ["yt-dlp", "-f", "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
-             "-o", dest, "--no-playlist", "--no-warnings", "--ignore-config",
-             "--max-filesize", max_size, url],
-            capture_output=True, text=True, timeout=180,
+            cmd, capture_output=True, text=True,
+            timeout=int(os.getenv("YTDLP_TIMEOUT_SECONDS", "180")),
         )
         if result.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 0:
-            return True
-        logger.warning("yt-dlp falló (code %s): %s", result.returncode, result.stderr[-300:])
-        return False
-    except Exception as e:
-        logger.warning("Error con yt-dlp: %s", e)
-        return False
+            return OperationResult(StageStatus.SUCCESS, details={"path": dest})
+        stderr_tail = result.stderr[-500:] if result.stderr else ""
+        logger.warning("yt-dlp falló (code %s): %s", result.returncode, stderr_tail[-300:])
+        error_type, retryable = _classify_ytdlp_failure(stderr_tail)
+        status = StageStatus.DEGRADED if retryable else StageStatus.FAILED
+        return OperationResult(
+            status, error_type=error_type, retryable=retryable,
+            details={"message": stderr_tail[-300:]},
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Timeout ejecutando yt-dlp para %s", url[:80])
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            retryable=True,
+            details={"message": "yt-dlp superó el timeout configurado"},
+        )
+    except Exception as exc:
+        logger.warning("Error con yt-dlp: %s", exc)
+        return OperationResult(
+            StageStatus.FAILED, error_type="download_error", details={"message": str(exc)}
+        )
 
 
-def get_source_video(item: dict) -> str | None:
+def get_source_video(item: dict) -> tuple[str | None, OperationResult]:
     """
     Intenta descargar el video fuente definido en el item.
-    Busca en: video_url → source_url (si es YouTube/IG/MP4 directo).
-    Retorna ruta a archivo temporal o None.
+    Busca en: video_url → source_url (si es YouTube/IG/TikTok/X/MP4 directo/otro sitio
+    soportado por yt-dlp).
+
+    Retorna (ruta_o_None, OperationResult). Cuando no hay ningún candidato de video en
+    el item, el OperationResult es SUCCESS sin path — no es un fallo, simplemente no se
+    pidió video. Cuando hubo un candidato pero la descarga falló, el OperationResult
+    trae el motivo (`error_type`) para que el llamador pueda mostrarlo.
     """
     os.makedirs(RENDERS_DIR, exist_ok=True)
     local_video = str(item.get("local_video_path") or "").strip()
@@ -276,36 +342,41 @@ def get_source_video(item: dict) -> str | None:
             and os.path.isfile(candidate)
             and candidate.lower().endswith(_VIDEO_EXTS)
         ):
-            return candidate
+            return candidate, OperationResult(StageStatus.SUCCESS, details={"source": "upload"})
         logger.warning("Ruta de video local rechazada por estar fuera de uploads")
     candidates = [
         str(item.get("video_url") or "").strip(),
         str(item.get("source_video_url") or "").strip(),
     ]
-    # Si source_url parece video, también intentarlo
+    # source_url se agrega siempre como último candidato: yt-dlp se intenta igual (su
+    # extractor genérico falla rápido y controlado si la página no tiene video
+    # embebido) — cubre "y más" plataformas sin mantener una lista fija de hosts.
     source_url = str(item.get("source_url") or "").strip()
-    if source_url and (_is_direct_video(source_url) or _is_ytdlp_url(source_url)):
+    if source_url:
         candidates.append(source_url)
 
+    last_failure: OperationResult | None = None
     for url in candidates:
         if not url:
             continue
         dest = os.path.join(RENDERS_DIR, f"_src_{uuid.uuid4().hex[:10]}.mp4")
-        ok = False
         if _is_direct_video(url):
             logger.info("Descargando MP4 directo: %s", url[:80])
-            ok = _download_direct_video(url, dest)
-        elif _is_ytdlp_url(url):
+            result = _download_direct_video(url, dest)
+        else:
             logger.info("Descargando con yt-dlp: %s", url[:80])
-            ok = _download_ytdlp(url, dest)
-        if ok:
-            return dest
+            result = _download_ytdlp(url, dest)
+        if result.ok:
+            return dest, result
+        last_failure = result
         try:
             os.remove(dest)
         except Exception:
             pass
 
-    return None
+    if last_failure is not None:
+        return None, last_failure
+    return None, OperationResult(StageStatus.SUCCESS, details={"source": "no_video_candidate"})
 
 
 # ── Íconos para el footer ─────────────────────────────────────
@@ -592,17 +663,20 @@ def get_video_duration(path: str) -> float | None:
     return None
 
 
-def render_video(item: dict) -> tuple[str, str, int]:
+def render_video(item: dict) -> tuple[str, str, int, dict]:
     """
     Genera el MP4 del reel.
 
     Flujo:
-      1. Intentar descargar video fuente (video_url / source_url de YT/IG/MP4)
+      1. Intentar descargar video fuente (video_url / source_url de YT/IG/TikTok/X/MP4)
       2a. Si hay video: usa su duración real → composición ffmpeg (video + overlay)
       2b. Si hay imagen del artículo: Ken Burns + overlay con duración del item
       2c. Sin ninguno: solo overlay sobre negro con duración del item
 
-    Retorna (ruta_mp4, video_id, duracion_segundos).
+    Retorna (ruta_mp4, video_id, duracion_segundos, info) donde `info` incluye
+    `source_used` ("video" | "image_fallback" | "overlay_only") y, cuando el video
+    fuente se pidió pero no se pudo descargar, `fallback_reason` con el motivo
+    (`error_type` de la descarga) y un mensaje corto para mostrarle al operador.
     Lanza RuntimeError si ffmpeg no está disponible.
     """
     if not check_ffmpeg():
@@ -627,8 +701,10 @@ def render_video(item: dict) -> tuple[str, str, int]:
         overlay_img.save(overlay_path, "PNG")
 
         # Intentar obtener video fuente
-        source_video = get_source_video(item)
+        source_video, source_result = get_source_video(item)
+        info: dict = {}
         if source_video:
+            info["source_used"] = "video"
             if (
                 os.path.dirname(os.path.realpath(source_video)) == os.path.realpath(RENDERS_DIR)
                 and os.path.basename(source_video).startswith("_src_")
@@ -644,6 +720,15 @@ def render_video(item: dict) -> tuple[str, str, int]:
             _ffmpeg_compose_video(source_video, overlay_path, output_path, duration)
         else:
             duration = fallback_duration
+            if not source_result.ok:
+                info["fallback_reason"] = {
+                    "error_type": source_result.error_type,
+                    "message": source_result.details.get("message"),
+                }
+                logger.warning(
+                    "No se pudo obtener video fuente (%s); se usa fallback de imagen",
+                    source_result.error_type,
+                )
             # Fallback: imagen del artículo con Ken Burns
             imagen_url = str(item.get("imagen_url") or "")
             local_image = str(item.get("local_image_path") or "").strip()
@@ -665,13 +750,15 @@ def render_video(item: dict) -> tuple[str, str, int]:
                 src_img.convert("RGB").save(img_path, "JPEG", quality=92)
                 logger.info("Componiendo con imagen + Ken Burns: %s", imagen_url[:60])
                 _ffmpeg_compose_image(img_path, overlay_path, output_path, duration)
+                info["source_used"] = "image_fallback"
             else:
                 logger.info("Sin imagen ni video — generando solo overlay sobre negro")
                 _ffmpeg_overlay_only(overlay_path, output_path, duration)
+                info["source_used"] = "overlay_only"
 
         size_mb = os.path.getsize(output_path) / 1_048_576
         logger.info("Video renderizado: %s (%.1f MB, %ds)", output_path, size_mb, duration)
-        return output_path, video_id, duration
+        return output_path, video_id, duration, info
 
     finally:
         for f in temp_files:

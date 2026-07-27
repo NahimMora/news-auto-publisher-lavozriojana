@@ -88,6 +88,8 @@ def detect_platform(url: object) -> str:
         return "facebook"
     if host in {"youtu.be", "youtube.com", "m.youtube.com"} or host.endswith(".youtube.com"):
         return "youtube"
+    if host.endswith("tiktok.com"):
+        return "tiktok"
     return "direct" if is_probable_direct_video_url(url) else "web"
 
 

@@ -196,6 +196,7 @@ button.ghost{background:transparent;border:1px solid #304050;color:#8899aa}
 .status{font-size:11px;line-height:1.5;color:#8a98b0;margin-top:8px;min-height:18px;word-break:break-word}
 .status.ok{color:#6fcf97}
 .status.err{color:#fca5a5}
+.status.warn{color:#f5c56d}
 .hidden{display:none}
 
 /* ── Center ── */
@@ -632,7 +633,29 @@ async function renderVideo() {
     document.getElementById('badge2').textContent = '✓';
     document.getElementById('badge2').classList.add('done');
     show('block_publish');
-    setStatus('st_render', '✓ Video generado. Reproducilo y verificá el resultado.', 'ok');
+    if (d.source_used === 'video') {
+      setStatus('st_render', '✓ Video generado con el video fuente original.', 'ok');
+    } else {
+      const motivos = {
+        not_installed: 'yt-dlp no está instalado/en PATH',
+        extractor_error: 'la plataforma cambió algo y yt-dlp no pudo extraer el video',
+        auth_required: 'la plataforma pide sesión iniciada (configurá YTDLP_COOKIES_FILE)',
+        unsupported_url: 'el link no tiene un video reconocible',
+        network_error: 'error de red al descargar',
+        rate_limit: 'la plataforma limitó las descargas (reintentá más tarde)',
+        file_too_large: 'el video supera el tamaño máximo permitido',
+      };
+      const reason = d.fallback_reason || {};
+      const motivo = motivos[reason.error_type] || reason.error_type || 'motivo desconocido';
+      const usado = d.source_used === 'overlay_only'
+        ? 'solo el layout (sin imagen ni video)'
+        : 'una imagen animada';
+      setStatus(
+        'st_render',
+        `⚠ No se pudo traer el video original — se usó ${usado}. Motivo: ${motivo}.`,
+        'warn',
+      );
+    }
     setStatus('st_publish', '');
   } catch (e) {
     document.getElementById('render_overlay').style.display = 'none';
@@ -1447,7 +1470,7 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 if local_image:
                     payload["local_image_path"] = local_image
                 from utils.video_renderer import render_video
-                video_path, video_id, actual_duration = render_video(payload)
+                video_path, video_id, actual_duration, render_info = render_video(payload)
                 _renders[video_id] = video_path
                 size_mb = round(os.path.getsize(video_path) / 1_048_576, 1)
                 self._json(200, {
@@ -1456,6 +1479,8 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                     "preview_url": f"/api/preview/{video_id}.mp4",
                     "size_mb": size_mb,
                     "duration": actual_duration,
+                    "source_used": render_info.get("source_used"),
+                    "fallback_reason": render_info.get("fallback_reason"),
                 })
                 return
 
