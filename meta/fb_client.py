@@ -6,12 +6,15 @@ import time
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 from meta.facebook_token_manager import get_page_token
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
+from utils.safe_http import UnsafeURLError, safe_get
+from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
 
@@ -74,30 +77,132 @@ def _set_backoff() -> int:
     return until
 
 
-def _build_message(noticia: dict) -> str:
-    cuerpo = str(noticia.get("texto_instagram") or "").strip()
-    if not cuerpo:
-        parrafos = noticia.get("parrafos") or []
-        primero = noticia.get("excerpt") or (parrafos[0] if parrafos else "")
-        cuerpo = f"{noticia.get('titulo', '')}\n\n{primero}"
-    localidad = str(noticia.get("hashtag_localidad") or "").strip()
-    seccion = str(noticia.get("seccion") or "").lower()
-    section_tags = {
-        "policiales": "#PoliciaLaRioja #Seguridad",
-        "deportes": "#DeportesRioja #Deportes",
-        "cultura": "#CulturaRioja #Cultura",
-        "espectaculos": "#EspectaculosRioja #Cultura",
-        "politica": "#PoliticaRioja #LaRiojaGobierna",
-        "economia": "#EconomiaRioja #Economia",
-        "salud": "#SaludRioja #Salud",
-        "educacion": "#EducacionRioja #Educacion",
-        "interior": "#InteriorRioja #LaRioja",
-        "sociedad": "#LaRiojaHoy #Sociedad",
+def _build_message(noticia: dict, link: str = "") -> str:
+    title = str(noticia.get("titulo") or noticia.get("titulo_original") or "").strip()
+    parts = [
+        part
+        for part in (title, build_instagram_caption(noticia), link.strip())
+        if part
+    ]
+    return "\n\n".join(parts)
+
+
+def _prewarm_enabled() -> bool:
+    return os.getenv("FB_LINK_PREWARM_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
-    tags = f"{section_tags.get(seccion, '#RiojaHoy')} #LaVozRiojana #LaRioja #Noticias"
-    if localidad:
-        tags = f"{localidad} {tags}"
-    return f"{cuerpo}\n\n{tags}"
+
+
+def prewarm_link_preview(link: str) -> OperationResult:
+    """Calienta la nota y su og:image sin publicar ni llamar a Graph."""
+    timeout = int(os.getenv("FB_LINK_PREWARM_TIMEOUT_SECONDS", "20"))
+    max_bytes = int(os.getenv("FB_LINK_PREWARM_MAX_BYTES", str(5 * 1024 * 1024)))
+    user_agent = (
+        "facebookexternalhit/1.1 "
+        "(+https://www.facebook.com/externalhit_uatext.php)"
+    )
+    try:
+        page = safe_get(
+            link,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=timeout,
+        )
+        status = int(getattr(page, "status_code", 0) or 0)
+        content_type = str(
+            getattr(page, "headers", {}).get("Content-Type") or ""
+        ).lower()
+        if status != 200:
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_page_http_error",
+                error_code=status,
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+        if "html" not in content_type:
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_page_content_type",
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+
+        soup = BeautifulSoup(str(getattr(page, "text", "") or ""), "html.parser")
+        try:
+            page.close()
+        except (AttributeError, TypeError):
+            pass
+        tag = soup.find("meta", attrs={"property": "og:image"})
+        og_image = str(tag.get("content") or "").strip() if tag else ""
+        if not _is_http_url(og_image):
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_missing_og_image",
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+
+        image = safe_get(
+            og_image,
+            headers={"User-Agent": user_agent, "Accept": "image/*"},
+            timeout=timeout,
+            stream=True,
+        )
+        image_status = int(getattr(image, "status_code", 0) or 0)
+        image_type = str(
+            getattr(image, "headers", {}).get("Content-Type") or ""
+        ).lower()
+        if image_status != 200 or not image_type.startswith("image/"):
+            try:
+                image.close()
+            except (AttributeError, TypeError):
+                pass
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_og_image_unavailable",
+                error_code=image_status,
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+        total = 0
+        iterator = getattr(image, "iter_content", None)
+        if callable(iterator):
+            for chunk in iterator(chunk_size=64 * 1024):
+                total += len(chunk or b"")
+                if total > max_bytes:
+                    image.close()
+                    return OperationResult(
+                        StageStatus.DEGRADED,
+                        error_type="link_preview_og_image_too_large",
+                        retryable=False,
+                        details={"publication_outcome": "not_published"},
+                    )
+        try:
+            image.close()
+        except (AttributeError, TypeError):
+            pass
+        return OperationResult(
+            StageStatus.SUCCESS,
+            details={"og_image_url": og_image},
+        )
+    except (requests.RequestException, UnsafeURLError, ValueError) as exc:
+        logger.warning(
+            "No se pudo precalentar el preview de Facebook: %s",
+            type(exc).__name__,
+        )
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="link_preview_prewarm_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+            details={"publication_outcome": "not_published"},
+        )
 
 
 def _is_http_url(value: object) -> bool:
@@ -243,6 +348,15 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
         if not link:
             logger.warning("Facebook requiere URL web pública para el preview OG")
             return OperationResult(StageStatus.FAILED, error_type="missing_web_url")
+        if _prewarm_enabled():
+            prewarm = prewarm_link_preview(link)
+            if not prewarm.ok:
+                logger.error(
+                    "Facebook no publica porque el preview web no quedo verificable: %s",
+                    prewarm.error_type,
+                )
+                return prewarm
+        payload["message"] = _build_message(noticia, link)
         payload["link"] = link
 
     try:

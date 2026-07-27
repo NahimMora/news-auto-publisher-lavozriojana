@@ -288,6 +288,14 @@ def validate_config(
     _positive_int(report, env, "SOCIAL_QUEUE_TTL_DAYS", 30, maximum=3650)
     _positive_int(report, env, "QUEUE_EVENT_RETENTION_COUNT", 10000, minimum=100)
     _positive_int(report, env, "FB_REQUEST_TIMEOUT_SECONDS", 60, maximum=600)
+    _positive_int(report, env, "FB_LINK_PREWARM_TIMEOUT_SECONDS", 20, maximum=600)
+    _positive_int(
+        report,
+        env,
+        "FB_LINK_PREWARM_MAX_BYTES",
+        5 * 1024 * 1024,
+        maximum=100 * 1024 * 1024,
+    )
     _positive_int(report, env, "FB_VIDEO_REQUEST_TIMEOUT_SECONDS", 120, maximum=1800)
     _positive_int(report, env, "FB_TEMP_BLOCK_BACKOFF_SECONDS", 1800, maximum=86400 * 7)
     _positive_int(report, env, "IG_REQUEST_TIMEOUT_SECONDS", 60, maximum=600)
@@ -298,7 +306,7 @@ def validate_config(
     _positive_int(report, env, "IG_MAX_PER_RUN", 1, maximum=100)
     _positive_int(report, env, "IG_IMAGE_CONTAINER_WAIT_SECONDS", 5, minimum=0, maximum=600)
     _positive_int(report, env, "WEB_PUBLISH_MAX_PER_RUN", 0, minimum=0, maximum=1000)
-    _positive_int(report, env, "WEB_MAX_DEPORTES_PER_RUN", 1, minimum=0, maximum=1000)
+    _positive_int(report, env, "WEB_MAX_DEPORTES_PER_RUN", 1, minimum=-1, maximum=1000)
     _positive_int(report, env, "WEB_DEDUP_HISTORY_DAYS", 7, maximum=3650)
     _positive_int(report, env, "WEBAPP_RETRY_SLEEP_SECONDS", 5, minimum=0, maximum=3600)
     _positive_int(report, env, "WEB_PUBLIC_MEDIA_CHECK_ATTEMPTS", 5, maximum=100)
@@ -356,6 +364,7 @@ def validate_config(
     for name, default in (
         ("JSON_BACKUP_ENABLED", "true"),
         ("FB_PUBLISH_ENABLED", "false"),
+        ("FB_LINK_PREWARM_ENABLED", "false"),
         ("IG_PUBLISH_ENABLED", "false"),
         ("WEB_PUBLIC_MEDIA_CHECK_ENABLED", "true"),
         ("ENABLE_EDITORIAL_NEWS_ENRICHER", "true"),
@@ -416,6 +425,13 @@ def validate_config(
         "WEB_EDITORIAL_FALLBACK_MODE",
         "allow_non_sensitive",
         {"block", "allow_non_sensitive", "allow_all"},
+    )
+    _choice(
+        report,
+        env,
+        "EDITORIAL_FINAL_ATTEMPT_ACTION",
+        "publish_last_safe",
+        {"publish_last_safe", "fallback"},
     )
     if _value(env, "META_GRAPH_API"):
         _url(report, env, "META_GRAPH_API", required=False)
@@ -555,10 +571,14 @@ def config_inventory() -> dict[str, list[str]]:
                 "EDITORIAL_ENRICHER_MAX_REVISIONS",
                 "EDITORIAL_ENRICHER_MIN_SCORE",
                 "EDITORIAL_ENRICHER_MODEL",
+                "EDITORIAL_FINAL_ATTEMPT_ACTION",
                 "ENABLE_EDITORIAL_NEWS_ENRICHER",
                 "ENABLE_R2_OG_IMAGE",
                 "FB_ALLOW_DIRECT_TOKEN_FALLBACK",
                 "FB_DISABLED_PAGE_IDS",
+                "FB_LINK_PREWARM_ENABLED",
+                "FB_LINK_PREWARM_MAX_BYTES",
+                "FB_LINK_PREWARM_TIMEOUT_SECONDS",
                 "FB_PUBLISH_ENABLED",
                 "FB_REQUEST_TIMEOUT_SECONDS",
                 "FB_TEMP_BLOCK_BACKOFF_SECONDS",

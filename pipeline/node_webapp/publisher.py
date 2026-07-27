@@ -250,6 +250,9 @@ def build_post_payload(
         "editorialQualityScore": editorial.quality_score,
         "editorialFallbackUsed": editorial.fallback_used,
         "editorialWarnings": editorial.warnings,
+        "editorialAttemptCount": getattr(editorial, "attempt_count", 0),
+        "editorialFinalAttemptUsed": getattr(editorial, "final_attempt_used", False),
+        "editorialRevisionHistory": getattr(editorial, "revision_history", []),
     }
 
     payload = {
@@ -686,7 +689,11 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
     }
 
     editorial = prepare_editorial(noticia)
-    fallback_decision = evaluate_web_fallback(noticia, editorial.fallback_used)
+    fallback_decision = evaluate_web_fallback(
+        noticia,
+        editorial.fallback_used,
+        final_attempt_used=getattr(editorial, "final_attempt_used", False),
+    )
     if not fallback_decision.allowed:
         logger.error(
             "No se publica por política de fallback editorial: %s",
@@ -834,6 +841,24 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
     synced_url = sync_meta_web_link(noticia, response_data, base_url)
     public_url = synced_url or public_url
     _record_published_history(noticia, payload, public_url)
+    degradation_reasons = list(flag_errors)
+    if fallback_decision.degraded:
+        degradation_reasons.append(
+            fallback_decision.reason or "editorial_fallback_published"
+        )
+        record_queue_event(
+            stage="web",
+            status="degraded",
+            reason=fallback_decision.reason or "editorial_fallback_published",
+            item=noticia,
+            metadata={
+                "fallback_policy": fallback_decision.to_dict(),
+                "attempt_count": getattr(editorial, "attempt_count", 0),
+                "warnings": editorial.warnings,
+                "post_id": post_id,
+                "public_url": public_url,
+            },
+        )
     return {
         "published": True,
         "featured": is_featured,
@@ -844,9 +869,11 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         "retryable": False,
         "terminal": True,
         "next_retry_at": None,
-        "degraded": bool(flag_errors),
+        "degraded": bool(degradation_reasons),
         "degraded_reason": (
-            "editorial_flag_reconciliation_required" if flag_errors else None
+            "editorial_flag_reconciliation_required"
+            if flag_errors
+            else (fallback_decision.reason if fallback_decision.degraded else None)
         ),
     }
 

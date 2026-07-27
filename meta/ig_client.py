@@ -15,6 +15,7 @@ from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
+from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
 
@@ -168,29 +169,7 @@ def _video_url(noticia: dict) -> str:
 
 
 def _build_caption(noticia: dict) -> str:
-    cuerpo = str(noticia.get("texto_instagram") or "").strip()
-    if not cuerpo:
-        parrafos = noticia.get("parrafos") or []
-        primero = noticia.get("excerpt") or (parrafos[0] if parrafos else "")
-        cuerpo = f"{noticia.get('titulo', '')}\n\n{primero}"
-    localidad = str(noticia.get("hashtag_localidad") or "").strip()
-    seccion = str(noticia.get("seccion") or "").lower()
-    section_tags = {
-        "policiales": "#PoliciaLaRioja #Seguridad",
-        "deportes": "#DeportesRioja #Deportes",
-        "cultura": "#CulturaRioja #Cultura",
-        "espectaculos": "#EspectaculosRioja #Cultura",
-        "politica": "#PoliticaRioja #LaRiojaGobierna",
-        "economia": "#EconomiaRioja #Economia",
-        "salud": "#SaludRioja #Salud",
-        "educacion": "#EducacionRioja #Educacion",
-        "interior": "#InteriorRioja #LaRioja",
-        "sociedad": "#LaRiojaHoy #Sociedad",
-    }
-    tags = f"{section_tags.get(seccion, '#RiojaHoy')} #LaVozRiojana #LaRioja #Noticias"
-    if localidad:
-        tags = f"{localidad} {tags}"
-    return f"{cuerpo}\n\n{tags}"[:2200]
+    return build_instagram_caption(noticia)
 
 
 def _safe_json(response) -> dict:

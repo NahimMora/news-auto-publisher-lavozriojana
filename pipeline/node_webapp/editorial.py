@@ -222,6 +222,9 @@ class EditorialResult:
     content_html: str = ""
     fallback_used: bool = False
     warnings: list[str] = field(default_factory=list)
+    attempt_count: int = 0
+    final_attempt_used: bool = False
+    revision_history: list[dict] = field(default_factory=list)
 
 
 def normalize(value: str) -> str:
@@ -849,26 +852,44 @@ key_points y tags deben salir de datos visibles en la noticia.
 
 
 def _feedback_for_warnings(warnings: list[str], *, min_score: float) -> str:
-    joined = "; ".join(warnings)
-    if any(w.startswith(("invented_number", "invented_date", "invented_proper_noun")) for w in warnings):
-        return (
-            "El intento anterior agrego datos no comprobados. Reescribi usando solo cifras, fechas, "
-            "nombres, instituciones y lugares que aparezcan literalmente en la noticia original. "
-            f"Warnings: {joined}"
+    directives: list[str] = []
+    factual_prefixes = ("invented_number", "invented_date", "invented_proper_noun")
+
+    if any(w.startswith(factual_prefixes) for w in warnings):
+        invented = ", ".join(
+            warning.split(":", 1)[1]
+            for warning in warnings
+            if warning.startswith(factual_prefixes) and ":" in warning
+        )
+        directives.append(
+            "Elimina o reemplaza estos datos no comprobados por expresiones literales de la fuente: "
+            f"{invented}."
         )
     if any("linear_paraphrase" in w or "copy_paste_similarity" in w for w in warnings):
-        return (
-            "El intento anterior quedo demasiado parecido al texto original. Reorganizalo por ejes, "
-            "condensa repeticiones y cambia la redaccion sin alterar ningun hecho. "
-            f"Warnings: {joined}"
+        directives.append(
+            "Reorganiza el contenido por ejes, cambia el orden y la estructura de las oraciones, "
+            "y condensa repeticiones sin alterar los hechos."
         )
     if any(w.startswith("quality_score_below_threshold") for w in warnings):
-        return (
-            f"El intento anterior tuvo quality_score menor a {min_score:.2f}. Mejora claridad, SEO, "
-            "estructura y precision, manteniendo solo datos verificables del texto original. "
-            f"Warnings: {joined}"
+        directives.append(
+            f"Mejora claridad, estructura, SEO y precision hasta superar {min_score:.2f}, "
+            "sin agregar datos."
         )
-    return f"Corregi el intento anterior sin inventar datos. Warnings: {joined}"
+    if any(w.startswith("disallowed_html_") for w in warnings):
+        directives.append("Devuelve texto JSON sin HTML, atributos, scripts ni etiquetas.")
+    if any(w.startswith("unsafe_judicial_claim") for w in warnings):
+        directives.append(
+            "No afirmes culpabilidad: atribui denuncias e investigaciones y usa lenguaje condicional."
+        )
+    if "revision_no_material_change" in warnings:
+        directives.append(
+            "El intento anterior no tuvo cambios materiales: modifica de forma visible los campos "
+            "observados, en especial titulo, lead, secciones y metadatos señalados."
+        )
+    if not directives:
+        directives.append("Corregi todos los puntos observados sin inventar datos.")
+
+    return " ".join(directives) + f" Warnings exactos: {'; '.join(warnings)}"
 
 
 def _quality_warnings(result: EditorialResult, *, min_score: float) -> list[str]:
@@ -877,7 +898,74 @@ def _quality_warnings(result: EditorialResult, *, min_score: float) -> list[str]
     return []
 
 
-def _call_ai_enricher(noticia: dict, *, feedback: str | None = None) -> dict:
+def _editorial_feedback_snapshot(result: EditorialResult) -> dict:
+    return {
+        "title": result.title,
+        "excerpt": result.excerpt,
+        "lead": result.lead,
+        "source_paragraph": result.source_paragraph,
+        "sections": [
+            {
+                "heading": section.heading,
+                "paragraphs": list(section.paragraphs),
+                "items": list(section.items),
+            }
+            for section in result.sections
+        ],
+        "closing_paragraph": result.closing_paragraph,
+        "seo_title": result.seo_title,
+        "meta_description": result.meta_description,
+        "social_title": result.social_title,
+        "social_description": result.social_description,
+        "focus_keyword": result.focus_keyword,
+        "quality_score": result.quality_score,
+        "tags": list(result.tags),
+    }
+
+
+def _changed_revision_fields(previous: dict | None, current: dict) -> list[str]:
+    if not previous:
+        return []
+    changed: list[str] = []
+    for key in sorted(set(previous) | set(current)):
+        before = json.dumps(previous.get(key), ensure_ascii=False, sort_keys=True)
+        after = json.dumps(current.get(key), ensure_ascii=False, sort_keys=True)
+        if normalize(before) != normalize(after):
+            changed.append(key)
+    return changed
+
+
+_MATERIAL_REVISION_FIELDS = {
+    "title",
+    "excerpt",
+    "lead",
+    "source_paragraph",
+    "sections",
+    "closing_paragraph",
+    "seo_title",
+    "meta_description",
+    "social_title",
+    "social_description",
+}
+
+
+def _hard_editorial_warnings(warnings: list[str]) -> list[str]:
+    prefixes = (
+        "invented_number:",
+        "invented_date:",
+        "invented_proper_noun:",
+        "unsafe_judicial_claim:",
+        "disallowed_html_",
+    )
+    return [warning for warning in warnings if warning.startswith(prefixes)]
+
+
+def _call_ai_enricher(
+    noticia: dict,
+    *,
+    feedback: str | None = None,
+    previous_attempt: dict | None = None,
+) -> dict:
     from openai import OpenAI
 
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -899,6 +987,8 @@ def _call_ai_enricher(noticia: dict, *, feedback: str | None = None) -> dict:
     }
     if feedback:
         user_payload["revision_feedback"] = feedback
+    if previous_attempt:
+        user_payload["previous_attempt"] = previous_attempt
 
     last_error: Exception | None = None
     for attempt in range(1, retry_count + 1):
@@ -934,17 +1024,40 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
     attempts = 1 + max_revisions
     feedback: str | None = None
     last_warnings: list[str] = []
+    previous_attempt: dict | None = None
+    revision_history: list[dict] = []
 
     for attempt in range(1, attempts + 1):
         try:
-            data = _call_ai_enricher(noticia, feedback=feedback)
+            data = _call_ai_enricher(
+                noticia,
+                feedback=feedback,
+                previous_attempt=previous_attempt,
+            )
             result = _result_from_ai_payload(data, noticia)
         except Exception as exc:
             last_warnings = [f"editorial_ai_error:{exc}"]
             break
 
+        current_attempt = _editorial_feedback_snapshot(result)
+        changed_fields = _changed_revision_fields(previous_attempt, current_attempt)
+        material_changed_fields = [
+            field for field in changed_fields if field in _MATERIAL_REVISION_FIELDS
+        ]
         warnings = validate_editorial_result(result, noticia, check_similarity=True)
         warnings.extend(_quality_warnings(result, min_score=min_score))
+        if previous_attempt is not None and not material_changed_fields:
+            warnings.append("revision_no_material_change")
+        revision_history.append(
+            {
+                "attempt": attempt,
+                "warnings": list(warnings),
+                "changed_fields": changed_fields,
+                "material_changed_fields": material_changed_fields,
+            }
+        )
+        result.attempt_count = attempt
+        result.revision_history = list(revision_history)
         if not warnings:
             _log_diagnostics(result)
             return result
@@ -952,6 +1065,7 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
         last_warnings = warnings
         if attempt < attempts:
             feedback = _feedback_for_warnings(warnings, min_score=min_score)
+            previous_attempt = current_attempt
             logger.warning(
                 "Editorial attempt %s/%s rejected for %s: %s; retrying with feedback",
                 attempt,
@@ -961,9 +1075,32 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
             )
             continue
 
-        logger.warning("Editorial fallback for %s after %s attempts: %s", result.title[:70], attempts, warnings)
+        final_action = os.getenv("EDITORIAL_FINAL_ATTEMPT_ACTION", "publish_last_safe").strip().lower()
+        hard_warnings = _hard_editorial_warnings(warnings)
+        if final_action == "publish_last_safe" and not hard_warnings:
+            result.fallback_used = True
+            result.final_attempt_used = True
+            result.warnings = list(warnings)
+            logger.warning(
+                "Editorial final seguro usado para %s tras %s intentos: %s",
+                result.title[:70],
+                attempts,
+                warnings,
+            )
+            _log_diagnostics(result)
+            return result
+
+        logger.warning(
+            "Editorial fallback para %s tras %s intentos; bloqueos duros=%s warnings=%s",
+            result.title[:70],
+            attempts,
+            hard_warnings,
+            warnings,
+        )
 
     result = build_fallback_editorial(noticia, last_warnings or ["editorial_enrichment_failed"])
+    result.attempt_count = len(revision_history)
+    result.revision_history = list(revision_history)
     _log_diagnostics(result)
     return result
 

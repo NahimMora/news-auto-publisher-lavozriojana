@@ -90,7 +90,7 @@ class ConfigValidationTests(unittest.TestCase):
 
         env = self._base()
         env.update(
-            WEB_PUBLISH_MAX_PER_RUN="-1",
+            WEB_MAX_DEPORTES_PER_RUN="-2",
             IG_IMAGE_CONTAINER_WAIT_SECONDS="-1",
             WEB_QUEUE_PATH="not-a-json-file.txt",
         )
@@ -98,7 +98,7 @@ class ConfigValidationTests(unittest.TestCase):
         report = validate_config(env, scope="core")
         fields = {issue.field for issue in report.errors}
 
-        self.assertIn("WEB_PUBLISH_MAX_PER_RUN", fields)
+        self.assertIn("WEB_MAX_DEPORTES_PER_RUN", fields)
         self.assertIn("IG_IMAGE_CONTAINER_WAIT_SECONDS", fields)
         self.assertIn("WEB_QUEUE_PATH", fields)
 

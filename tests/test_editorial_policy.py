@@ -88,6 +88,24 @@ class EditorialFallbackPolicyTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertFalse(decision.degraded)
 
+    def test_safe_final_attempt_is_allowed_but_degraded_for_sensitive_content(self):
+        from utils.editorial_policy import evaluate_web_fallback
+
+        decision = evaluate_web_fallback(
+            {
+                "titulo": "Investigan un hecho",
+                "seccion": "policiales",
+                "parrafos": ["La investigación continúa."],
+            },
+            True,
+            final_attempt_used=True,
+        )
+
+        self.assertTrue(decision.allowed)
+        self.assertTrue(decision.degraded)
+        self.assertTrue(decision.strict)
+        self.assertEqual("editorial_final_attempt_published", decision.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

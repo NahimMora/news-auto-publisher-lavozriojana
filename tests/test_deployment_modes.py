@@ -66,14 +66,28 @@ class DeploymentModeTests(unittest.TestCase):
             plan.errors[0]["code"],
         )
 
-    def test_progressive_limits_are_one_per_channel(self):
+    def test_operational_limits_are_unlimited_web_and_eight_per_meta_channel(self):
         from utils.deployment import deployment_plan, stage_environment
 
         plan = deployment_plan(self._env("all", web=True, facebook=True, instagram=True))
 
-        self.assertEqual({"WEB_PUBLISH_MAX_PER_RUN": "1"}, stage_environment("web", plan))
-        self.assertEqual({"PUBLISH_MAX_PER_RUN": "1"}, stage_environment("facebook", plan))
-        self.assertEqual({"IG_MAX_PER_RUN": "1"}, stage_environment("instagram", plan))
+        self.assertEqual(
+            {
+                "WEB_PUBLISH_MAX_PER_RUN": "0",
+                "WEB_MAX_DEPORTES_PER_RUN": "-1",
+            },
+            stage_environment("web", plan),
+        )
+        self.assertEqual({"PUBLISH_MAX_PER_RUN": "8"}, stage_environment("facebook", plan))
+        self.assertEqual({"IG_MAX_PER_RUN": "8"}, stage_environment("instagram", plan))
+        self.assertEqual(
+            {
+                "web_per_cycle": "unlimited",
+                "facebook_per_cycle": 8,
+                "instagram_per_cycle": 8,
+            },
+            plan.to_dict()["limits"],
+        )
 
     def test_runners_are_disabled_when_switch_is_missing(self):
         import meta.run_fb as run_fb

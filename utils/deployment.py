@@ -55,9 +55,9 @@ class DeploymentPlan:
             "kill_switches": dict(self.kill_switches),
             "errors": list(self.errors),
             "limits": {
-                "web_per_cycle": 1 if "web" in self.enabled_channels else 0,
-                "facebook_per_cycle": 1 if "facebook" in self.enabled_channels else 0,
-                "instagram_per_cycle": 1 if "instagram" in self.enabled_channels else 0,
+                "web_per_cycle": "unlimited" if "web" in self.enabled_channels else 0,
+                "facebook_per_cycle": 8 if "facebook" in self.enabled_channels else 0,
+                "instagram_per_cycle": 8 if "instagram" in self.enabled_channels else 0,
             },
         }
 
@@ -159,11 +159,14 @@ def stage_environment(channel: str, plan: DeploymentPlan) -> dict[str, str]:
     if not plan.channel_enabled(channel):
         return {}
     if channel == "web":
-        return {"WEB_PUBLISH_MAX_PER_RUN": "1"}
+        return {
+            "WEB_PUBLISH_MAX_PER_RUN": "0",
+            "WEB_MAX_DEPORTES_PER_RUN": "-1",
+        }
     if channel == "facebook":
-        return {"PUBLISH_MAX_PER_RUN": "1"}
+        return {"PUBLISH_MAX_PER_RUN": "8"}
     if channel == "instagram":
-        return {"IG_MAX_PER_RUN": "1"}
+        return {"IG_MAX_PER_RUN": "8"}
     return {}
 
 

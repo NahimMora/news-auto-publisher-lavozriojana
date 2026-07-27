@@ -100,7 +100,20 @@ def evaluate_fallback_policy(
     return FallbackDecision(True, True, strict, None, used)
 
 
-def evaluate_web_fallback(item: dict, fallback_used: bool) -> FallbackDecision:
+def evaluate_web_fallback(
+    item: dict,
+    fallback_used: bool,
+    *,
+    final_attempt_used: bool = False,
+) -> FallbackDecision:
+    if final_attempt_used:
+        return FallbackDecision(
+            allowed=True,
+            degraded=True,
+            strict=_strict_reason(item) is not None,
+            reason="editorial_final_attempt_published",
+            fallbacks=("web_editorial_final_attempt",),
+        )
     mode = os.getenv("WEB_EDITORIAL_FALLBACK_MODE", "allow_non_sensitive")
     return evaluate_fallback_policy(
         item,
