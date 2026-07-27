@@ -1,15 +1,17 @@
 # Estado actual
 
-Última actualización: 2026-07-27 17:35 ART.
+Última actualización: 2026-07-27 18:54 ART.
 
 ## Rama, revisión y release
 
 - Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
 - Rama desplegada: `reliability/baseline-2026-07-23`.
-- Commit identificado por el heartbeat: `f90675d62c06a376aca6a798476a59c65a53fb3f`.
+- El SHA desplegado se obtiene con `python cli.py status --json`; antes del ajuste
+  final de observabilidad registraba
+  `d349de9968e70c20ee64cedc358b585a8fdcba5a`.
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
 - CI remoto conocido: `reliability-windows` verde en Actions run
-  [`30210229086`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30210229086).
+  [`30308227631`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30308227631).
 - Propuesta posterior al merge: `v1.0.0-reliability-baseline`.
 
 El PR sigue en borrador. No se hizo merge ni se creó el tag. El proceso activo usa
@@ -24,7 +26,7 @@ Verificaciones ejecutadas en el host Windows con el venv del repositorio:
 |---|---|
 | Python | 3.10.0 |
 | `pip check` | sin dependencias rotas |
-| suite | 217 tests, OK, 16,451 s |
+| suite | 220 tests, OK, `.env` deshabilitado |
 | E2E local | 17/17, `production_calls=false` |
 | `compileall` | OK |
 | `git diff --check` | OK |
@@ -49,10 +51,10 @@ supervisor detenido:
 - Eventos y motivos: `data/queue_events.json`.
 - Backups previos: `data/backups/`.
 
-Después del primer ciclo activo:
+Snapshot después del ciclo #6:
 
-- Web: 24 pendientes, todas del corte en adelante.
-- Meta: 25 entradas del corte en adelante.
+- Web: 29 pendientes, todas del corte en adelante.
+- Meta: 32 entradas del corte en adelante.
 - Social activa: 0.
 - Rewrite: 0 pending, 0 processing, 0 failed, 0 dead-letter.
 - Backlog histórico de Facebook: 0 pendientes sin clasificar, 0 ambiguos.
@@ -94,15 +96,28 @@ Instagram tuvo un canary controlado, verificable e idempotente:
 Durante el primer ciclo 24/7, Instagram deduplicó de forma segura la nota seleccionada
 contra su historial y no creó una copia.
 
+El ciclo #5 publicó Web y Facebook, pero Instagram recibió `request_rejected` para una
+nota de abigeato. La entrada quedó en dead-letter y no se reintentó automáticamente.
+El proveedor no dejó código/subcódigo en el evento histórico, por lo que la causa
+externa exacta quedó desconocida. El ciclo #6 publicó correctamente en las tres
+integraciones; Instagram devolvió ID `18177266845418088`. Desde el ajuste
+`LVR-069`, los rechazos futuros conservan HTTP/código/subcódigo/tipo sanitizados en el
+journal y en el log rotativo.
+
+El gate local también se validó desde Windows PowerShell 5.1. `LVR-070` permite que
+el verificador lea el BOM que esa consola agrega con `Out-File -Encoding utf8`, sin
+relajar ninguna comprobación del contenido.
+
 ## Estado operativo
 
-- Supervisor: activo, PID registrado `57744` al actualizar este documento.
+- Supervisor: activo, PID registrado `5036` al actualizar este documento.
 - Modo: `all`.
 - Canales solicitados/habilitados: Web, Facebook e Instagram.
 - Límite efectivo: una publicación por canal y ciclo.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
-- Primer ciclo observado: `success`, 4/4 etapas aceptables.
+- Último ciclo observado: #6 `success`, 4/4 etapas aceptables.
+- Ciclo #5: `degraded`, 3/4; rechazo Instagram aislado y no reintentado.
 - Alertas: detección y outbox durable habilitados; webhook externo no configurado.
 - UI manual: `http://127.0.0.1:8765/`, HTTP 200, sólo loopback.
 - Watchdog: tareas `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco minutos;
@@ -115,14 +130,14 @@ del PR, merge, tag ni declaración de release listo para producción.
 
 | Gate | Estado | Evidencia o bloqueo |
 |---|---|---|
-| A Código | parcial | suite/compile/E2E/CI verdes; falta review y merge |
+| A Código | parcial | suite/compile/E2E verdes; falta CI del commit final, review y merge |
 | B Entorno | completo para este host | backup, restore temporal, filesystem y heartbeat |
 | C Read-only | parcial | todo verde salvo endpoint CMS seguro |
 | D Canary | parcial | Instagram completo; Web/FB se validaron con publicaciones reales autorizadas |
 | E Observe | ejecutado | ciclos previos sanos, sin publicación |
 | F Web | ejecutado | tres publicaciones reales verificables |
 | G Facebook | ejecutado | backlog conciliado, token/página y publicaciones verificadas |
-| H Instagram | parcial | preflight y canary/cleanup; primer ciclo deduplicado |
+| H Instagram | ejecutado con incidente aislado | preflight/canary y ciclo #6 reales; un rechazo previo quedó en dead-letter |
 | I Release 24/7 | bloqueado | PR no aprobado/mergeado, tag ausente y CMS read-only bloqueado |
 
 Por estos bloqueos el repositorio no se declara “release listo para 24/7”, aunque el
@@ -134,7 +149,11 @@ servicio solicitado por el operador está activo con límites y watchdog.
 - No hay webhook aprobado; las alertas quedan en outbox local.
 - Las tareas programadas deben volver a verificarse después de un reinicio real del
   host.
+- Las tareas usan la sesión interactiva de `pc10`; no cubren el intervalo anterior al
+  inicio de sesión de Windows.
 - El commit activo tiene cambios de trabajo todavía no integrados en `main`.
+- La causa exacta del rechazo Instagram del ciclo #5 no puede reconstruirse porque
+  ocurrió antes de persistir metadatos sanitizados; no se reprodujo en el ciclo #6.
 - El contenido y selectores de terceros pueden cambiar sin aviso.
 
 Próximo gate: revisar y subir el diff sin secretos, obtener CI/review del PR y agregar

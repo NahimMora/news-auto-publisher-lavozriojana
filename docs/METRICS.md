@@ -143,17 +143,17 @@ auditoría y el PR.
 
 ## Snapshot operativo 2026-07-27
 
-Snapshot puntual después del primer ciclo en modo `all`; no constituye una tendencia:
+Snapshot puntual después del ciclo #6 en modo `all`; no constituye una tendencia:
 
 | Métrica | Valor |
 |---|---:|
-| ciclo | 4 |
-| scraping/rewrite | `no_work` |
+| ciclo | 6 |
+| scraping/rewrite | `success`, 8/8 |
 | Web | `success`, 1/1 |
 | Facebook | `success`, 1/1 |
-| Instagram | `success`, 1/1 deduplicada |
-| cola Web | 24 |
-| cola Meta | 25 |
+| Instagram | `success`, 1/1, ID externo persistido |
+| cola Web | 29 |
+| cola Meta | 32 |
 | cola social activa | 0 |
 | rewrite pending/processing/failed/dead-letter | 0/0/0/0 |
 | heartbeat | `fresh` |
@@ -162,3 +162,9 @@ Snapshot puntual después del primer ciclo en modo `all`; no constituye una tend
 El supervisor mantiene el límite de una publicación por canal y ciclo. Para afirmar
 backlog creciente deben observarse al menos tres ciclos comparables; este snapshot no
 permite esa conclusión.
+
+El ciclo #5 fue `degraded`: Instagram rechazó 1/1 mientras Web y Facebook fueron
+`success`. El elemento quedó en dead-letter y no se reintentó; el ciclo #6 confirmó
+que la integración seguía operable. Los rechazos posteriores a `LVR-069` agregan al
+evento terminal `http_status`, código/subcódigo y tipo del proveedor sin copiar el
+mensaje ni el cuerpo externo.

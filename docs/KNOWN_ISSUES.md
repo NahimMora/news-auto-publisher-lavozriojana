@@ -515,5 +515,39 @@
   para entrar a esa rama.
 - Corrección: `patch.dict` con token de prueba; nunca se lee una credencial real.
 - Evidencia: reproducción completa con `PYTHON_DOTENV_DISABLED=1`, 217 tests OK.
-- Estado actual: **resuelto localmente**; CI del commit correctivo debe quedar verde.
+- Estado actual: **resuelto**; Actions run `30308227631` quedó verde.
 - Riesgo residual: ninguno conocido; el workflow mantiene aislamiento explícito.
+
+## 58. Un rechazo social terminal no conservaba diagnóstico externo
+
+- Reproducción 2026-07-27: el ciclo #5 terminó `degraded`; Instagram devolvió
+  `request_rejected` para una nota, pero el evento dead-letter sólo conservó el
+  motivo y `run_ig.log` no registró HTTP/código/subcódigo.
+- Causa raíz: los runners usaban `OperationResult` para decidir el estado, pero
+  descartaban su diagnóstico antes de llamar a `mark_dead_letter`.
+- Corrección: `OperationResult.failure_metadata()` limita la evidencia a campos
+  seguros; los runners Facebook/Instagram escriben el fallo en sus logs rotativos y
+  el journal terminal recibe esos metadatos. No se copia el mensaje ni el cuerpo
+  externo arbitrario.
+- Evidencia: tests
+  `test_request_rejection_is_logged_and_dead_letter_keeps_safe_diagnostics` y
+  `test_dead_letter_persists_safe_external_diagnostics`; suite aislada 219/219.
+- Estado actual: **corregido para fallos futuros**. El rechazo histórico no puede
+  enriquecerse retroactivamente sin inventar evidencia; queda `no reproducido` porque
+  el ciclo #6 publicó correctamente en Instagram.
+- Riesgo residual: un error externo puede requerir consultar Meta read-only para
+  interpretar códigos; una respuesta sin JSON sólo conserva HTTP/tipo interno.
+
+## 59. El gate de dry-run no aceptaba JSON UTF-8 con BOM de PowerShell 5.1
+
+- Reproducción 2026-07-27: `Out-File -Encoding utf8` desde Windows PowerShell 5.1
+  creó `dry-run.json` con BOM y `verify_ci_safety.py` terminó con
+  `JSONDecodeError`.
+- Causa raíz: el lector usaba `encoding="utf-8"` aunque el runbook es Windows-first.
+- Corrección: lectura `utf-8-sig`, compatible tanto con archivos con BOM como sin él.
+  Las validaciones de `status=success` y `production_calls=false` no cambian.
+- Evidencia: test
+  `test_dry_run_gate_accepts_windows_powershell_utf8_bom` rojo antes de corregir y
+  ejecución real del gate local verde después.
+- Estado actual: **resuelto**.
+- Riesgo residual: ninguno conocido para UTF-8; otros encodings continúan rechazados.

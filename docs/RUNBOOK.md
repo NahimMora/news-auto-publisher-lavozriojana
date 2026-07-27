@@ -138,6 +138,18 @@ republique automáticamente. La entrada debe quedar en dead-letter con motivo
 `ambiguous_external_outcome`. Concilie en la plataforma, registre ID/URL si existe y
 recién entonces complete o reencole la entrada.
 
+## Publicación social rechazada
+
+1. No reencole automáticamente un evento `request_rejected`.
+2. Revise `logs/run_fb.log` o `logs/run_ig.log` y el evento correspondiente en
+   `data/queue_events.json`.
+3. Use `http_status`, `provider_code`, `provider_subcode` y `provider_type`; el cuerpo
+   arbitrario de Meta no se persiste.
+4. Ejecute el preflight read-only del canal. Si el siguiente ciclo vuelve a fallar,
+   baje a `web_facebook` o `web_instagram` según corresponda y apague el kill switch
+   de la integración afectada.
+5. Concilie el ID/estado en Meta antes de cualquier decisión manual de reencolado.
+
 ## CI fallido
 
 1. Reproduzca exactamente los comandos de `README.md`.

@@ -127,6 +127,12 @@ La cola durable de reescritura usa `pending`, `processing`, `completed`, `failed
 `expired` y `dead_letter`. La cola social mantiene esos estados por plataforma para
 no asumir que el éxito de Facebook implica el de Instagram.
 
+Un fallo de Meta registra en el log rotativo y, si termina en dead-letter, en
+`queue_events.json` únicamente diagnóstico estructurado seguro: tipo interno,
+HTTP/código/subcódigo/tipo del proveedor, retry y outcome. No persiste el cuerpo
+arbitrario de la respuesta ni su mensaje, para evitar copiar tokens devueltos por un
+tercero.
+
 ## Compatibilidad y migración
 
 - Se conservan los nombres y listas JSON que consumía el sistema anterior.

@@ -12,10 +12,11 @@ imprimieron ni se incorporaron al repositorio.
 ## Hechos comprobados
 
 - Rama: `reliability/baseline-2026-07-23`.
-- Commit registrado: `f90675d62c06a376aca6a798476a59c65a53fb3f`.
+- Commit registrado antes del ajuste final: `d349de9968e70c20ee64cedc358b585a8fdcba5a`;
+  el SHA desplegado definitivo se consulta en el heartbeat.
 - Python 3.10.0 en `venv`.
 - `pip check`: sin dependencias rotas.
-- Suite: 217 tests, OK, 16,451 segundos.
+- Suite: 220 tests, OK y `.env` deshabilitado.
 - E2E local: 17/17, `production_calls=false`.
 - `compileall` y `git diff --check`: exit 0.
 - Perfil productivo: `doctor supervisor` `success`, 8/8.
@@ -30,6 +31,10 @@ imprimieron ni se incorporaron al repositorio.
 - Supervisor: modo `all`, heartbeat fresco y límites 1/1/1.
 - Primer ciclo: scraping/rewrite `no_work`, Web `success 1/1`, Facebook
   `success 1/1`, Instagram `success 1/1` por deduplicación.
+- Ciclo #5: `degraded`; Web/Facebook `success`, Instagram
+  `request_rejected` 0/1 y entrada en dead-letter sin reintento.
+- Ciclo #6: `success`, 4/4; Instagram real 1/1 con ID
+  `18177266845418088`.
 - Tareas programadas: dos ejecuciones reales con `LastTaskResult=0`.
 
 ## Inferencias
@@ -134,7 +139,41 @@ imprimieron ni se incorporaron al repositorio.
 - Corrección: entorno mockeado con `IG_ACCESS_TOKEN=test-token`.
 - Evidencia: suite de 217 tests con `PYTHON_DOTENV_DISABLED=1`.
 - Estado: corregido.
-- Riesgo residual: pendiente confirmar el check remoto del nuevo commit.
+- Evidencia remota: Actions run `30308227631`, verde.
+- Riesgo residual: ninguno conocido.
+
+### LVR-069 — Rechazo social sin diagnóstico persistido
+
+- Severidad: alta de observabilidad.
+- Archivos/funciones: `meta/run_fb.py::main`, `meta/run_ig.py::main`,
+  `utils/operation_result.py::failure_metadata`,
+  `utils/social_queue.py::mark_dead_letter`.
+- Síntoma: ciclo #5 Instagram `request_rejected`; sólo quedó el motivo, sin
+  HTTP/código/subcódigo/tipo.
+- Causa raíz: el runner descartaba el diagnóstico de `OperationResult`.
+- Reproducción: operación mockeada HTTP 400/código 100/subcódigo 33.
+- Impacto: incidente trazable pero causa externa no diagnosticable.
+- Corrección: log rotativo y metadata terminal segura, sin mensaje/cuerpo externo.
+- Tests: `tests.test_social_stage_results` y `tests.test_meta_contracts`.
+- Evidencia: test rojo antes de la corrección y suite aislada 219/219 después.
+- Estado: corregido para eventos futuros; incidente histórico no reproducido en el
+  ciclo #6.
+- Riesgo residual: el detalle histórico perdido no se inventa ni reconstruye.
+
+### LVR-070 — Gate dry-run incompatible con BOM de PowerShell 5.1
+
+- Severidad: media.
+- Archivo/función: `scripts/verify_ci_safety.py::verify_dry_run`.
+- Síntoma: `JSONDecodeError` antes de validar `production_calls=false`.
+- Causa raíz: lectura UTF-8 estricta de un archivo generado con BOM por la consola
+  Windows legacy.
+- Reproducción: `Out-File -Encoding utf8` y ejecución del verificador.
+- Corrección: lectura `utf-8-sig`; no se relaja el contrato del JSON.
+- Test: `tests.test_ci_safety.
+  test_dry_run_gate_accepts_windows_powershell_utf8_bom`.
+- Evidencia: test rojo/verde y gate local completo aceptado.
+- Estado: corregido.
+- Riesgo residual: otros encodings no UTF-8 se rechazan explícitamente.
 
 ## Problemas documentados pero no reproducidos
 
@@ -232,7 +271,7 @@ cinco minutos. No contienen tokens ni valores de `.env`.
 | Observe | ejecutado | ninguno interno |
 | Web | ejecutado | mantener límite |
 | Facebook | ejecutado | mantener límite |
-| Instagram | parcial | ciclo real deduplicado |
+| Instagram | ejecutado con incidente aislado | ciclo #6 1/1; rechazo previo trazado |
 | Release 24/7 | bloqueado | merge/tag/CMS/reboot |
 
 ## Rollback
