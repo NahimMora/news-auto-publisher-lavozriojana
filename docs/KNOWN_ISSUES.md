@@ -505,3 +505,15 @@
 - Estado actual: **resuelto**.
 - Riesgo residual: una noticia legítima sin fecha no se publica automáticamente; queda
   trazable para revisión, que es el comportamiento conservador.
+
+## 57. Test de permalink Instagram dependía del `.env` local
+
+- Reproducción 2026-07-27: Actions run `30306212406` falló sólo en
+  `test_instagram_permalink_uses_instagram_media_field`; local pasaba porque heredaba
+  `IG_ACCESS_TOKEN`.
+- Causa raíz: el test mockeaba HTTP pero no declaraba la credencial ficticia necesaria
+  para entrar a esa rama.
+- Corrección: `patch.dict` con token de prueba; nunca se lee una credencial real.
+- Evidencia: reproducción completa con `PYTHON_DOTENV_DISABLED=1`, 217 tests OK.
+- Estado actual: **resuelto localmente**; CI del commit correctivo debe quedar verde.
+- Riesgo residual: ninguno conocido; el workflow mantiene aislamiento explícito.

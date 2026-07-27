@@ -154,7 +154,10 @@ class CanaryTests(unittest.TestCase):
             StageStatus.SUCCESS,
             external_id="ig-media-1",
         )
-        with mock.patch.object(canary.requests, "get", return_value=response) as get:
+        with mock.patch.dict(
+            os.environ,
+            {"IG_ACCESS_TOKEN": "test-token"},
+        ), mock.patch.object(canary.requests, "get", return_value=response) as get:
             result = canary._operation_with_permalink("instagram", operation)
 
         self.assertEqual(

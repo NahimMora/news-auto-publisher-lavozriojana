@@ -125,6 +125,17 @@ imprimieron ni se incorporaron al repositorio.
 - Estado: corregido.
 - Riesgo residual: requiere revisión manual si una fuente deja de publicar fechas.
 
+### LVR-068 — Test de canary no era hermético sin `.env`
+
+- Severidad: alta por bloquear CI y ocultar dependencia en secretos locales.
+- Archivo/función: `tests/test_canary.py`.
+- Síntoma: local verde, Actions run `30306212406` rojo con URL vacía.
+- Causa raíz: faltaba un token ficticio dentro del test de permalink.
+- Corrección: entorno mockeado con `IG_ACCESS_TOKEN=test-token`.
+- Evidencia: suite de 217 tests con `PYTHON_DOTENV_DISABLED=1`.
+- Estado: corregido.
+- Riesgo residual: pendiente confirmar el check remoto del nuevo commit.
+
 ## Problemas documentados pero no reproducidos
 
 - Outcomes ambiguos reales de CMS/Meta.
