@@ -33,6 +33,21 @@ class CiSafetyTests(unittest.TestCase):
             )
             self.assertTrue(verify_dry_run(path))
 
+    def test_dry_run_gate_accepts_windows_powershell_utf8_bom(self):
+        from scripts.verify_ci_safety import verify_dry_run
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "dry-run-bom.json"
+            payload = json.dumps(
+                {
+                    "status": "success",
+                    "details": {"production_calls": False},
+                }
+            )
+            path.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+
+            self.assertEqual([], verify_dry_run(path))
+
     def test_workflow_contains_required_windows_gates(self):
         workflow = (
             Path(__file__).resolve().parents[1]

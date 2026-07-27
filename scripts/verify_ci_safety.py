@@ -32,7 +32,8 @@ def _git(*args: str) -> str:
 
 def verify_dry_run(path: Path) -> list[str]:
     errors: list[str] = []
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Windows PowerShell 5.1 escribe BOM con ``Out-File -Encoding utf8``.
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     if payload.get("status") != "success":
         errors.append(f"dry-run status={payload.get('status')!r}")
     if payload.get("details", {}).get("production_calls") is not False:
