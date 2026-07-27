@@ -32,7 +32,12 @@ from utils.facebook_reconcile import (
 from utils.paths import ROOT_DIR, data_dir, logs_dir
 from utils.preflight import PREFLIGHT_SCOPES, run_preflight
 from utils.process_runner import run_stage_process
-from utils.queue_cutover import apply_cutover, build_cutover_report
+from utils.queue_cutover import (
+    apply_cutover,
+    apply_latest_window,
+    build_cutover_report,
+    build_latest_window_report,
+)
 from utils.stage_result import StageResult, StageStatus, aggregate_results
 
 
@@ -526,11 +531,18 @@ def cmd_alert_check(args) -> int:
 
 def cmd_queue_cutover(args) -> int:
     try:
-        result = (
-            apply_cutover(args.from_date)
-            if args.apply
-            else build_cutover_report(args.from_date)
-        )
+        if args.keep_latest is not None:
+            result = (
+                apply_latest_window(args.keep_latest)
+                if args.apply
+                else build_latest_window_report(args.keep_latest)
+            )
+        else:
+            result = (
+                apply_cutover(args.from_date)
+                if args.apply
+                else build_cutover_report(args.from_date)
+            )
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except (ValueError, JsonStateError) as exc:
@@ -670,7 +682,13 @@ def main(argv: list[str] | None = None) -> int:
     cutover_mode = cutover_parser.add_mutually_exclusive_group(required=True)
     cutover_mode.add_argument("--report-only", action="store_true")
     cutover_mode.add_argument("--apply", action="store_true")
-    cutover_parser.add_argument("--from-date", required=True, help="Fecha YYYY-MM-DD")
+    cutover_strategy = cutover_parser.add_mutually_exclusive_group(required=True)
+    cutover_strategy.add_argument("--from-date", help="Fecha YYYY-MM-DD")
+    cutover_strategy.add_argument(
+        "--keep-latest",
+        type=int,
+        help="Conserva las últimas N noticias según timestamp durable de cola",
+    )
     cutover_parser.add_argument("--json", action="store_true")
 
     alert_test_parser = sub.add_parser(

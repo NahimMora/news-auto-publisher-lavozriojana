@@ -133,6 +133,118 @@ class QueueCutoverTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.queue_cutover.apply_cutover("2026-07-27", self.env)
 
+    def _seed_ordered_window(self):
+        from utils.file_manager import save_json
+
+        web = []
+        meta = []
+        social = []
+        for index in range(1, 5):
+            base = {
+                "titulo": f"Nota {index}",
+                "canonical_url": f"https://example.com/{index}",
+                "dedup_key": f"link:{index}",
+                "fecha": "",
+            }
+            web.append(
+                {
+                    **base,
+                    "web_queue_key": f"web-{index}",
+                    "web_queued_at": index * 10,
+                }
+            )
+            meta.append(
+                {
+                    **base,
+                    "meta_queue_key": f"meta-{index}",
+                    "queued_at": index * 10,
+                }
+            )
+            social.append(
+                {
+                    **base,
+                    "social_queued_at": index * 10,
+                    "facebook_state": "pending",
+                    "instagram_state": "pending",
+                }
+            )
+        save_json(self.env["WEB_QUEUE_PATH"], web)
+        save_json(self.env["META_QUEUE_PATH"], meta)
+        save_json(self.env["SOCIAL_QUEUE_PATH"], social)
+
+    def test_latest_window_report_uses_queue_order_not_article_date(self):
+        self._seed_ordered_window()
+        before = {
+            name: Path(path).read_bytes()
+            for name, path in (
+                ("web", self.env["WEB_QUEUE_PATH"]),
+                ("meta", self.env["META_QUEUE_PATH"]),
+                ("social", self.env["SOCIAL_QUEUE_PATH"]),
+            )
+        }
+
+        report = self.queue_cutover.build_latest_window_report(2, self.env)
+
+        self.assertEqual(4, report["unique_items"])
+        self.assertEqual(2, report["keep_latest"])
+        self.assertEqual(2, report["queues"]["web"]["retained"])
+        self.assertEqual(2, report["queues"]["meta"]["retained"])
+        self.assertEqual(0, report["unknown_order"])
+        for name, path in (
+            ("web", self.env["WEB_QUEUE_PATH"]),
+            ("meta", self.env["META_QUEUE_PATH"]),
+            ("social", self.env["SOCIAL_QUEUE_PATH"]),
+        ):
+            self.assertEqual(before[name], Path(path).read_bytes())
+
+    def test_latest_window_archives_older_items_and_keeps_traceability(self):
+        from utils.file_manager import load_json
+
+        self._seed_ordered_window()
+        result = self.queue_cutover.apply_latest_window(
+            2,
+            self.env,
+            now=2_000_000,
+        )
+
+        web = load_json(self.env["WEB_QUEUE_PATH"], [], expected_type=list)
+        meta = load_json(self.env["META_QUEUE_PATH"], [], expected_type=list)
+        social = load_json(self.env["SOCIAL_QUEUE_PATH"], [], expected_type=list)
+        archive = load_json(
+            self.env["LVR_QUEUE_CUTOVER_ARCHIVE_PATH"], [], expected_type=list
+        )
+
+        self.assertEqual(["link:3", "link:4"], [item["dedup_key"] for item in web])
+        self.assertEqual(["link:3", "link:4"], [item["dedup_key"] for item in meta])
+        self.assertEqual("excluded", social[0]["facebook_state"])
+        self.assertEqual("excluded", social[1]["instagram_state"])
+        self.assertEqual("pending", social[2]["facebook_state"])
+        self.assertEqual(4, len(archive))
+        self.assertTrue(
+            all(
+                entry["reason"] == "operator_baseline_older_than_latest_window"
+                for entry in archive
+            )
+        )
+        self.assertEqual(2, result["web_archived"])
+        self.assertEqual(2, result["meta_archived"])
+        self.assertEqual(4, result["social_states_excluded"])
+
+    def test_latest_window_refuses_missing_queue_timestamp(self):
+        from utils.file_manager import save_json
+
+        save_json(
+            self.env["WEB_QUEUE_PATH"],
+            [{"dedup_key": "link:unknown", "fecha": ""}],
+        )
+        save_json(self.env["META_QUEUE_PATH"], [])
+        save_json(self.env["SOCIAL_QUEUE_PATH"], [])
+
+        report = self.queue_cutover.build_latest_window_report(20, self.env)
+        self.assertEqual(1, report["unknown_order"])
+        with self.assertRaises(ValueError):
+            self.queue_cutover.apply_latest_window(20, self.env)
+
 
 if __name__ == "__main__":
     unittest.main()
