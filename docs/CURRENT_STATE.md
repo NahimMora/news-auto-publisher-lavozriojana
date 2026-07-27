@@ -1,14 +1,13 @@
 # Estado actual
 
-Última actualización: 2026-07-27 18:54 ART.
+Última actualización: 2026-07-27 19:16 ART.
 
 ## Rama, revisión y release
 
 - Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
 - Rama desplegada: `reliability/baseline-2026-07-23`.
-- El SHA desplegado se obtiene con `python cli.py status --json`; antes del ajuste
-  final de observabilidad registraba
-  `d349de9968e70c20ee64cedc358b585a8fdcba5a`.
+- Commit de código identificado por el heartbeat:
+  `1fe63cc018a52fa66f8f454cf87c4f40c4995068`.
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
 - CI remoto conocido: `reliability-windows` verde en Actions run
   [`30308227631`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30308227631).
@@ -51,10 +50,10 @@ supervisor detenido:
 - Eventos y motivos: `data/queue_events.json`.
 - Backups previos: `data/backups/`.
 
-Snapshot después del ciclo #6:
+Snapshot después del ciclo #7:
 
-- Web: 29 pendientes, todas del corte en adelante.
-- Meta: 32 entradas del corte en adelante.
+- Web: 33 pendientes, todas del corte en adelante.
+- Meta: 37 entradas del corte en adelante.
 - Social activa: 0.
 - Rewrite: 0 pending, 0 processing, 0 failed, 0 dead-letter.
 - Backlog histórico de Facebook: 0 pendientes sin clasificar, 0 ambiguos.
@@ -108,15 +107,24 @@ El gate local también se validó desde Windows PowerShell 5.1. `LVR-070` permit
 el verificador lea el BOM que esa consola agrega con `Out-File -Encoding utf8`, sin
 relajar ninguna comprobación del contenido.
 
+El ciclo #7 terminó `degraded` porque Web rechazó una nota de `policiales` tras seis
+intentos editoriales y bloqueó el fallback mediante `strict_category_policiales`.
+No hubo publicación externa ni falso éxito: el elemento pasó a dead-letter con título,
+motivo y política; Facebook e Instagram reportaron `no_work` porque no apareció una
+URL Web nueva. Es el comportamiento conservador configurado para una categoría
+sensible, no una caída de CMS/Meta.
+
 ## Estado operativo
 
-- Supervisor: activo, PID registrado `5036` al actualizar este documento.
+- Supervisor: activo, PID registrado `29276` al actualizar este documento.
 - Modo: `all`.
 - Canales solicitados/habilitados: Web, Facebook e Instagram.
 - Límite efectivo: una publicación por canal y ciclo.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
-- Último ciclo observado: #6 `success`, 4/4 etapas aceptables.
+- Último ciclo observado: #7 `degraded`, 3/4 etapas aceptables.
+- Ciclo #7 Web: `failed` 0/1 por `strict_category_policiales`, terminal trazable y
+  sin publicación; Facebook/Instagram `no_work`.
 - Ciclo #5: `degraded`, 3/4; rechazo Instagram aislado y no reintentado.
 - Alertas: detección y outbox durable habilitados; webhook externo no configurado.
 - UI manual: `http://127.0.0.1:8765/`, HTTP 200, sólo loopback.
@@ -135,7 +143,7 @@ del PR, merge, tag ni declaración de release listo para producción.
 | C Read-only | parcial | todo verde salvo endpoint CMS seguro |
 | D Canary | parcial | Instagram completo; Web/FB se validaron con publicaciones reales autorizadas |
 | E Observe | ejecutado | ciclos previos sanos, sin publicación |
-| F Web | ejecutado | tres publicaciones reales verificables |
+| F Web | ejecutado | publicaciones verificables y rechazo editorial seguro en ciclo #7 |
 | G Facebook | ejecutado | backlog conciliado, token/página y publicaciones verificadas |
 | H Instagram | ejecutado con incidente aislado | preflight/canary y ciclo #6 reales; un rechazo previo quedó en dead-letter |
 | I Release 24/7 | bloqueado | PR no aprobado/mergeado, tag ausente y CMS read-only bloqueado |
@@ -154,6 +162,9 @@ servicio solicitado por el operador está activo con límites y watchdog.
 - El commit activo tiene cambios de trabajo todavía no integrados en `main`.
 - La causa exacta del rechazo Instagram del ciclo #5 no puede reconstruirse porque
   ocurrió antes de persistir metadatos sanitizados; no se reprodujo en el ciclo #6.
+- El backlog Web creció 24→26→29 y llegó a 33; el límite inicial de una publicación
+  por ciclo es menor que el ingreso observado. La alerta `backlog_growing` se emitió
+  localmente. No se aumenta volumen hasta completar más ciclos sanos.
 - El contenido y selectores de terceros pueden cambiar sin aviso.
 
 Próximo gate: revisar y subir el diff sin secretos, obtener CI/review del PR y agregar

@@ -12,8 +12,8 @@ imprimieron ni se incorporaron al repositorio.
 ## Hechos comprobados
 
 - Rama: `reliability/baseline-2026-07-23`.
-- Commit registrado antes del ajuste final: `d349de9968e70c20ee64cedc358b585a8fdcba5a`;
-  el SHA desplegado definitivo se consulta en el heartbeat.
+- Commit de código desplegado:
+  `1fe63cc018a52fa66f8f454cf87c4f40c4995068`.
 - Python 3.10.0 en `venv`.
 - `pip check`: sin dependencias rotas.
 - Suite: 220 tests, OK y `.env` deshabilitado.
@@ -35,6 +35,9 @@ imprimieron ni se incorporaron al repositorio.
   `request_rejected` 0/1 y entrada en dead-letter sin reintento.
 - Ciclo #6: `success`, 4/4; Instagram real 1/1 con ID
   `18177266845418088`.
+- Ciclo #7: `degraded`, 3/4; Web rechazó 0/1 por
+  `strict_category_policiales`, sin llamada de publicación, y registró dead-letter
+  con política; Facebook/Instagram `no_work`.
 - Tareas programadas: dos ejecuciones reales con `LastTaskResult=0`.
 
 ## Inferencias
@@ -46,6 +49,9 @@ imprimieron ni se incorporaron al repositorio.
   Windows y Task Scheduler estén disponibles.
 - El límite de una publicación por canal reduce el radio de impacto durante la
   observación, pero no elimina el riesgo de un cambio externo de contrato.
+- El crecimiento 24→26→29→33 de la cola Web indica que el throughput conservador
+  actual es menor que el ingreso observado; aumentar volumen requiere completar el
+  rollout y no se hace automáticamente.
 
 ## Información desconocida
 

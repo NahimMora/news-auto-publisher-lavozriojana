@@ -143,28 +143,33 @@ auditoría y el PR.
 
 ## Snapshot operativo 2026-07-27
 
-Snapshot puntual después del ciclo #6 en modo `all`; no constituye una tendencia:
+Snapshot puntual después del ciclo #7 en modo `all`:
 
 | Métrica | Valor |
 |---|---:|
-| ciclo | 6 |
-| scraping/rewrite | `success`, 8/8 |
-| Web | `success`, 1/1 |
-| Facebook | `success`, 1/1 |
-| Instagram | `success`, 1/1, ID externo persistido |
-| cola Web | 29 |
-| cola Meta | 32 |
+| ciclo | 7 |
+| scraping/rewrite | `success`, 10/10 |
+| Web | `failed`, 0/1, `strict_category_policiales` |
+| Facebook | `no_work`, 0/0 |
+| Instagram | `no_work`, 0/0 |
+| cola Web | 33 |
+| cola Meta | 37 |
 | cola social activa | 0 |
 | rewrite pending/processing/failed/dead-letter | 0/0/0/0 |
 | heartbeat | `fresh` |
 | filesystem libre durante preflight | 34.065 MB |
 
-El supervisor mantiene el límite de una publicación por canal y ciclo. Para afirmar
-backlog creciente deben observarse al menos tres ciclos comparables; este snapshot no
-permite esa conclusión.
+El supervisor mantiene el límite de una publicación por canal y ciclo. La secuencia
+Web 24→26→29 activó correctamente `backlog_growing`; después del ciclo #7 quedó en
+33. Esto demuestra un cuello de botella de capacidad durante el rollout conservador,
+pero no autoriza por sí solo a aumentar volumen.
 
 El ciclo #5 fue `degraded`: Instagram rechazó 1/1 mientras Web y Facebook fueron
 `success`. El elemento quedó en dead-letter y no se reintentó; el ciclo #6 confirmó
 que la integración seguía operable. Los rechazos posteriores a `LVR-069` agregan al
 evento terminal `http_status`, código/subcódigo y tipo del proveedor sin copiar el
 mensaje ni el cuerpo externo.
+
+El fallo Web del ciclo #7 fue un bloqueo editorial deliberado. El journal conserva
+`strict_category_policiales` y la política `strict=true/allowed=false`; no cuenta como
+publicación ni como pérdida de cola.
