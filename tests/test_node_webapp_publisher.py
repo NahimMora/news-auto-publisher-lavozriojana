@@ -116,6 +116,25 @@ class EditorialTests(unittest.TestCase):
 
         self.assertIn("disallowed_html_tag:script", warnings)
 
+    def test_generic_editorial_nouns_and_leading_connectors_are_not_proper_names(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.title = "Fallecimiento tras un accidente en Aimogasta"
+        result.lead = "En Capital continúan las tareas informadas."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertFalse(
+            any("Fallecimiento" in warning for warning in warnings),
+            warnings,
+        )
+        self.assertFalse(any("En Capital" in warning for warning in warnings), warnings)
+
     def test_prepare_editorial_retries_when_quality_score_is_low(self):
         noticia = sample_news()
         low_quality = {
@@ -238,6 +257,7 @@ class EditorialTests(unittest.TestCase):
             "Cambiar estructura y titulo",
         )
         self.assertEqual(user_payload["previous_attempt"], previous)
+        self.assertEqual(create.call_args.kwargs["temperature"], 0.55)
 
     def test_identical_revision_receives_explicit_no_change_feedback(self):
         noticia = sample_news()

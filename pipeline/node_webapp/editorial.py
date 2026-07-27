@@ -403,6 +403,14 @@ _PROPER_NOUN_STOPWORDS = {
     "Esta",
     "Tambien",
     "Tambi\u00e9n",
+    "Ademas",
+    "Adem\u00e1s",
+    "Ambos",
+    "Ante",
+    "Durante",
+    "Detencion",
+    "Detenci\u00f3n",
+    "Fallecimiento",
 }
 _PROPER_NOUN_MONTHS = {m.title() for m in _MONTHS}
 _ACRONYM_STOPWORDS = {
@@ -435,6 +443,13 @@ def _extract_proper_nouns(text: str) -> set[str]:
                 continue
             out.add(candidate)
     return out
+
+
+def _strip_leading_proper_stopwords(value: str) -> str:
+    words = value.split()
+    while len(words) > 1 and words[0] in _PROPER_NOUN_STOPWORDS:
+        words.pop(0)
+    return " ".join(words)
 
 
 def _acronyms_in(text: str) -> set[str]:
@@ -579,7 +594,9 @@ def validate_editorial_result(
         if whole and _name_is_allowed(whole, original_acronyms):
             continue
         for chunk in _CONNECTOR_SPLIT_RE.split(match.group(0)):
-            name = clean_text(chunk).strip(" .,:;")
+            name = _strip_leading_proper_stopwords(
+                clean_text(chunk).strip(" .,:;")
+            )
             if not name or name in _PROPER_NOUN_STOPWORDS or name in _PROPER_NOUN_MONTHS:
                 continue
             if len(name) <= 2 or name in seen_warnings:
@@ -999,7 +1016,9 @@ def _call_ai_enricher(
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
-                temperature=0.35,
+                # Una revisión necesita variación estructural real. La validación
+                # factual posterior sigue siendo autoritativa.
+                temperature=0.55 if feedback else 0.35,
                 max_tokens=1800,
                 response_format={"type": "json_object"},
             )
