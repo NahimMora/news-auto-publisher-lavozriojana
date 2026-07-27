@@ -150,6 +150,71 @@ class InstagramStageTests(unittest.TestCase):
         self.assertEqual(result.error_type, "rate_limit")
         self.assertEqual(result.exit_code, 2)
 
+    def test_request_rejection_is_logged_and_dead_letter_keeps_safe_diagnostics(self):
+        item = {
+            **news("ig-rejected"),
+            "categoria": "sociedad",
+            "web_url": "https://lavozriojana.com/noticias/ig-rejected",
+        }
+        operation = OperationResult(
+            StageStatus.FAILED,
+            error_type="request_rejected",
+            error_code=400,
+            response={
+                "error": {
+                    "code": 100,
+                    "error_subcode": 33,
+                    "type": "OAuthException",
+                    "message": "access_token=secreto-no-persistir",
+                }
+            },
+            details={"publication_outcome": "not_published"},
+        )
+        with patch.object(run_ig, "IG_ACCOUNT_ID", "ig"), patch.object(
+            run_ig, "IG_ACCESS_TOKEN", "token"
+        ), patch.dict(
+            os.environ,
+            {
+                "IG_PUBLISH_ENABLED": "true",
+                "IG_MAX_PER_RUN": "1",
+            },
+            clear=False,
+        ), patch.object(
+            run_ig, "rate_limit_until", return_value=0
+        ), patch.object(
+            run_ig, "recover_ambiguous_processing", return_value=0
+        ), patch.object(
+            run_ig, "_bootstrap_queue", return_value=(1, 0, 0)
+        ), patch.object(
+            run_ig, "_sync_posted_state", return_value=0
+        ), patch.object(
+            run_ig, "get_pending", side_effect=[[item], [item]]
+        ), patch.object(
+            run_ig, "claim", return_value=True
+        ), patch.object(
+            run_ig, "post_to_instagram_detailed", return_value=operation
+        ), patch.object(
+            run_ig, "mark_done"
+        ), patch.object(
+            run_ig, "mark_pending"
+        ), patch.object(
+            run_ig, "mark_dead_letter"
+        ) as mark_dead_letter, patch.object(
+            run_ig, "compact_queue"
+        ), patch.object(
+            run_ig.logger, "error"
+        ) as log_error:
+            result = run_ig.main()
+
+        self.assertEqual(StageStatus.FAILED, result.status)
+        self.assertTrue(log_error.called)
+        metadata = mark_dead_letter.call_args.kwargs["metadata"]
+        self.assertEqual(400, metadata["http_status"])
+        self.assertEqual(100, metadata["provider_code"])
+        self.assertEqual(33, metadata["provider_subcode"])
+        self.assertEqual("OAuthException", metadata["provider_type"])
+        self.assertNotIn("secreto-no-persistir", repr(metadata))
+
 
 if __name__ == "__main__":
     unittest.main()

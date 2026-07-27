@@ -253,7 +253,13 @@ def mark_pending(noticia: dict, platform: Platform, reason: str) -> None:
     update_json(QUEUE_PATH, mutate, [], expected_type=list)
 
 
-def mark_dead_letter(noticia: dict, platform: Platform, reason: str) -> None:
+def mark_dead_letter(
+    noticia: dict,
+    platform: Platform,
+    reason: str,
+    *,
+    metadata: dict | None = None,
+) -> None:
     keys = _item_keys(noticia)
     recorded: dict | None = None
 
@@ -272,6 +278,7 @@ def mark_dead_letter(noticia: dict, platform: Platform, reason: str) -> None:
         status="dead_letter",
         reason=reason,
         item=recorded or noticia,
+        metadata=metadata,
     )
 
 

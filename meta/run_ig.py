@@ -166,6 +166,12 @@ def main() -> StageResult:
         error_type = operation.error_type
         next_retry_at = operation.next_retry_at
         outcome = operation.details.get("publication_outcome")
+        failure_metadata = operation.failure_metadata()
+        logger.error(
+            "Fallo externo de Instagram para %s: %s",
+            str(noticia.get("dedup_key") or noticia.get("titulo") or "")[:120],
+            failure_metadata,
+        )
         if operation.retryable and outcome != "unknown":
             mark_pending(noticia, "instagram", operation.error_type or "retryable")
         elif operation.error_type in {"invalid_credential", "missing_configuration"}:
@@ -175,6 +181,7 @@ def main() -> StageResult:
                 noticia,
                 "instagram",
                 operation.error_type or "external_failure",
+                metadata=failure_metadata,
             )
         failed += 1
         if operation.error_type in {"rate_limit", "invalid_credential"}:

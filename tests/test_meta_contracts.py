@@ -293,6 +293,33 @@ class R2ContractTests(unittest.TestCase):
 
 
 class SocialRecoveryTests(unittest.TestCase):
+    def test_dead_letter_persists_safe_external_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "social.json"
+            events = Path(tmp) / "events.json"
+            item = {"titulo": "Rechazada", "dedup_key": "link:rejected"}
+            metadata = {
+                "http_status": 400,
+                "provider_code": 100,
+                "provider_subcode": 33,
+            }
+            with patch.object(social_queue, "QUEUE_PATH", str(queue)), patch.dict(
+                os.environ,
+                {"LVR_QUEUE_EVENTS_PATH": str(events)},
+                clear=False,
+            ):
+                social_queue.enqueue(item, platform="instagram")
+                self.assertTrue(social_queue.claim(item, "instagram"))
+                social_queue.mark_dead_letter(
+                    item,
+                    "instagram",
+                    "request_rejected",
+                    metadata=metadata,
+                )
+            journal = json.loads(events.read_text(encoding="utf-8"))
+
+        self.assertEqual(metadata, journal[-1]["metadata"])
+
     def test_interrupted_processing_is_dead_letter_not_automatic_duplicate(self):
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "social.json"
