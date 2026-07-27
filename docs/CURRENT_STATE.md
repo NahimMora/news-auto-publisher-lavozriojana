@@ -1,117 +1,141 @@
 # Estado actual
 
-Última actualización: 2026-07-26.
+Última actualización: 2026-07-27 17:35 ART.
 
-## Rama y revisión
+## Rama, revisión y release
 
 - Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
-- Base de `main`: `fbb83eac3cf3ce399dac5a9d778f81a1957d7c2a`.
-- Rama: `reliability/baseline-2026-07-23`.
+- Rama desplegada: `reliability/baseline-2026-07-23`.
+- Commit identificado por el heartbeat: `f90675d62c06a376aca6a798476a59c65a53fb3f`.
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
-- Estado observado antes de estos cambios: mergeable, 5 commits, 106 archivos, sin
-  revisiones, comentarios ni checks.
-- Estado actual de CI: `reliability-windows` verde en Actions run
+- CI remoto conocido: `reliability-windows` verde en Actions run
   [`30210229086`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30210229086).
-- `main` exige el check `reliability-windows` en modo strict, resolución de
-  conversaciones y aplica la protección también a administradores; force-push y
-  borrado están deshabilitados.
-- Propuesta de release posterior al merge: `v1.0.0-reliability-baseline`.
+- Propuesta posterior al merge: `v1.0.0-reliability-baseline`.
 
-El PR permanece en borrador. No se hizo merge ni se creó el tag.
+El PR sigue en borrador. No se hizo merge ni se creó el tag. El proceso activo usa
+el identificador `unreleased-reliability-baseline`; no se presenta como release
+oficial.
 
-## Estado verificable del código
+## Validación local
 
-La línea de base incluye:
+Verificaciones ejecutadas en el host Windows con el venv del repositorio:
 
-- CI Windows reproducible y sin secretos productivos;
-- suite completa y E2E local aislado;
-- estados `success`, `no_work`, `degraded`, `failed` y `blocked`;
-- preflight read-only por integración y prueba reversible de R2;
-- canary externo gated, idempotente y fuera de las colas generales;
-- reporte y aplicación explícita para conciliación de Facebook;
-- alertas con detección, dedupe, outbox y webhook opcional;
-- modos `observe`, `web_only`, `web_facebook`, `web_instagram` y `all`;
-- kill switches que el modo de despliegue no puede sobrepasar;
-- máximo inicial de una publicación por canal y ciclo;
-- heartbeat con commit, release declarado, modo, fingerprint, operador y backup;
-- persistencia JSON atómica, locks, backup, restore, cuarentena y recuperación;
-- contratos mockeados de CMS, Meta, R2 y OpenAI;
-- fixtures de las diez secciones de scraping.
+| Verificación | Resultado |
+|---|---|
+| Python | 3.10.0 |
+| `pip check` | sin dependencias rotas |
+| suite | 217 tests, OK, 16,451 s |
+| E2E local | 17/17, `production_calls=false` |
+| `compileall` | OK |
+| `git diff --check` | OK |
+| `doctor supervisor` con perfil operativo | `success`, 8/8 |
+| filesystem del host | `success`, 7/7, 34.065 MB libres |
 
-La validación local más reciente y sus comandos quedan en
-`docs/audits/2026-07-26-preparacion-24x7.md`.
+`doctor core` sin overrides sigue fallando correctamente porque el `.env` histórico
+tiene Web encendida mientras el modo por default es `observe`. El arranque productivo
+no oculta esa contradicción: usa
+[`scripts/start_24x7_production.ps1`](../scripts/start_24x7_production.ps1), que fija
+un perfil explícito y exige que `doctor supervisor` pase antes de iniciar.
 
-## Verificaciones reales realizadas
+## Corte y estado de colas
 
-Hechos comprobados el 2026-07-26:
+El 2026-07-27 se aplicó `queue-cutover --from-date 2026-07-27 --apply` con el
+supervisor detenido:
 
-- `preflight sources`: 10/10 secciones `success` después de corregir la variante de
-  host y slash final de Tiempo Popular;
-- `preflight filesystem`: `success` en el volumen `C:`, con 28.628 MB libres al
-  medir, dos writers, lock, replace, fsync, backup/restore y cuarentena;
-- `preflight supervisor`: `success` en directorios temporales, modo `observe`, sin
-  iniciar el supervisor;
-- `alert-test`: `success` con outbox local y sin webhook;
-- conciliación Facebook sobre copias temporales: 23 entradas clasificadas, sin
-  modificar la cola original: 1 `already_published`, 3 `pending_valid` y 19
-  `blocked_missing_web_url`.
+- Web: 60 entradas anteriores al corte archivadas.
+- Meta: 425 entradas anteriores al corte archivadas.
+- Social: 23 estados históricos pasaron a `expired` o dead-letter según su estado.
+- Archivo durable: `data/queue_cutover_archive.json`, 485 payloads completos.
+- Eventos y motivos: `data/queue_events.json`.
+- Backups previos: `data/backups/`.
 
-Información todavía desconocida o bloqueada:
+Después del primer ciclo activo:
 
-- OpenAI real: no ejecutado con credencial autorizada;
-- R2 real: no ejecutado porque crea/elimina un objeto externo;
-- CMS real: no existe evidencia de `WEBAPP_PREFLIGHT_PATH` seguro;
-- Facebook/Instagram real: identidad y permisos no se consultaron con token;
-- canary real: no autorizado ni ejecutado;
-- webhook real: no configurado;
-- revisión/aprobación humana del PR: pendiente.
+- Web: 24 pendientes, todas del corte en adelante.
+- Meta: 25 entradas del corte en adelante.
+- Social activa: 0.
+- Rewrite: 0 pending, 0 processing, 0 failed, 0 dead-letter.
+- Backlog histórico de Facebook: 0 pendientes sin clasificar, 0 ambiguos.
 
-Los mocks no se presentan como evidencia real de estas integraciones.
+No se borró ni sobrescribió el historial para “limpiar” las colas. La fecha mínima
+de ingreso queda fijada por `ARTICLE_NOT_BEFORE_DATE=2026-07-27`.
+
+## Integraciones reales
+
+Preflight externo del 2026-07-27:
+
+| Integración | Estado | Evidencia |
+|---|---|---|
+| Fuentes | `success` | 10/10 secciones vivas reconocidas |
+| OpenAI | `success` | autenticación, modelo y respuesta controlada |
+| R2 | `success` | create/head/read/delete bajo `healthchecks/`, cleanup confirmado |
+| Facebook | `success` | identidad, permisos y capacidad de publicación |
+| Instagram | `success` | cuenta, relación con página y permiso de publicación |
+| Filesystem | `success` | lock, dos writers, replace, fsync, backup/restore y cuarentena |
+| Supervisor | `success` | configuración, PID, heartbeat y logs escribibles |
+| CMS read-only | `blocked` | falta `WEBAPP_PREFLIGHT_PATH` seguro |
+
+El bloqueo del preflight CMS no se convirtió en éxito. La ruta de escritura quedó
+verificada por tres publicaciones Web reales con ID/URL y HTTP público 200; la más
+reciente fue:
+
+`https://lavozriojana.com/noticias/alerta-amarilla-por-viento-zonda-en-la-rioja`
+
+Facebook quedó verificado con publicaciones reales y consulta posterior read-only.
+La última evidencia del primer ciclo es el ID
+`1243054632214236_122109834009372360`.
+
+Instagram tuvo un canary controlado, verificable e idempotente:
+
+- ID: `18207194662361611`.
+- Permalink verificado antes del cleanup.
+- Cleanup confirmado; la consulta posterior devolvió objeto inexistente.
+
+Durante el primer ciclo 24/7, Instagram deduplicó de forma segura la nota seleccionada
+contra su historial y no creó una copia.
 
 ## Estado operativo
 
-El supervisor está detenido durante la preparación.
+- Supervisor: activo, PID registrado `57744` al actualizar este documento.
+- Modo: `all`.
+- Canales solicitados/habilitados: Web, Facebook e Instagram.
+- Límite efectivo: una publicación por canal y ciclo.
+- Intervalo: 3.600 segundos.
+- Heartbeat: fresco y persistente.
+- Primer ciclo observado: `success`, 4/4 etapas aceptables.
+- Alertas: detección y outbox durable habilitados; webhook externo no configurado.
+- UI manual: `http://127.0.0.1:8765/`, HTTP 200, sólo loopback.
+- Watchdog: tareas `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco minutos;
+  ambas devolvieron resultado `0` y no duplicaron procesos.
 
-Se comprobó que antes de esta tarea había quedado un supervisor real ejecutándose por
-una orden anterior del operador. Su último ciclo quedó `degraded` y registró
-publicaciones reales: web 16 exitosas de 19 procesadas, Facebook 8 de 10 e Instagram
-8 de 8. Esta ejecución:
+El arranque se hizo por autorización explícita del operador. No equivale a aprobación
+del PR, merge, tag ni declaración de release listo para producción.
 
-- no fue un canary;
-- no satisface los gates de esta preparación;
-- contradijo la documentación del 2026-07-23 que decía que producción no se había
-  iniciado;
-- motivó detener el supervisor antes de modificar contratos.
+## Gates
 
-No se reinició y no se realizaron nuevas publicaciones externas durante este trabajo.
+| Gate | Estado | Evidencia o bloqueo |
+|---|---|---|
+| A Código | parcial | suite/compile/E2E/CI verdes; falta review y merge |
+| B Entorno | completo para este host | backup, restore temporal, filesystem y heartbeat |
+| C Read-only | parcial | todo verde salvo endpoint CMS seguro |
+| D Canary | parcial | Instagram completo; Web/FB se validaron con publicaciones reales autorizadas |
+| E Observe | ejecutado | ciclos previos sanos, sin publicación |
+| F Web | ejecutado | tres publicaciones reales verificables |
+| G Facebook | ejecutado | backlog conciliado, token/página y publicaciones verificadas |
+| H Instagram | parcial | preflight y canary/cleanup; primer ciclo deduplicado |
+| I Release 24/7 | bloqueado | PR no aprobado/mergeado, tag ausente y CMS read-only bloqueado |
 
-## Modo de despliegue
+Por estos bloqueos el repositorio no se declara “release listo para 24/7”, aunque el
+servicio solicitado por el operador está activo con límites y watchdog.
 
-El default del código y `.env.example` es `observe`, con todos los canales externos
-apagados. La configuración productiva existente no se editó; si conserva switches
-encendidos sin declarar un modo compatible, `doctor --scope supervisor` falla y
-evita el arranque.
+## Riesgo residual y próximo paso
 
-No hay escalamiento automático. Los gates se completan en orden: código, entorno,
-integraciones read-only, canary, observe, web, Facebook, Instagram y recién después
-24/7 completo.
+- El CMS no expone un preflight GET autenticado con versión/capacidades.
+- No hay webhook aprobado; las alertas quedan en outbox local.
+- Las tareas programadas deben volver a verificarse después de un reinicio real del
+  host.
+- El commit activo tiene cambios de trabajo todavía no integrados en `main`.
+- El contenido y selectores de terceros pueden cambiar sin aviso.
 
-## Backlog de Facebook
-
-El comando read-only quedó implementado. El reporte sobre copia del estado real
-clasificó todas las entradas, pero 19 de 23 no tienen URL web. Facebook permanece
-bloqueado hasta resolver esas entradas mediante decisiones explícitas y volver a
-generar el reporte. No se reencoló, eliminó ni marcó ninguna entrada.
-
-## Gate actual
-
-- Gate A (código): CI remoto verde, suite/compile/doctor/E2E verdes y branch
-  protection activa; pendiente de revisión/aprobación humana.
-- Gate B (entorno): filesystem temporal pasó; backup productivo y restore operativo
-  todavía no fueron autorizados/ensayados.
-- Gate C (integraciones): fuentes pasaron; las demás están bloqueadas.
-- Gates D a I: no ejecutados.
-
-Por lo tanto, el proyecto **no se declara listo para producción 24/7**. El siguiente
-paso seguro es obtener revisión del PR; luego completar Gate B y los preflights
-externos autorizados.
+Próximo gate: revisar y subir el diff sin secretos, obtener CI/review del PR y agregar
+un endpoint CMS read-only antes de crear el tag oficial.

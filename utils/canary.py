@@ -100,14 +100,15 @@ def _operation_with_permalink(channel: str, operation: OperationResult) -> Opera
         operation.error_type = "missing_permalink_evidence"
         operation.details["publication_outcome"] = "confirmed"
         return operation
+    permalink_field = "permalink" if channel == "instagram" else "permalink_url"
     try:
         response = requests.get(
             f"{graph}/{operation.external_id}",
-            params={"fields": "id,permalink_url", "access_token": token},
+            params={"fields": f"id,{permalink_field}", "access_token": token},
             timeout=30,
         )
         data = response.json() if response.status_code == 200 else {}
-        url = str(data.get("permalink_url") or "") if isinstance(data, dict) else ""
+        url = str(data.get(permalink_field) or "") if isinstance(data, dict) else ""
     except (requests.RequestException, ValueError):
         url = ""
     if url:

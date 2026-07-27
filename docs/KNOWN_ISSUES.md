@@ -394,3 +394,114 @@
 - Evidencia: test determinista y 25 repeticiones/2.500 actualizaciones sin pérdida.
 - Estado actual: **resuelto**; Actions run `30210229086` pasó la suite Windows.
 - Riesgo residual: repetir `preflight filesystem` en el volumen del despliegue.
+
+## 49. Reels desde Instagram/TikTok/X sólo mostraban una imagen animada
+
+- Reproducción 2026-07-26: al pegar `https://www.instagram.com/p/Daj2ZQFsRik/` en la
+  UI manual de reels, el resultado era el fallback de imagen + Ken Burns en vez del
+  video real, sin ningún aviso al operador.
+- Causa raíz: `yt-dlp` era un binario "opcional" no declarado en `requirements.txt`;
+  si el venv del proyecto no lo tenía en el `PATH`, `check_ytdlp()` fallaba en
+  silencio y `render_video()` caía al fallback por diseño, pero sin exponer el
+  motivo. Se verificó en vivo que `yt-dlp` (versión `2026.07.04`) descarga
+  correctamente ese link sin cookies — el extractor en sí funcionaba.
+- Corrección: `yt-dlp>=2026.7.4` pasa a ser dependencia declarada en
+  `requirements.txt`; `_download_ytdlp`/`_download_direct_video` devuelven
+  `OperationResult` con `error_type` (`not_installed`, `extractor_error`,
+  `auth_required`, `network_error`, `rate_limit`, `unsupported_url`,
+  `file_too_large`); `render_video()` propaga `source_used`/`fallback_reason` y
+  `/api/render-video` los expone en el JSON y en la UI. `doctor --scope all` reporta
+  ausencia/version de `yt-dlp` como `degraded` (ya lo hacía para ffmpeg/ffprobe, ver
+  #46). Se agregó soporte opcional de cookies (`YTDLP_COOKIES_FILE`) para contenido
+  que requiera sesión, y `detect_platform` ahora reconoce `tiktok.com` (antes caía a
+  `"web"`).
+- Evidencia: `tests/test_video_source.py` (14 casos, mocks de `subprocess.run`, sin
+  red real).
+- Estado actual: **resuelto**; verificado manualmente contra el link real de
+  ejemplo en esta sesión.
+- Riesgo residual: yt-dlp es scraping no oficial de cada plataforma — sigue
+  requiriendo actualizarse (`pip install -U yt-dlp`) cuando una plataforma cambie su
+  reproductor y rompa el extractor correspondiente.
+
+## 50. El backlog anterior al 27/07 podía publicarse durante el arranque
+
+- Reproducción 2026-07-27: Web tenía 60 entradas anteriores al corte, Meta 425 y la
+  cola social 23 estados históricos.
+- Causa raíz: no existía una operación durable de corte por fecha; vaciar archivos
+  habría destruido trazabilidad.
+- Corrección: `queue-cutover` separa payloads completos en
+  `queue_cutover_archive.json`, registra eventos, conserva backup y rechaza fechas
+  desconocidas. `ARTICLE_NOT_BEFORE_DATE` evita volver a ingerir artículos previos.
+- Evidencia: `tests.test_queue_cutover`; reporte posterior con 0 entradas anteriores
+  al corte y 0 fechas desconocidas.
+- Estado actual: **resuelto**.
+- Riesgo residual: el archivo de archivo supera 1 MB y debe conservarse según la
+  política de backups.
+
+## 51. Preflight Facebook pedía el campo Graph obsoleto `tasks`
+
+- Reproducción 2026-07-27: `/{page_id}?fields=id,name,tasks` devolvió HTTP 400
+  código 100, aunque identidad y permisos eran válidos.
+- Causa raíz: Meta eliminó ese campo del contrato consultado.
+- Corrección: identidad con `id,name`; capacidad mediante `/me/permissions`,
+  exigiendo `pages_manage_posts`.
+- Test: caso de contrato en `tests.test_preflight`.
+- Evidencia: preflight real `success` y consulta posterior del post HTTP 200.
+- Estado actual: **resuelto**.
+
+## 52. Bootstrap social podía encolar una noticia antes de tener URL Web
+
+- Reproducción: Meta contenía noticias sin `web_url`; los runners podían recrear un
+  backlog que no tenía preview ni evidencia de publicación Web.
+- Causa raíz: bootstrap desde `noticias_meta.json` no exigía la transición durable
+  `web publicada → URL sincronizada`.
+- Corrección: Facebook e Instagram sólo incorporan entradas con URL Web verificable;
+  el resto queda diferido y contabilizado como `blocked_missing_web_url`.
+- Tests: `tests.test_social_stage_results`.
+- Estado actual: **resuelto**.
+
+## 53. Canary Instagram consultaba el campo de Facebook `permalink_url`
+
+- Reproducción 2026-07-27: Instagram publicó el canary y devolvió ID, pero la
+  verificación posterior quedó `degraded` al consultar `permalink_url`.
+- Causa raíz: el verificador compartía el mismo nombre de campo para ambas APIs.
+- Corrección: Instagram usa `permalink`; Facebook usa `permalink_url`.
+- Test: `tests.test_canary`.
+- Evidencia: permalink de Instagram verificado y cleanup confirmado exactamente una
+  vez.
+- Estado actual: **resuelto**.
+
+## 54. CMS sin endpoint read-only de capacidad
+
+- Reproducción 2026-07-27: `preflight --scope all` terminó `blocked` sólo en CMS por
+  ausencia de `WEBAPP_PREFLIGHT_PATH`.
+- Tratamiento: el bloqueo no se convierte en éxito. La escritura se verificó con
+  tres publicaciones autorizadas, ID/URL y HTTP público 200.
+- Estado actual: **bloqueado por entorno/repositorio externo**.
+- Riesgo residual: autenticación y capacidad no pueden comprobarse sin crear contenido
+  antes de cada reinicio.
+
+## 55. El arranque dependía de una consola y no tenía watchdog del host
+
+- Reproducción: supervisor y UI podían quedar detenidos después de un crash o cierre
+  de la consola.
+- Corrección: scripts idempotentes con preflight/localhost y tareas programadas
+  `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco minutos.
+- Evidencia: ejecución manual de ambas tareas, `LastTaskResult=0`, mismo PID del
+  supervisor y UI HTTP 200.
+- Estado actual: **mitigado**.
+- Riesgo residual: falta ensayar un reboot completo y un proveedor externo que alerte
+  si el propio host queda apagado.
+
+## 56. Una noticia sin fecha podía eludir el corte operativo
+
+- Reproducción 2026-07-27: `_is_too_old` devolvía falso para fecha ausente o inválida,
+  aun con `ARTICLE_NOT_BEFORE_DATE` configurada.
+- Causa raíz: el comportamiento legacy toleraba fuentes sin fecha, pero no distinguía
+  cuándo había un cutoff estricto.
+- Corrección: con cutoff activo, una fecha no verificable se expira con motivo
+  `article_date_unverifiable_for_cutoff:<fecha>`.
+- Test: `test_not_before_date_excludes_previous_articles`.
+- Estado actual: **resuelto**.
+- Riesgo residual: una noticia legítima sin fecha no se publica automáticamente; queda
+  trazable para revisión, que es el comportamiento conservador.

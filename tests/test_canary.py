@@ -142,6 +142,27 @@ class CanaryTests(unittest.TestCase):
         self.assertTrue(second.details["channels"]["web"]["deduplicated"])
         publisher.assert_called_once()
 
+    def test_instagram_permalink_uses_instagram_media_field(self):
+        from utils import canary
+
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {
+            "id": "ig-media-1",
+            "permalink": "https://www.instagram.com/p/canary/",
+        }
+        operation = OperationResult(
+            StageStatus.SUCCESS,
+            external_id="ig-media-1",
+        )
+        with mock.patch.object(canary.requests, "get", return_value=response) as get:
+            result = canary._operation_with_permalink("instagram", operation)
+
+        self.assertEqual(
+            "https://www.instagram.com/p/canary/",
+            result.public_url,
+        )
+        self.assertEqual("id,permalink", get.call_args.kwargs["params"]["fields"])
+
     def test_partial_401_429_and_ambiguous_timeout_remain_visible(self):
         from utils.canary import run_canary
 

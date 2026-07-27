@@ -32,6 +32,7 @@ from utils.facebook_reconcile import (
 from utils.paths import ROOT_DIR, data_dir, logs_dir
 from utils.preflight import PREFLIGHT_SCOPES, run_preflight
 from utils.process_runner import run_stage_process
+from utils.queue_cutover import apply_cutover, build_cutover_report
 from utils.stage_result import StageResult, StageStatus, aggregate_results
 
 
@@ -427,6 +428,8 @@ def cmd_doctor(args) -> int:
             print(yellow(f"  AVISO {issue['field']}: {issue['message']}"))
         print(f"Dependencias Python: {result.details['python_dependencies']}")
         print(f"Binarios de sistema: {result.details['system_binaries']}")
+        if result.details.get("ytdlp_version"):
+            print(f"yt-dlp version: {result.details['ytdlp_version']}")
     return result.exit_code
 
 
@@ -519,6 +522,25 @@ def cmd_alert_check(args) -> int:
         )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return result.exit_code
+
+
+def cmd_queue_cutover(args) -> int:
+    try:
+        result = (
+            apply_cutover(args.from_date)
+            if args.apply
+            else build_cutover_report(args.from_date)
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    except (ValueError, JsonStateError) as exc:
+        result = {
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 1
 
 
 def _safe_data_filename(value: str) -> Path:
@@ -641,6 +663,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     reconcile_parser.add_argument("--json", action="store_true")
 
+    cutover_parser = sub.add_parser(
+        "queue-cutover",
+        help="Archiva colas anteriores a una fecha sin perder trazabilidad",
+    )
+    cutover_mode = cutover_parser.add_mutually_exclusive_group(required=True)
+    cutover_mode.add_argument("--report-only", action="store_true")
+    cutover_mode.add_argument("--apply", action="store_true")
+    cutover_parser.add_argument("--from-date", required=True, help="Fecha YYYY-MM-DD")
+    cutover_parser.add_argument("--json", action="store_true")
+
     alert_test_parser = sub.add_parser(
         "alert-test",
         help="Genera una alerta de prueba sin afectar el pipeline",
@@ -681,6 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         "preflight": cmd_preflight,
         "canary": cmd_canary,
         "reconcile-facebook": cmd_reconcile_facebook,
+        "queue-cutover": cmd_queue_cutover,
         "alert-test": cmd_alert_test,
         "alert-check": cmd_alert_check,
         "videos": cmd_videos,

@@ -6,7 +6,10 @@
 
 - Python 3.10+, Windows-first.
 - `requests`, BeautifulSoup/lxml, Pillow, OpenAI SDK, boto3/botocore y psutil.
-- `ffmpeg` y `ffprobe` son binarios externos requeridos para video.
+- `ffmpeg` y `ffprobe` son binarios externos requeridos para video; `yt-dlp` (declarado
+  en `requirements.txt`) descarga el video fuente de YouTube/Instagram/TikTok/X/
+  Facebook/Vimeo y otros sitios — scraping no oficial de cada plataforma, sujeto a
+  requerir actualización cuando cambian sus reproductores.
 - Persistencia local en JSON; no hay base de datos ni microservicios propios.
 - Integraciones externas: sitios fuente, OpenAI, Cloudflare R2, CMS y Meta Graph API.
 - Interfaz manual de Reels en HTTP local, restringida a loopback.
@@ -39,6 +42,7 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `utils/facebook_reconcile.py` | reporte conservador y decisiones explícitas |
 | `utils/alerts.py` | detección, dedupe, outbox y entrega opcional |
 | `video_reel_manager.py` | UI manual local y uploads controlados |
+| `utils/video_renderer.py` | Descarga de video fuente (MP4 directo o yt-dlp: YouTube, Instagram, TikTok, X, Facebook, Vimeo y otros sitios vía extractor genérico) y composición ffmpeg del reel |
 
 ## Contrato de resultados
 

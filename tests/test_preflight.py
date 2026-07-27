@@ -213,9 +213,9 @@ class ExternalPreflightTests(unittest.TestCase):
                         ]
                     }
                 )
-            if url.endswith("/page-1") and kwargs["params"]["fields"] == "id,name,tasks":
+            if url.endswith("/page-1") and kwargs["params"]["fields"] == "id,name":
                 return FakeResponse(
-                    payload={"id": "page-1", "name": "Página", "tasks": ["CREATE_CONTENT"]}
+                    payload={"id": "page-1", "name": "Página"}
                 )
             if url.endswith("/page-1"):
                 return FakeResponse(
@@ -228,6 +228,43 @@ class ExternalPreflightTests(unittest.TestCase):
 
         self.assertEqual(StageStatus.SUCCESS, facebook.status)
         self.assertEqual(StageStatus.SUCCESS, instagram.status)
+
+    def test_facebook_preflight_does_not_request_removed_tasks_field(self):
+        from utils.preflight import check_facebook
+        from utils.stage_result import StageStatus
+
+        env = {
+            "META_GRAPH_API": "https://8.8.8.8/v19.0",
+            "FB_PAGE_ID": "page-1",
+            "FB_PAGE_ACCESS_TOKEN": "test",
+        }
+
+        def get(url, **kwargs):
+            if url.endswith("/me/permissions"):
+                return FakeResponse(
+                    payload={
+                        "data": [
+                            {"permission": "pages_manage_posts", "status": "granted"},
+                        ]
+                    }
+                )
+            fields = kwargs["params"]["fields"]
+            if fields == "id,name,tasks":
+                return FakeResponse(
+                    status_code=400,
+                    payload={
+                        "error": {
+                            "code": 100,
+                            "message": "Tried accessing nonexisting field (tasks)",
+                        }
+                    },
+                )
+            return FakeResponse(payload={"id": "page-1", "name": "Página"})
+
+        result = check_facebook(env, http_get=get)
+
+        self.assertEqual(StageStatus.SUCCESS, result.status)
+        self.assertTrue(result.details["publish_permission_verified"])
 
     def test_r2_cleanup_failure_never_reports_success(self):
         from utils.preflight import check_r2

@@ -102,6 +102,22 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("IG_IMAGE_CONTAINER_WAIT_SECONDS", fields)
         self.assertIn("WEB_QUEUE_PATH", fields)
 
+    def test_article_not_before_date_must_use_iso_format(self):
+        from utils.config import validate_config
+
+        valid = self._base()
+        valid["ARTICLE_NOT_BEFORE_DATE"] = "2026-07-27"
+        invalid = self._base()
+        invalid["ARTICLE_NOT_BEFORE_DATE"] = "27/07/2026"
+
+        self.assertTrue(validate_config(valid, scope="core").ok)
+        report = validate_config(invalid, scope="core")
+
+        self.assertIn(
+            "ARTICLE_NOT_BEFORE_DATE",
+            {issue.field for issue in report.errors},
+        )
+
     def test_inventory_classifies_obsolete_and_development_variables(self):
         from utils.config import config_inventory
 
@@ -110,6 +126,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("IG_CHROME_PROFILE_DIR", inventory["obsolete"])
         self.assertIn("CUSTOM_POST_DRY_RUN", inventory["development"])
         self.assertIn("PIPELINE_24X7_STALE_SECONDS", inventory["optional"])
+        self.assertIn("ARTICLE_NOT_BEFORE_DATE", inventory["optional"])
         self.assertIn("WEB_QUEUE_PATH", inventory["development"])
         self.assertIn("OPENAI_API_KEY", inventory["conditional_required"])
 

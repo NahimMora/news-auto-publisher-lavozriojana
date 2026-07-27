@@ -351,18 +351,46 @@ def normalize_meta_queue() -> list[dict]:
 
 
 ARTICLE_MAX_AGE_DAYS = int(os.getenv("ARTICLE_MAX_AGE_DAYS", "1"))
+_ARTICLE_NOT_BEFORE_RAW = str(os.getenv("ARTICLE_NOT_BEFORE_DATE") or "").strip()
+ARTICLE_NOT_BEFORE_DATE = (
+    date.fromisoformat(_ARTICLE_NOT_BEFORE_RAW)
+    if _ARTICLE_NOT_BEFORE_RAW
+    else None
+)
 
 
 def _is_too_old(noticia: dict) -> bool:
-    """Descarta artículos cuya fecha de publicación supera ARTICLE_MAX_AGE_DAYS."""
+    """Descarta artículos anteriores al corte operativo o demasiado antiguos."""
     fecha = noticia.get("fecha")
     if not fecha:
-        return False
+        return ARTICLE_NOT_BEFORE_DATE is not None
     try:
         article_date = date.fromisoformat(str(fecha)[:10])
+        if ARTICLE_NOT_BEFORE_DATE and article_date < ARTICLE_NOT_BEFORE_DATE:
+            return True
         return article_date < date.today() - timedelta(days=ARTICLE_MAX_AGE_DAYS)
     except ValueError:
-        return False
+        return ARTICLE_NOT_BEFORE_DATE is not None
+
+
+def _expiry_reason(noticia: dict) -> str:
+    fecha = str(noticia.get("fecha") or "")
+    try:
+        article_date = date.fromisoformat(fecha[:10])
+    except ValueError:
+        article_date = None
+    if ARTICLE_NOT_BEFORE_DATE and article_date is None:
+        return (
+            "article_date_unverifiable_for_cutoff:"
+            f"{ARTICLE_NOT_BEFORE_DATE.isoformat()}"
+        )
+    if (
+        ARTICLE_NOT_BEFORE_DATE
+        and article_date
+        and article_date < ARTICLE_NOT_BEFORE_DATE
+    ):
+        return f"article_before_cutoff:{ARTICLE_NOT_BEFORE_DATE.isoformat()}"
+    return f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d"
 
 
 def _append_output(path: str, item: dict, key_field: str) -> bool:
@@ -454,11 +482,12 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             continue
 
         if _is_too_old(noticia):
-            queue.expire(item_id, f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d")
+            expiry_reason = _expiry_reason(noticia)
+            queue.expire(item_id, expiry_reason)
             record_queue_event(
                 stage="rewrite",
                 status="expired",
-                reason=f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d",
+                reason=expiry_reason,
                 item=noticia,
             )
             expired += 1

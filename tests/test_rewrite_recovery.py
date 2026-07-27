@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -105,6 +106,24 @@ class RewriteRecoveryTests(unittest.TestCase):
         state = load_json(module.REWRITE_STATE, {}, expected_type=dict)
         self.assertEqual(10, len(state["completed"]))
         self.assertEqual(7, result.succeeded, "la ejecución reanudada procesa las siete restantes")
+
+    def test_not_before_date_excludes_previous_articles(self):
+        module = self._module()
+
+        with mock.patch.object(
+            module,
+            "ARTICLE_NOT_BEFORE_DATE",
+            date(2026, 7, 27),
+        ):
+            self.assertTrue(module._is_too_old({"fecha": "2026-07-26"}))
+            self.assertFalse(module._is_too_old({"fecha": "2026-07-27"}))
+            self.assertFalse(module._is_too_old({"fecha": "2026-07-28"}))
+            self.assertTrue(module._is_too_old({"fecha": ""}))
+            self.assertTrue(module._is_too_old({"fecha": "fecha-desconocida"}))
+            self.assertEqual(
+                "article_date_unverifiable_for_cutoff:2026-07-27",
+                module._expiry_reason({"fecha": ""}),
+            )
 
     def test_disallowed_fallback_goes_to_dead_letter_not_output(self):
         from utils.file_manager import load_json, save_json

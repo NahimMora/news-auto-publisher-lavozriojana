@@ -1,6 +1,6 @@
 # Backlog
 
-Última actualización: 2026-07-26. Los ítems resueltos se conservan.
+Última actualización: 2026-07-27. Los ítems resueltos se conservan.
 
 ## Cerrado por la línea de base del 2026-07-23
 
@@ -35,26 +35,34 @@
 - [x] Scope `doctor core` separado de binarios multimedia opcionales.
 - [x] Carrera transitoria de lock Windows reproducida y corregida.
 
-## Bloqueos para habilitar producción
+## Cerrado en la activación controlada del 2026-07-27
+
+- [x] Venv del host instalado y `pip check` limpio.
+- [x] Suite ampliada a 217 tests y E2E local verde.
+- [x] Backlog anterior al 27/07 archivado sin pérdida ni edición manual.
+- [x] Fecha mínima de ingestión configurada y validada.
+- [x] Backlog histórico de Facebook sin pendientes ni ambiguos.
+- [x] Preflight real de OpenAI, R2, Facebook e Instagram.
+- [x] Canary Instagram con permalink y cleanup confirmados.
+- [x] Arranque Web y Facebook con evidencia externa.
+- [x] Primer ciclo 24/7 completo con cuatro etapas aceptables.
+- [x] UI manual restringida a localhost y disponible.
+- [x] Watchdog local cada cinco minutos para supervisor y UI.
+
+## Bloqueos para release oficial 24/7
 
 - [ ] Obtener revisión/aprobación del PR.
-- [ ] Crear backup productivo completo y probar restore en temporal.
-- [ ] Ejecutar `preflight openai` con credencial autorizada.
-- [ ] Probar R2 reversible bajo `healthchecks/`.
 - [ ] Definir o implementar un endpoint CMS GET seguro y ejecutar su preflight.
-- [ ] Ejecutar preflight read-only de Facebook e Instagram.
-- [ ] Resolver 19 entradas Facebook sin URL web y aprobar las 3 pendientes válidas.
-- [ ] Ejecutar un canary exactamente una vez durante una ventana autorizada.
 - [ ] Probar webhook real o aceptar formalmente operación con outbox local.
-- [ ] Completar varios ciclos sanos en `observe`.
-- [ ] Completar varios ciclos sanos en `web_only`.
-- [ ] Habilitar Facebook e Instagram por separado y observar varios ciclos.
+- [ ] Observar varios ciclos adicionales sin fallos ni backlog creciente.
+- [ ] Completar una publicación Instagram de noticia nueva no deduplicada.
+- [ ] Ensayar un reboot completo y verificar las tareas programadas.
 - [ ] Ensayar rollback de modo y release.
 - [ ] Merge aprobado y creación posterior del tag propuesto.
 
 ## Mantenimiento medio
 
-- [ ] Incorporar un watchdog externo simple para alertar si muere todo el proceso.
+- [ ] Incorporar un watchdog externo simple para alertar si se apaga todo el host.
 - [ ] Definir retención/archivo de logs, eventos y outbox según capacidad del host.
 - [ ] Mantener fixtures frente a cambios de HTML.
 - [ ] Validar filesystem si el estado se mueve a un share de red.

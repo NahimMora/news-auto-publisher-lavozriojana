@@ -129,6 +129,31 @@ class FacebookReconcileTests(unittest.TestCase):
         self.assertEqual(2, report["counts"]["pending_valid"])
         self.assertEqual(0, report["counts"]["already_published"])
 
+    def test_explicit_expired_with_done_flag_is_not_ambiguous(self):
+        from utils.facebook_reconcile import build_facebook_report
+        from utils.file_manager import save_json
+
+        save_json(
+            str(self.queue),
+            [
+                {
+                    "dedup_key": "expired-done",
+                    "titulo": "Expirada por corte",
+                    "fecha": "2026-07-26",
+                    "facebook_state": "expired",
+                    "facebook_done": True,
+                    "facebook_reason": "operator_cutover_before_date",
+                    "social_queued_at": self.now,
+                }
+            ],
+        )
+        save_json(str(self.posted), {"posted": {}})
+
+        report = build_facebook_report(self.env, now=self.now, verify_meta=False)
+
+        self.assertEqual(1, report["counts"]["expired"])
+        self.assertEqual(0, report["counts"]["ambiguous"])
+
     def test_apply_requires_matching_report_and_only_explicit_decisions(self):
         from utils.facebook_reconcile import (
             apply_facebook_decisions,

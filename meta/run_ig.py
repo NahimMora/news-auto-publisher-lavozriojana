@@ -49,14 +49,21 @@ def _allowed_for_instagram(noticia: dict) -> bool:
     return item_category(noticia) in IG_ALLOWED_CATEGORIES or item_is_breaking(noticia)
 
 
-def _bootstrap_queue() -> tuple[int, int]:
+def _bootstrap_queue() -> tuple[int, int, int]:
     noticias = load_json(META_INPUT, [], expected_type=list)
     included = 0
+    omitted_by_policy = 0
+    missing_web_url = 0
     for noticia in noticias:
+        if not str(noticia.get("web_url") or noticia.get("noticia_url") or "").strip():
+            missing_web_url += 1
+            continue
         if _allowed_for_instagram(noticia):
             enqueue(noticia, platform="instagram")
             included += 1
-    return included, len(noticias) - included
+        else:
+            omitted_by_policy += 1
+    return included, omitted_by_policy, missing_web_url
 
 
 def _sync_posted_state() -> int:
@@ -104,7 +111,7 @@ def main() -> StageResult:
                 duration_seconds=time.monotonic() - started,
             )
         ambiguous = recover_ambiguous_processing("instagram")
-        included, omitted = _bootstrap_queue()
+        included, omitted, missing_web_url = _bootstrap_queue()
         synced = _sync_posted_state()
         all_pending = get_pending("instagram")
         limit = int(os.getenv("IG_MAX_PER_RUN", "1"))
@@ -128,6 +135,7 @@ def main() -> StageResult:
             details={
                 "included": included,
                 "omitted_by_policy": omitted,
+                "blocked_missing_web_url": missing_web_url,
                 "synced": synced,
                 "ambiguous_to_dead_letter": ambiguous,
             },
@@ -181,12 +189,13 @@ def main() -> StageResult:
         processed=processed,
         succeeded=succeeded,
         failed=failed,
-        deferred=deferred + max(0, len(all_pending) - len(selected)),
+        deferred=deferred + max(0, len(all_pending) - len(selected)) + missing_web_url,
         duration_seconds=time.monotonic() - started,
         error_type=error_type,
         next_retry_at=next_retry_at,
         details={
             "omitted_by_policy": omitted,
+            "blocked_missing_web_url": missing_web_url,
             "ambiguous_to_dead_letter": ambiguous,
         },
     )

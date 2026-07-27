@@ -140,3 +140,25 @@ El heartbeat versión 2 agrega:
 El fingerprint omite nombres de variables sensibles y no contiene valores de tokens.
 El estado de gates no se infiere de métricas: se registra explícitamente en la
 auditoría y el PR.
+
+## Snapshot operativo 2026-07-27
+
+Snapshot puntual después del primer ciclo en modo `all`; no constituye una tendencia:
+
+| Métrica | Valor |
+|---|---:|
+| ciclo | 4 |
+| scraping/rewrite | `no_work` |
+| Web | `success`, 1/1 |
+| Facebook | `success`, 1/1 |
+| Instagram | `success`, 1/1 deduplicada |
+| cola Web | 24 |
+| cola Meta | 25 |
+| cola social activa | 0 |
+| rewrite pending/processing/failed/dead-letter | 0/0/0/0 |
+| heartbeat | `fresh` |
+| filesystem libre durante preflight | 34.065 MB |
+
+El supervisor mantiene el límite de una publicación por canal y ciclo. Para afirmar
+backlog creciente deben observarse al menos tres ciclos comparables; este snapshot no
+permite esa conclusión.

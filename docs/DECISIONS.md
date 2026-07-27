@@ -247,3 +247,108 @@ al merge y evidencia externa por canal.
 
 **Consecuencias**: el tag propuesto `v1.0.0-reliability-baseline` no se crea durante
 esta preparación; cualquier integración `blocked` impide habilitar su canal.
+
+### 2026-07-26 — yt-dlp como única herramienta de descarga de video fuente
+
+**Decisión**: usar `yt-dlp` (declarado en `requirements.txt`) como único mecanismo de
+descarga de video fuente para el pipeline manual de reels, para Instagram, YouTube,
+TikTok, X/Twitter, Facebook, Vimeo y cualquier otro sitio soportado por su extractor
+genérico, en vez de agregar herramientas específicas por plataforma.
+
+**Motivo**: investigación de esta sesión (julio 2026) confirmó que yt-dlp es la
+herramienta open-source más activamente mantenida del ecosistema (releases casi
+semanales, reacciona en horas/días cuando una plataforma rompe su reproductor) y ya
+cubre las 4 redes pedidas con una sola herramienta. Se verificó en vivo contra un link
+real de Instagram (`instagram.com/p/Daj2ZQFsRik/`) sin necesidad de cookies.
+
+**Alternativas rechazadas**: `instaloader`/`gallery-dl` específicos de Instagram — sólo
+aportarían valor para scraping masivo de perfiles/hashtags, fuera de alcance (acá se
+ingesta un link individual por vez, pegado manualmente por un operador).
+
+**Consecuencias**: sigue siendo scraping no oficial de cada plataforma (ninguna ofrece
+API oficial para descargar contenido de terceros), sujeto a romperse sin aviso cuando
+una plataforma cambia su reproductor; requiere `pip install -U yt-dlp` periódico. Se
+agregó `error_type` estructurado (`OperationResult`) para distinguir "necesita
+actualizarse" de "necesita cookies" de "error transitorio de red", en vez de un
+fallback silencioso a imagen.
+
+**Revisar nuevamente cuando**: yt-dlp deje de recibir mantenimiento activo, o el
+volumen de uso justifique tercerizar en un proveedor SaaS (Apify, ScrapeCreators)
+para no mantener la actualización del extractor in-house.
+
+### 2026-07-26 — Riesgo legal aceptado: sin gate de derechos sobre video de terceros
+
+**Decisión**: el pipeline sigue descargando y re-marcando con el layout LVR cualquier
+video fuente (propio o de terceros) sin exigir que el operador confirme titularidad o
+licencia antes de procesarlo. No se agrega ningún gate ni validación de derechos.
+
+**Motivo**: decisión explícita del operador del sistema (2026-07-26), priorizando
+simplicidad operativa sobre la mitigación de riesgo legal identificada en la
+investigación de esta sesión.
+
+**Alternativas rechazadas**: exigir marcar "contenido propio"/"con permiso" antes de
+descargar contenido ajeno, usando embed oficial (oEmbed) con atribución como default
+para todo lo no confirmado — es el estándar de la industria y la opción de menor
+riesgo, pero el operador prefirió no agregar esa fricción por ahora.
+
+**Consecuencias**: descargar y re-publicar contenido de terceros sin permiso expone a
+riesgo real de reclamo por infracción de copyright — hay casos recientes (enero 2025)
+de medios de noticias demandados específicamente por esto. El riesgo queda aceptado
+conscientemente, no por desconocimiento.
+
+**Revisar nuevamente cuando**: se reciba un reclamo real, o el volumen/perfil público
+del medio aumente el riesgo percibido lo suficiente como para justificar el gate.
+
+### 2026-07-27 — Corte durable por fecha, sin vaciar colas
+
+**Decisión**: archivar todos los payloads anteriores al 27/07/2026 y conservar
+eventos, estados terminales y backups; bloquear nuevas ingestas anteriores mediante
+`ARTICLE_NOT_BEFORE_DATE`.
+
+**Motivo**: el operador solicitó publicar sólo noticias de hoy en adelante y el
+backlog histórico tenía riesgo de publicación tardía o duplicada.
+
+**Alternativas rechazadas**: vaciar JSON; editar estados manualmente; marcar todo como
+publicado; eliminar el historial.
+
+**Consecuencias**: `queue_cutover_archive.json` pasa a ser evidencia durable y debe
+entrar en la política de backup/retención.
+
+### 2026-07-27 — Arranque autorizado con perfil externo al `.env`
+
+**Decisión**: no modificar ni imprimir el `.env` histórico. El arranque usa
+`scripts/start_24x7_production.ps1`, fija el modo y los kill switches explícitamente,
+mantiene canary apagado y exige `doctor supervisor` verde.
+
+**Motivo**: el `.env` conserva Web activa pero no declara un deployment mode; el
+default seguro `observe` detecta correctamente esa contradicción.
+
+**Alternativas rechazadas**: relajar `doctor`; convertir contradicciones en warnings;
+sobrescribir secretos/configuración histórica.
+
+**Consecuencias**: el script es la fuente operativa del perfil de este host. El
+heartbeat registra fingerprint, fecha, operador y backup sin secretos.
+
+### 2026-07-27 — Watchdog local idempotente
+
+**Decisión**: Task Scheduler ejecuta cada cinco minutos los scripts de supervisor y
+UI manual. La UI sólo acepta loopback y rechaza un servicio desconocido en el puerto.
+
+**Motivo**: un proceso detached no cubre crashes ni cierres accidentales.
+
+**Alternativas rechazadas**: plataforma de monitoreo nueva; exponer la UI; iniciar
+instancias sin comprobar PID/puerto.
+
+**Consecuencias**: la recuperación esperada es menor a cinco minutos mientras el host
+y Task Scheduler estén activos. Sigue pendiente un watchdog externo y un reboot real.
+
+### 2026-07-27 — Bloqueo CMS read-only no se falsea
+
+**Decisión**: conservar `preflight_cms=blocked` mientras no exista un endpoint GET
+autenticado con versión/capacidades.
+
+**Motivo**: una publicación real valida escritura, pero no reemplaza un chequeo seguro
+para cada arranque.
+
+**Consecuencias**: el servicio fue activado por autorización explícita y con límite
+uno por ciclo, pero no se declara release 24/7 listo ni se crea el tag.

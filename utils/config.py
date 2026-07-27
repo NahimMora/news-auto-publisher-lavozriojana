@@ -4,8 +4,10 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Mapping
 from urllib.parse import urlsplit
 
@@ -108,6 +110,26 @@ def _positive_int(
         report.add("error", "invalid_positive_int", name, f"{name} debe estar {range_text}")
         return default
     return value
+
+
+def _optional_iso_date(
+    report: ConfigReport,
+    env: Mapping[str, str],
+    name: str,
+) -> date | None:
+    raw = _value(env, name)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        report.add(
+            "error",
+            "invalid_iso_date",
+            name,
+            f"{name} debe usar YYYY-MM-DD",
+        )
+        return None
 
 
 def _float_range(
@@ -243,6 +265,7 @@ def validate_config(
 
     _positive_int(report, env, "SCRAPER_MAX_LINKS", 8, maximum=100)
     _positive_int(report, env, "ARTICLE_MAX_AGE_DAYS", 1, maximum=365)
+    _optional_iso_date(report, env, "ARTICLE_NOT_BEFORE_DATE")
     _positive_int(report, env, "OPENAI_RETRY_COUNT", 4, maximum=20)
     _positive_int(report, env, "REWRITE_MAX_ATTEMPTS", 3, maximum=20)
     _positive_int(report, env, "WEBAPP_REQUEST_TIMEOUT", 30, maximum=600)
@@ -322,6 +345,7 @@ def validate_config(
     _positive_int(report, env, "IMAGE_MAX_FILESIZE_KB", 250, maximum=100000)
     _positive_int(report, env, "IMAGE_JPEG_QUALITY", 82, maximum=95)
     _positive_int(report, env, "VIDEO_DOWNLOAD_MAX_BYTES", 250 * 1024 * 1024, maximum=5 * 1024**3)
+    _positive_int(report, env, "YTDLP_TIMEOUT_SECONDS", 180, minimum=10, maximum=1800)
     _positive_int(report, env, "R2_RETRY_COUNT", 3, maximum=20)
     _positive_int(report, env, "R2_CONNECT_TIMEOUT_SECONDS", 10, maximum=600)
     _positive_int(report, env, "R2_READ_TIMEOUT_SECONDS", 30, maximum=1800)
@@ -406,6 +430,7 @@ def validate_config(
     ):
         _path_value(report, env, name)
     for name in (
+        "LVR_QUEUE_CUTOVER_ARCHIVE_PATH",
         "LVR_QUEUE_EVENTS_PATH",
         "LVR_STAGE_RESULT_PATH",
         "META_QUEUE_PATH",
@@ -518,6 +543,7 @@ def config_inventory() -> dict[str, list[str]]:
         "optional": sorted(
             {
                 "ARTICLE_MAX_AGE_DAYS",
+                "ARTICLE_NOT_BEFORE_DATE",
                 "ALERTS_ENABLED",
                 "ALERT_DEDUP_SECONDS",
                 "ALERT_MAX_DELIVERY_ATTEMPTS",
@@ -636,6 +662,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "LVR_LOGS_DIR",
                 "LVR_OUTPUT_DIR",
                 "LVR_QUARANTINE_DIR",
+                "LVR_QUEUE_CUTOVER_ARCHIVE_PATH",
                 "LVR_QUEUE_EVENTS_PATH",
                 "LVR_STAGE_RESULT_PATH",
                 "META_QUEUE_PATH",
@@ -699,23 +726,39 @@ def safe_config_snapshot(values: Mapping[str, str] | None = None) -> dict[str, s
     return snapshot
 
 
+def _ytdlp_version() -> str | None:
+    ytdlp_path = shutil.which("yt-dlp")
+    if not ytdlp_path:
+        return None
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--version"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def diagnose_environment(values: Mapping[str, str] | None = None, *, scope: str = "all") -> StageResult:
     report = validate_config(values, scope=scope)
     dependencies = {}
     for import_name in ("requests", "bs4", "PIL", "dotenv", "openai", "boto3", "botocore", "psutil"):
         dependencies[import_name] = importlib.util.find_spec(import_name) is not None
+    ytdlp_path = shutil.which("yt-dlp")
     binaries = {
         "ffmpeg": shutil.which("ffmpeg"),
         "ffprobe": shutil.which("ffprobe"),
-        "yt-dlp": shutil.which("yt-dlp"),
+        "yt-dlp": ytdlp_path,
     }
+    ytdlp_version = _ytdlp_version() if ytdlp_path else None
     missing_python = [name for name, present in dependencies.items() if not present]
     issues = len(report.errors) + len(missing_python)
     if issues:
         status = StageStatus.FAILED
         error_type = "configuration_or_dependency_error"
     elif report.warnings or (
-        scope != "core" and (not binaries["ffmpeg"] or not binaries["ffprobe"])
+        scope != "core"
+        and (not binaries["ffmpeg"] or not binaries["ffprobe"] or not binaries["yt-dlp"])
     ):
         status = StageStatus.DEGRADED
         error_type = "optional_dependency_warning"
@@ -736,6 +779,7 @@ def diagnose_environment(values: Mapping[str, str] | None = None, *, scope: str 
             "config": report.to_dict(),
             "python_dependencies": dependencies,
             "system_binaries": binaries,
+            "ytdlp_version": ytdlp_version,
             "config_snapshot": safe_config_snapshot(values),
         },
     )

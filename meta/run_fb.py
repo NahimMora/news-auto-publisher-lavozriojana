@@ -36,9 +36,13 @@ FB_STATE_PATH = str(data_dir() / "fb_posted.json")
 
 def _bootstrap_queue() -> int:
     noticias = load_json(META_INPUT, [], expected_type=list)
+    included = 0
     for noticia in noticias:
+        if not str(noticia.get("web_url") or noticia.get("noticia_url") or "").strip():
+            continue
         enqueue(noticia, platform="facebook")
-    return len(noticias)
+        included += 1
+    return included
 
 
 def _sync_posted_state() -> int:

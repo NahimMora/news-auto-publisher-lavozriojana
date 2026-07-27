@@ -4,14 +4,18 @@ Pipeline Python, Windows-first, que captura noticias riojanas, las valida y
 reescribe, prepara imágenes o videos y publica en el CMS, Facebook e Instagram. El
 estado operativo se conserva en JSON locales; no requiere una base de datos.
 
-Esta rama es una preparación de confiabilidad. No está habilitada para producción
-24/7: los gates externos, canary, observación progresiva y aprobación del PR todavía
-deben completarse.
+Esta rama es una preparación de confiabilidad. El operador autorizó un arranque
+controlado el 2026-07-27, con una publicación como máximo por canal y ciclo. Eso no
+equivale a merge, release oficial ni declaración de todos los gates como completos:
+el PR sigue en borrador y el CMS todavía no ofrece un preflight read-only seguro.
 
 ## Instalación
 
 Requiere Python 3.10 o posterior. `ffmpeg` y `ffprobe` son dependencias del sistema
-para video y no se instalan con pip.
+para video y no se instalan con pip (agregar su carpeta `bin` al PATH). `yt-dlp` sí se
+instala con `pip install -r requirements.txt`, pero se actualiza seguido
+(`pip install -U yt-dlp`) porque las plataformas de video rompen sus extractors sin
+aviso.
 
 ```powershell
 python -m venv venv
@@ -146,6 +150,34 @@ python cli.py stop
 python cli.py logs supervisor
 python cli.py backup
 ```
+
+En el host operativo, el perfil explícito se inicia con:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_24x7_production.ps1
+
+# Sólo valida el perfil; no inicia:
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_24x7_production.ps1 -ValidateOnly
+```
+
+Ese script no contiene secretos. Mantiene `CANARY_ENABLED=false`, aplica el corte
+`ARTICLE_NOT_BEFORE_DATE=2026-07-27`, habilita el outbox de alertas y exige un
+`doctor supervisor` verde. Los límites de una publicación por canal y ciclo los
+impone el deployment mode, independientemente de límites legacy mayores en `.env`.
+
+La UI manual se conserva en loopback:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_manual_video_ui.ps1
+```
+
+En el host se registran las tareas `LaVozRiojana-24x7` y
+`LaVozRiojana-ManualUI` cada cinco minutos. Son idempotentes: comprueban el proceso
+existente antes de iniciar otro. Verificarlas después de un reboot forma parte del
+runbook.
 
 El heartbeat registra resultados, colas, commit, release declarado, modo,
 fingerprint sin secretos, operador y referencia de backup. Lea

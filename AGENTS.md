@@ -136,3 +136,17 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
   webhook no puede cambiar el resultado funcional del pipeline.
 - La propuesta de tag es `v1.0.0-reliability-baseline`; no crearla antes del merge
   aprobado.
+
+## Perfil activo del host (desde 2026-07-27)
+
+- El arranque operativo se hace con `scripts/start_24x7_production.ps1`; no relajar el
+  `doctor` ni copiar secretos al script.
+- El corte mínimo es `ARTICLE_NOT_BEFORE_DATE=2026-07-27`. Cambiarlo requiere detener
+  el supervisor, reporte `queue-cutover`, backup y decisión operativa.
+- Task Scheduler ejecuta `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco
+  minutos. Antes de diagnosticar procesos duplicados, confirmar PID y acciones de
+  esas tareas.
+- La UI manual autorizada es `http://127.0.0.1:8765/`; cualquier bind externo es un
+  incidente de seguridad.
+- El CMS sigue sin `WEBAPP_PREFLIGHT_PATH` read-only. No presentar
+  `preflight_cms=blocked` como éxito aunque la escritura haya sido validada.

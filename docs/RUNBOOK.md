@@ -247,6 +247,32 @@ python cli.py preflight --scope <scope> --json
 4. Verifique permisos e identidad esperada.
 5. Rehabilite sólo tras canary autorizado y gate aprobado.
 
+## Descarga de video fuente falla o cae a imagen (yt-dlp)
+
+1. En la UI manual de reels (`python cli.py videos`), el resultado de
+   `/api/render-video` incluye `source_used` y, si cayó a imagen, `fallback_reason`
+   con `error_type`. Revíselo antes de asumir que la plataforma bloqueó la descarga.
+2. `error_type=not_installed`: `yt-dlp` no está en el PATH del entorno que corre el
+   proceso. Confirme con `python cli.py doctor --scope all` (sección "Binarios de
+   sistema"/`yt-dlp version`); reinstale con `pip install -r requirements.txt` dentro
+   del venv activado.
+3. `error_type=extractor_error`: la plataforma cambió algo y el extractor de yt-dlp
+   quedó desactualizado. Ejecute `pip install -U yt-dlp` y reintente manualmente antes
+   de escalar — suele resolverse en horas/días porque el proyecto libera fixes seguido.
+4. `error_type=auth_required`: la plataforma pide sesión iniciada para ese contenido
+   (típico en Instagram/TikTok). Exporte cookies de una sesión de navegador
+   autenticada con una **cuenta dedicada** (no la cuenta editorial principal), guarde
+   el archivo `cookies.txt` fuera del repo y configure `YTDLP_COOKIES_FILE` con su
+   ruta. No automatice el login (usuario/contraseña por script): aumenta el riesgo de
+   bloqueo de esa cuenta. Renueve el archivo de cookies cuando vuelva a fallar.
+5. `error_type=rate_limit`/`network_error`: son transitorios (`degraded`); reintente
+   más tarde, no hace falta acción de configuración.
+6. `error_type=unsupported_url`/`file_too_large`: son definitivos para ese link — no
+   reintente sin cambiar la URL o el límite (`VIDEO_DOWNLOAD_MAX_BYTES`).
+7. El fallback a imagen (Ken Burns) o a overlay solo nunca es un error del sistema:
+   es el comportamiento esperado cuando no hay video disponible; el objetivo de este
+   runbook es distinguir "no había video" de "había video pero la descarga falló".
+
 ## Rollback de release
 
 1. No borre el tag ni reescriba `main`.
@@ -255,3 +281,98 @@ python cli.py preflight --scope <scope> --json
 4. Despliegue un commit de reversión aprobado.
 5. Registre nuevo `commit_sha`, `release_tag`, operador y backup.
 6. Repita Gate B y preflight antes de iniciar.
+
+## Arranque operativo del host 2026-07-27
+
+El `.env` histórico no se modifica ni se imprime. El perfil operativo está en un
+script sin secretos:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_24x7_production.ps1 -ValidateOnly
+
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_24x7_production.ps1
+```
+
+El script:
+
+1. exige el `venv` del repositorio;
+2. fija `PIPELINE_DEPLOYMENT_MODE=all`;
+3. enciende los tres kill switches de forma explícita;
+4. fija `ARTICLE_NOT_BEFORE_DATE=2026-07-27`;
+5. mantiene `CANARY_ENABLED=false`;
+6. habilita alertas con outbox local y sin webhook;
+7. registra metadata de despliegue;
+8. ejecuta `doctor --scope supervisor`;
+9. sólo inicia si el doctor devuelve exit `0`.
+
+El modo `all` inyecta un máximo de una publicación por canal y ciclo. No aumentar
+los límites legacy del `.env` durante la observación inicial.
+
+Verificación:
+
+```powershell
+python cli.py status --json
+Get-Content logs\run_24x7.log -Tail 40
+```
+
+El estado esperado es heartbeat `fresh`, proceso coincidente, modo `all` y colas sin
+estado `corrupt`/`error`. `no_work` es aceptable.
+
+## Watchdog de Windows
+
+El host usa dos tareas cada cinco minutos:
+
+- `LaVozRiojana-24x7`;
+- `LaVozRiojana-ManualUI`.
+
+Ambas son idempotentes. Comprobar:
+
+```powershell
+Get-ScheduledTask -TaskName LaVozRiojana-24x7,LaVozRiojana-ManualUI
+Get-ScheduledTaskInfo -TaskName LaVozRiojana-24x7
+Get-ScheduledTaskInfo -TaskName LaVozRiojana-ManualUI
+```
+
+`LastTaskResult=0` es el resultado esperado. Después de un reinicio real:
+
+1. confirmar que ambas tareas volvieron a ejecutar;
+2. verificar PID/heartbeat;
+3. abrir `http://127.0.0.1:8765/`;
+4. confirmar que el puerto 8765 escucha sólo en `127.0.0.1` o `::1`;
+5. no habilitar exposición externa para la UI.
+
+Si una tarea se elimina accidentalmente, volver a registrarla con una acción que
+invoque el script correspondiente bajo `scripts/`. No incluir secretos en la acción.
+
+## Corte de colas por fecha
+
+Nunca edite ni vacíe los JSON manualmente. Para inspeccionar:
+
+```powershell
+python cli.py queue-cutover --from-date 2026-07-27 --report-only
+```
+
+La aplicación requiere supervisor detenido y autorización operativa:
+
+```powershell
+python cli.py stop
+python cli.py backup
+python cli.py queue-cutover --from-date 2026-07-27 --apply
+```
+
+El comando archiva payloads completos, registra eventos y conserva backups. Una fecha
+desconocida bloquea el corte; no se interpreta como noticia vieja ni se descarta.
+
+## UI manual de videos
+
+Inicio o comprobación idempotente:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_manual_video_ui.ps1
+```
+
+El script rechaza un listener externo y un servicio desconocido ocupando el puerto.
+La URL autorizada es únicamente `http://127.0.0.1:8765/`.

@@ -208,6 +208,12 @@ def build_facebook_report(
                     if verify_status == "blocked"
                     else "external_id_local_evidence"
                 )
+        elif state == "excluded":
+            classification = "duplicate"
+            classification_reason = reason or "explicit_excluded_state"
+        elif state == "expired" or reason in {"social_ttl_exceeded", "expired"}:
+            classification = "expired"
+            classification_reason = reason or "explicit_expired_state"
         elif state in {"processing", "completed"} or item.get("facebook_done"):
             classification = "ambiguous"
             classification_reason = "terminal_or_processing_without_external_evidence"
@@ -222,12 +228,6 @@ def build_facebook_report(
             classification = "ambiguous"
             classification_reason = "dead_letter_requires_explicit_decision"
             human = True
-        elif state == "excluded":
-            classification = "duplicate"
-            classification_reason = reason or "explicit_excluded_state"
-        elif state == "expired" or reason in {"social_ttl_exceeded", "expired"}:
-            classification = "expired"
-            classification_reason = reason or "explicit_expired_state"
         elif queued_at and queued_at < cutoff:
             classification = "expired"
             classification_reason = "social_ttl_exceeded"

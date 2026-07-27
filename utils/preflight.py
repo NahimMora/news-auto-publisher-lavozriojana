@@ -615,7 +615,7 @@ def check_facebook(
         token,
         http_get=http_get,
         timeout=int(env.get("FB_REQUEST_TIMEOUT_SECONDS", "60")),
-        fields="id,name,tasks",
+        fields="id,name",
     )
     if error:
         return error
@@ -628,11 +628,7 @@ def check_facebook(
             error_type="identity_mismatch",
             details={"expected_id": page_id, "actual_id": actual_id},
         )
-    tasks = {
-        str(value)
-        for value in ((payload or {}).get("tasks") or [])
-        if isinstance(value, str)
-    }
+    tasks: set[str] = set()
     permission_error, permissions = _meta_permissions(
         "preflight_facebook",
         graph,

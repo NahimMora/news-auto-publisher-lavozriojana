@@ -12,6 +12,23 @@ def news(key):
 
 
 class FacebookStageTests(unittest.TestCase):
+    def test_bootstrap_only_enqueues_items_with_verified_web_url(self):
+        items = [
+            {"dedup_key": "without-web", "titulo": "Sin web"},
+            {
+                "dedup_key": "with-web",
+                "titulo": "Con web",
+                "web_url": "https://lavozriojana.com/noticias/con-web",
+            },
+        ]
+        with patch.object(run_fb, "load_json", return_value=items), patch.object(
+            run_fb, "enqueue"
+        ) as enqueue:
+            included = run_fb._bootstrap_queue()
+
+        self.assertEqual(1, included)
+        enqueue.assert_called_once_with(items[1], platform="facebook")
+
     def _patch_stage(self, pending, operations):
         return (
             patch.object(run_fb, "PAGE_ID", "page"),
@@ -98,6 +115,28 @@ class FacebookStageTests(unittest.TestCase):
 
 
 class InstagramStageTests(unittest.TestCase):
+    def test_bootstrap_waits_for_verified_web_url(self):
+        items = [
+            {
+                "dedup_key": "without-web",
+                "titulo": "Sin web",
+                "categoria": "sociedad",
+            },
+            {
+                "dedup_key": "with-web",
+                "titulo": "Con web",
+                "categoria": "sociedad",
+                "web_url": "https://lavozriojana.com/noticias/con-web",
+            },
+        ]
+        with patch.object(run_ig, "load_json", return_value=items), patch.object(
+            run_ig, "enqueue"
+        ) as enqueue:
+            included, omitted_by_policy, missing_web_url = run_ig._bootstrap_queue()
+
+        self.assertEqual((1, 0, 1), (included, omitted_by_policy, missing_web_url))
+        enqueue.assert_called_once_with(items[1], platform="instagram")
+
     def test_active_rate_limit_is_degraded_even_before_selection(self):
         with patch.object(run_ig, "IG_ACCOUNT_ID", "ig"), patch.object(
             run_ig, "IG_ACCESS_TOKEN", "token"
