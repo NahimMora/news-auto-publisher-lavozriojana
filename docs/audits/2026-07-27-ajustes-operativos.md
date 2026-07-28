@@ -41,6 +41,7 @@ separa de los resultados mockeados.
 | LVR-075 | media | inicio de oración tratado como entidad | regla estructural de posición y regresión interna | `EditorialTests` + ciclo #8 | corregido |
 | LVR-076 | media | números en palabras no equivalían a dígitos | normalización numérica española | dos regresiones editoriales + ciclo #8 | corregido |
 | LVR-077 | baja | éxito de prewarm sólo inferible | log estructurado sin URL/token | `FacebookClientTests` | corregido |
+| LVR-078 | media operativa | propagación pública Web no inmediata | prewarm difiere sin Graph y cola durable reintenta después | ciclo #10 5/8 → ciclo #11 8/8 | mitigado |
 
 ## Priorización
 
@@ -56,6 +57,7 @@ Escala 1–5. Puntaje orientativo:
 | LVR-075 | 3 | 5 | 4 | 4 | 3 | 1 | 2 | 2 | 120,0 |
 | LVR-076 | 3 | 5 | 4 | 4 | 3 | 1 | 2 | 2 | 120,0 |
 | LVR-077 | 2 | 5 | 4 | 4 | 3 | 1 | 1 | 1 | 160,0 |
+| LVR-078 | 4 | 5 | 5 | 4 | 4 | 1 | 2 | 1 | 200,0 |
 
 ## Evidencia de cola
 
@@ -118,3 +120,12 @@ sin artefactos operativos ni secretos obvios
 La ejecución usó `PYTHON_DOTENV_DISABLED=1`, kill switches apagados y directorios
 temporales separados para datos, logs, fotos, outputs, backups y cuarentena. Ningún
 test consumió las colas reales ni llamó a CMS, Meta, R2 u OpenAI productivos.
+
+## Observación posterior al reinicio final
+
+- Ciclo #10: Web 6/6, Instagram 1/1 y Facebook 5/8. Tres prewarms recibieron HTTP no
+  válido y bloquearon Graph, por lo que el resultado fue `degraded` y los elementos
+  quedaron durables.
+- Ciclo #11: `success` 4/4; Facebook 8/8, Web e Instagram `no_work`.
+- Colas al cierre: Web 0, Facebook pending 3, Instagram pending 0; heartbeat fresco,
+  modo `all`, commit desplegado `ef91a67`.

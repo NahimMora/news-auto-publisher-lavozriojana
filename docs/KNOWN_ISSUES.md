@@ -659,3 +659,20 @@
 - Estado actual: **resuelto para ciclos posteriores al reinicio del commit**.
 - Riesgo residual: la disponibilidad verificada no controla cuándo Meta refresca su
   caché interna.
+
+## 67. Una página Web recién publicada puede tardar en estar disponible para Meta
+
+- ID: `LVR-078`; severidad media operativa.
+- Reproducción real ciclo #10: Web publicó 6/6, pero tres de ocho URLs seleccionadas
+  por Facebook devolvieron HTTP no válido durante el prewarm. Facebook terminó
+  `degraded` 5/8.
+- Causa raíz: propagación pública transitoria entre la confirmación del CMS y la
+  lectura posterior desde el host; no se reprodujo como fallo permanente.
+- Mitigación: el prewarm evita llamar a Graph, devuelve `degraded` y conserva el
+  elemento pendiente. El ciclo #11 publicó 8/8 y terminó `success` 4/4.
+- Evidencia: `fb_client.log` conserva los fallos
+  `link_preview_page_http_error` y los prewarms posteriores con HTTP 200, tipo imagen
+  y bytes leídos. Los tests confirman que un prewarm fallido no llama a Graph.
+- Estado actual: **mitigado y recuperado automáticamente en el ciclo siguiente**.
+- Riesgo residual: una propagación prolongada retrasa Facebook; se mantiene visible y
+  durable, sin publicación parcial ni outcome ambiguo.

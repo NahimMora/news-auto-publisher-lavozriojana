@@ -1,6 +1,6 @@
 # Estado actual
 
-Última actualización: 2026-07-27 21:13 ART.
+Última actualización: 2026-07-27 23:30 ART.
 
 ## Rama, revisión y release
 
@@ -8,8 +8,8 @@
 - Rama desplegada: `reliability/baseline-2026-07-23`.
 - Commit de código identificado por el heartbeat al iniciar el ciclo #8:
   `e6b0459d3944c6a2a702062c1a3af1afd981b484`.
-- Último commit de código validado focalmente: `49e17d0` (se aplicará en el próximo
-  reinicio controlado del supervisor).
+- Commit desplegado y verificado por heartbeat:
+  `ef91a675e64f908136ea2fc9ae30bb12df35a864`.
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
 - CI remoto conocido: `reliability-windows` verde en Actions run
   [`30308227631`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30308227631).
@@ -145,13 +145,14 @@ sensible, no una caída de CMS/Meta.
 - Límite efectivo: Web sin límite; Facebook 8 e Instagram 8 por ciclo.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
-- Último ciclo: #8 `degraded`, 3/4 etapas aceptables.
-- Scraping/rewrite: `success` 16/16.
-- Web: `degraded` 24/26, siete publicaciones degradadas, dos terminales sensibles y
-  cola final 0.
-- Facebook: `success` 8/8, con 16 elementos durables diferidos por cupo.
-- Instagram: `success` 8/8, con cinco diferidos; siete publicaciones y una
-  deduplicación aceptable.
+- Último ciclo: #11 `success`, 4/4 etapas aceptables.
+- Ciclo #11: scraping/reescritura `no_work`, Web `no_work`, Facebook `success` 8/8 e
+  Instagram `no_work`.
+- Ciclo #10: Web `success` 6/6, Instagram `success` 1/1 y Facebook `degraded` 5/8
+  porque tres páginas todavía no devolvían HTTP válido durante el prewarm. No se
+  llamó a Graph para esas tres; permanecieron en cola.
+- Ciclo #8: Web `degraded` 24/26, siete publicaciones degradadas, dos terminales
+  sensibles y cola final 0; Facebook e Instagram `success` 8/8.
 - El feedback produjo revisiones materiales y el sexto resultado seguro se publicó
   como `degraded`. Los falsos positivos observados con comienzos de oración y
   equivalencias número-palabra quedaron corregidos en `LVR-075`/`LVR-076`.
@@ -194,11 +195,11 @@ servicio solicitado por el operador está activo con límites y watchdog.
 - El commit activo tiene cambios de trabajo todavía no integrados en `main`.
 - La causa exacta del rechazo Instagram del ciclo #5 no puede reconstruirse porque
   ocurrió antes de persistir metadatos sanitizados; no se reprodujo en el ciclo #6.
-- El backlog Web creció 24→26→29→33 bajo el límite anterior. Con Web ilimitada, el
-  ciclo #8 procesó las 26 entradas disponibles y dejó la cola en cero.
-- Facebook conserva 16 pendientes e Instagram 3 pendientes después de aplicar el
-  cupo de ocho; son trabajo diferido, no pérdida ni fallo.
+- El backlog Web creció 24→26→29→33 bajo el límite anterior. Con Web ilimitada quedó
+  en cero y se mantuvo en cero al finalizar el ciclo #11.
+- Facebook conserva 3 pendientes e Instagram 0. El ciclo #11 confirmó recuperación
+  posterior al prewarm transitorio de ciclo #10; no hubo pérdida ni reintento ciego.
 - El contenido y selectores de terceros pueden cambiar sin aviso.
 
-Próximo gate: revisar y subir el diff sin secretos, obtener CI/review del PR y agregar
-un endpoint CMS read-only antes de crear el tag oficial.
+Próximo gate: obtener review/aprobación, agregar un endpoint CMS read-only y ensayar
+reboot/rollback antes de mergear o crear el tag oficial.

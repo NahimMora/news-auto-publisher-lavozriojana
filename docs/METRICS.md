@@ -181,3 +181,9 @@ El ciclo #5 fue `degraded`: Instagram rechazó 1/1 mientras Web y Facebook fuero
 que la integración seguía operable. Los rechazos posteriores a `LVR-069` agregan al
 evento terminal `http_status`, código/subcódigo y tipo del proveedor sin copiar el
 mensaje ni el cuerpo externo.
+
+Observación posterior con el commit final: ciclo #10 Web 6/6 e Instagram 1/1, pero
+Facebook 5/8 porque tres páginas aún no estaban públicamente disponibles para el
+prewarm. Las tres quedaron pendientes y Graph no fue llamado. El ciclo #11 terminó
+`success` 4/4, Facebook 8/8, Web/Instagram `no_work`, cola Web 0, Facebook pending 3
+e Instagram pending 0.
