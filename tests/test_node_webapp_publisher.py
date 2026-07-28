@@ -107,6 +107,32 @@ class EditorialTests(unittest.TestCase):
         self.assertTrue(any(w.startswith("invented_date:28 de julio") for w in warnings))
         self.assertTrue(any("Juan Perez" in w for w in warnings))
 
+    def test_validation_accepts_numeric_digits_when_source_uses_spanish_words(self):
+        noticia = sample_news(
+            parrafos=[
+                "Se sortearon tres autos: dos unidades para Capital y una para el interior.",
+            ]
+        )
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "El sorteo entregó 3 autos."
+        result.sections = [
+            EditorialSection(
+                heading="Distribución",
+                paragraphs=["La organización destinó 2 unidades a Capital y 1 al interior."],
+            )
+        ]
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertFalse(any(w == "invented_number:1" for w in warnings), warnings)
+        self.assertFalse(any(w == "invented_number:2" for w in warnings), warnings)
+        self.assertFalse(any(w == "invented_number:3" for w in warnings), warnings)
+
     def test_validation_rejects_disallowed_html(self):
         noticia = sample_news()
         result = editorial.build_fallback_editorial(noticia)

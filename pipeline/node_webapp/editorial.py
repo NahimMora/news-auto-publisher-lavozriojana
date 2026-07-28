@@ -129,6 +129,41 @@ _DATE_RE = re.compile(
     re.IGNORECASE,
 )
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)*(?:\s?(?:%|km|kilometros|metros|anos|a\u00f1os|minutos|horas))?\b", re.IGNORECASE)
+_SPANISH_NUMBER_WORDS = {
+    "cero": "0",
+    "un": "1",
+    "uno": "1",
+    "una": "1",
+    "dos": "2",
+    "tres": "3",
+    "cuatro": "4",
+    "cinco": "5",
+    "seis": "6",
+    "siete": "7",
+    "ocho": "8",
+    "nueve": "9",
+    "diez": "10",
+    "once": "11",
+    "doce": "12",
+    "trece": "13",
+    "catorce": "14",
+    "quince": "15",
+    "dieciseis": "16",
+    "diecisiete": "17",
+    "dieciocho": "18",
+    "diecinueve": "19",
+    "veinte": "20",
+    "treinta": "30",
+    "cuarenta": "40",
+    "cincuenta": "50",
+    "sesenta": "60",
+    "setenta": "70",
+    "ochenta": "80",
+    "noventa": "90",
+    "cien": "100",
+    "ciento": "100",
+    "mil": "1000",
+}
 _CAP_WORD = r"(?:[A-Z\u00c1\u00c9\u00cd\u00d3\u00da\u00dc\u00d1][a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00fc\u00f1]+|[A-Z\u00c1\u00c9\u00cd\u00d3\u00da\u00dc\u00d1]{2,})"
 _PROPER_RE = re.compile(
     rf"\b{_CAP_WORD}(?:[ \t]+(?:de|del|la|las|los|y|e|en|san|santa|general)?[ \t]*{_CAP_WORD})*\b"
@@ -369,7 +404,19 @@ def _result_factual_text(result: EditorialResult) -> str:
 
 
 def _extract_numbers(text: str) -> set[str]:
-    return {re.sub(r"\s+", "", m.group(0)).lower() for m in _NUMBER_RE.finditer(text or "")}
+    numbers = {
+        re.sub(r"\s+", "", m.group(0)).lower()
+        for m in _NUMBER_RE.finditer(text or "")
+    }
+    # El modelo puede expresar "tres autos" como "3 autos". Ambos representan
+    # el mismo dato factual y no deben disparar reintentos editoriales falsos.
+    normalized_words = re.findall(r"\b[a-z]+\b", normalize(text or ""))
+    numbers.update(
+        _SPANISH_NUMBER_WORDS[word]
+        for word in normalized_words
+        if word in _SPANISH_NUMBER_WORDS
+    )
+    return numbers
 
 
 def _extract_dates(text: str) -> set[str]:
