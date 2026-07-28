@@ -522,6 +522,11 @@ def _is_present(candidate: str, original: str) -> bool:
     return bool(candidate_norm and candidate_norm in original_norm)
 
 
+def _match_starts_sentence(text: str, match: re.Match) -> bool:
+    prefix = text[: match.start()].rstrip()
+    return not prefix or prefix[-1] in ".!?\n"
+
+
 def _html_warnings(content_html: str) -> list[str]:
     warnings: list[str] = []
     soup = BeautifulSoup(content_html or "", "html.parser")
@@ -638,6 +643,16 @@ def validate_editorial_result(
     seen_warnings: set[str] = set()
     for match in _PROPER_RE.finditer(output):
         whole = clean_text(match.group(0)).strip(" .,:;")
+        # Una sola palabra con mayúscula al comienzo de oración puede ser un
+        # verbo o sustantivo editorial ("Avanza", "Están", "Fallecimiento").
+        # Los nombres de varias palabras, acrónimos y entidades dentro de la
+        # oración continúan sujetos a la validación factual.
+        if (
+            len(whole.split()) == 1
+            and not whole.isupper()
+            and _match_starts_sentence(output, match)
+        ):
+            continue
         if whole and _name_is_allowed(whole, original_acronyms):
             continue
         for chunk in _CONNECTOR_SPLIT_RE.split(match.group(0)):

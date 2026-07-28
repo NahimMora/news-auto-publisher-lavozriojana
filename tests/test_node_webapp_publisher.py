@@ -161,8 +161,8 @@ class EditorialTests(unittest.TestCase):
     def test_generic_editorial_nouns_and_leading_connectors_are_not_proper_names(self):
         noticia = sample_news()
         result = editorial.build_fallback_editorial(noticia)
-        result.title = "Trágico fallecimiento tras un accidente en Aimogasta"
-        result.lead = "En Capital continúan las tareas informadas."
+        result.title = "Avanza el operativo tras un trágico fallecimiento en Aimogasta"
+        result.lead = "En Capital continúan las tareas informadas. Están activas."
         editorial.render_editorial_html(result)
 
         warnings = editorial.validate_editorial_result(
@@ -175,8 +175,23 @@ class EditorialTests(unittest.TestCase):
             any("Fallecimiento" in warning for warning in warnings),
             warnings,
         )
-        self.assertFalse(any("Trágico" in warning for warning in warnings), warnings)
+        self.assertFalse(any("Avanza" in warning for warning in warnings), warnings)
+        self.assertFalse(any("Están" in warning for warning in warnings), warnings)
         self.assertFalse(any("En Capital" in warning for warning in warnings), warnings)
+
+    def test_validation_still_rejects_single_invented_name_inside_sentence(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "La actividad se realizará en Córdoba."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertTrue(any("Córdoba" in warning for warning in warnings), warnings)
 
     def test_prepare_editorial_retries_when_quality_score_is_low(self):
         noticia = sample_news()
