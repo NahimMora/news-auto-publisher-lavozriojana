@@ -131,9 +131,7 @@ _DATE_RE = re.compile(
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)*(?:\s?(?:%|km|kilometros|metros|anos|a\u00f1os|minutos|horas))?\b", re.IGNORECASE)
 _SPANISH_NUMBER_WORDS = {
     "cero": "0",
-    "un": "1",
     "uno": "1",
-    "una": "1",
     "dos": "2",
     "tres": "3",
     "cuatro": "4",
@@ -458,6 +456,8 @@ _PROPER_NOUN_STOPWORDS = {
     "Detencion",
     "Detenci\u00f3n",
     "Fallecimiento",
+    "Tragico",
+    "Tr\u00e1gico",
 }
 _PROPER_NOUN_MONTHS = {m.title() for m in _MONTHS}
 _ACRONYM_STOPWORDS = {
