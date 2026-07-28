@@ -26,7 +26,7 @@
 - [x] Conciliación Facebook report-only y aplicación por decisiones.
 - [x] Motor de alertas con dedupe, recovery, outbox y webhook opcional.
 - [x] Modos `observe`, `web_only`, `web_facebook`, `web_instagram`, `all`.
-- [x] Kill switches autoritativos y límite inicial de uno por ciclo.
+- [x] Kill switches autoritativos y límites controlados por deployment mode.
 - [x] Heartbeat con trazabilidad de despliegue.
 - [x] Variante de host/slash final de Tiempo Popular cubierta por test y preflight
   vivo.
@@ -40,7 +40,7 @@
 - [x] Venv del host instalado y `pip check` limpio.
 - [x] Suite ampliada a 217 tests y E2E local verde.
 - [x] Backlog anterior al 27/07 archivado sin pérdida ni edición manual.
-- [x] Fecha mínima de ingestión configurada y validada.
+- [x] Corte inicial por fecha ejecutado y preservado como evidencia histórica.
 - [x] Backlog histórico de Facebook sin pendientes ni ambiguos.
 - [x] Preflight real de OpenAI, R2, Facebook e Instagram.
 - [x] Canary Instagram con permalink y cleanup confirmados.
@@ -48,6 +48,14 @@
 - [x] Primer ciclo 24/7 completo con cuatro etapas aceptables.
 - [x] UI manual restringida a localhost y disponible.
 - [x] Watchdog local cada cinco minutos para supervisor y UI.
+- [x] Línea de base independiente de fecha: últimas 20 identidades por timestamp
+  durable, con backup, archivo y eventos.
+- [x] Feedback editorial con intento anterior, detección de cambios materiales y uso
+  trazable del sexto resultado seguro.
+- [x] Falsos positivos editoriales por sustantivos genéricos y equivalencias
+  número-palabra cubiertos por regresiones.
+- [x] Facebook con título + caption compartido + URL y prewarm verificable de OG.
+- [x] Capacidad operativa ajustada: Web sin límite y Meta 8 por plataforma/ciclo.
 
 ## Bloqueos para release oficial 24/7
 

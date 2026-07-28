@@ -141,8 +141,17 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
 
 - El arranque operativo se hace con `scripts/start_24x7_production.ps1`; no relajar el
   `doctor` ni copiar secretos al script.
-- El corte mínimo es `ARTICLE_NOT_BEFORE_DATE=2026-07-27`. Cambiarlo requiere detener
-  el supervisor, reporte `queue-cutover`, backup y decisión operativa.
+- La línea de base activa conserva las 20 noticias únicas más recientes según
+  timestamps durables de cola. No usar la fecha editorial para limpiar colas:
+  detener el supervisor, ejecutar `queue-cutover --keep-latest 20 --report-only`,
+  crear backup y aplicar únicamente con decisión operativa.
+- Web no tiene límite por ciclo; Facebook e Instagram tienen máximo 8 por plataforma
+  y ciclo. El deployment mode sigue subordinado a los kill switches individuales.
+- Facebook publica título + el mismo caption de Instagram + URL Web. Con
+  `FB_LINK_PREWARM_ENABLED=true` debe validar primero la nota y su `og:image`.
+- Cada revisión editorial recibe el intento anterior. El sexto intento sólo se usa
+  si no conserva warnings factuales, judiciales o de HTML y siempre queda marcado
+  como degradado; nunca relajar esa barrera para hacer pasar una publicación.
 - Task Scheduler ejecuta `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco
   minutos. Antes de diagnosticar procesos duplicados, confirmar PID y acciones de
   esas tareas.

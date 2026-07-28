@@ -96,9 +96,10 @@ Los kill switches siguen siendo autoridad:
 - Facebook: `FB_PUBLISH_ENABLED=false|true`;
 - Instagram: `IG_PUBLISH_ENABLED=false|true`.
 
-El modo nunca enciende un switch apagado. Una contradicción falla en `doctor`. Los
-modos con publicación inyectan un máximo inicial de una publicación por canal y
-ciclo. No existe escalamiento de modo ni deploy automático.
+El modo nunca enciende un switch apagado. Una contradicción falla en `doctor`. El
+perfil operativo actual inyecta Web sin cupo y un máximo de 8 publicaciones por
+plataforma Meta y ciclo. No existe escalamiento de modo ni deploy automático; los
+kill switches, backoffs y rate limits siguen siendo autoritativos.
 
 ## Canary controlado
 
@@ -162,10 +163,23 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -File scripts\start_24x7_production.ps1 -ValidateOnly
 ```
 
-Ese script no contiene secretos. Mantiene `CANARY_ENABLED=false`, aplica el corte
-`ARTICLE_NOT_BEFORE_DATE=2026-07-27`, habilita el outbox de alertas y exige un
-`doctor supervisor` verde. Los límites de una publicación por canal y ciclo los
-impone el deployment mode, independientemente de límites legacy mayores en `.env`.
+Ese script no contiene secretos. Mantiene `CANARY_ENABLED=false`, desactiva el corte
+por fecha editorial, habilita el outbox de alertas y exige un `doctor supervisor`
+verde. El supervisor impone Web sin límite por ciclo y un máximo de 8 publicaciones
+por plataforma Meta y ciclo, independientemente de los límites legacy del `.env`.
+Facebook verifica primero la nota pública y su `og:image`; si el preview no es
+accesible, conserva el elemento pendiente y no llama a Graph.
+
+La línea de base de colas se controla sin editar JSON:
+
+```powershell
+python cli.py queue-cutover --keep-latest 20 --report-only --json
+python cli.py backup
+python cli.py queue-cutover --keep-latest 20 --apply --json
+```
+
+La selección usa timestamps durables de encolado, no la fecha editorial. Los
+elementos anteriores se archivan como excluidos, no como publicaciones confirmadas.
 
 La UI manual se conserva en loopback:
 

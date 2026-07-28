@@ -286,8 +286,9 @@
 
 ## 37. No había arranque progresivo
 
-- Corrección: modos explícitos, contradicciones fatales, límites de uno por ciclo y
-  kill switches autoritativos.
+- Corrección original: modos explícitos, contradicciones fatales, límites
+  conservadores y kill switches autoritativos. El límite de uno fue reemplazado por
+  la capacidad documentada en `LVR-074`.
 - Evidencia: `tests.test_deployment_modes`.
 - Estado actual: **resuelto en código**; los ciclos de observación no se ejecutaron.
 
@@ -551,3 +552,110 @@
   ejecución real del gate local verde después.
 - Estado actual: **resuelto**.
 - Riesgo residual: ninguno conocido para UTF-8; otros encodings continúan rechazados.
+
+## 60. La fecha editorial no era una base confiable para elegir el backlog inicial
+
+- ID: `LVR-071`; severidad alta.
+- Reproducción 2026-07-27: el cutoff por fecha debía rechazar cualquier entrada sin
+  fecha, aunque su timestamp de cola fuera reciente.
+- Causa raíz: se usaba metadata externa incompleta para una decisión operativa
+  interna.
+- Corrección: `queue-cutover --keep-latest 20` usa timestamps durables, exige orden
+  conocido, hace update multiarchivo y archiva payloads completos. Aplicación real:
+  Web 33→20, Meta 37→20, Social 0; `unknown_order=0`.
+- Tests: `tests.test_queue_cutover` (reporte inmutable, aplicación, trazabilidad y
+  timestamp ausente).
+- Estado actual: **resuelto**.
+- Riesgo residual: empates del mismo segundo se resuelven por orden durable de lista;
+  no se afirma una hora editorial que la fuente no publicó.
+
+## 61. El feedback editorial podía repetir respuestas y descartaba el sexto intento
+
+- ID: `LVR-072`; severidad alta.
+- Reproducción: el feedback sólo llevaba una frase genérica y warnings; no incluía el
+  intento anterior. Al agotar revisiones, siempre se reconstruía el fallback original.
+- Corrección: payload anterior completo, instrucciones por todos los warnings,
+  detección de campos materiales, historial por intento y publicación degradada del
+  sexto resultado únicamente si no hay bloqueos duros.
+- Tests: `EditorialTests` cubre payload real a OpenAI mockeado, múltiples motivos,
+  ausencia de cambio material, score aislado y sexto intento.
+- Estado actual: **resuelto**.
+- Riesgo residual: la calidad lingüística sigue dependiendo del modelo; los cambios y
+  rechazos ahora son observables.
+
+## 62. Facebook no verificaba el preview ni usaba el mensaje solicitado
+
+- ID: `LVR-073`; severidad media.
+- Reproducción: `_build_message` podía omitir el título cuando existía
+  `texto_instagram`; el cliente enviaba el link sin comprobar el HTML/`og:image`.
+- Corrección: caption compartido, mensaje título+caption+URL y prewarm SSRF-safe con
+  timeout, Content-Type y límite de bytes.
+- Tests: `FacebookClientTests` verifica mensaje, dos GET, OG ausente y ausencia de
+  llamada Graph ante fallo.
+- Estado actual: **resuelto**.
+- Riesgo residual: Meta conserva su propia caché; el prewarm demuestra disponibilidad,
+  no controla el momento exacto en que Meta refresca un preview previo.
+
+## 63. El límite de una publicación por ciclo hacía crecer el backlog
+
+- ID: `LVR-074`; severidad alta operativa.
+- Reproducción: Web creció 24→26→29→33 y emitió `backlog_growing`.
+- Corrección: deployment mode inyecta Web ilimitada, sin cupo por categoría, y 8 por
+  cada plataforma Meta/ciclo. Los backoffs y kill switches no cambiaron.
+- Tests: `test_operational_limits_are_unlimited_web_and_eight_per_meta_channel`.
+- Estado actual: **corregido; pendiente de observar ciclos reales con el nuevo cupo**.
+- Riesgo residual: OpenAI, R2, CMS o Meta pueden reducir throughput; las colas y alertas
+  siguen siendo el criterio operativo.
+
+## 64. Sustantivos editoriales genéricos generaban revisiones innecesarias
+
+- ID: `LVR-075`; severidad media.
+- Reproducción real ciclo #8: “Fallecimiento”, “Trágico”, “Avanza” y “Están” fueron
+  reportados como `invented_proper_noun`; antes también ocurrió con conectores como
+  “En Capital”.
+- Causa raíz: el detector confundía una mayúscula de inicio con una entidad.
+- Corrección: una palabra capitalizada aislada al comienzo de una oración no se trata
+  como entidad; nombres de varias palabras, acrónimos y entidades dentro de la oración
+  siguen validados. También se eliminan conectores iniciales antes de comparar y se
+  usa mayor temperatura sólo en revisiones para promover cambios estructurales.
+- Tests: `test_generic_editorial_nouns_and_leading_connectors_are_not_proper_names`,
+  `test_validation_still_rejects_single_invented_name_inside_sentence`,
+  `test_validation_rejects_invented_facts` y verificación de temperatura de revisión.
+- Estado actual: **resuelto para ciclos posteriores al reinicio del commit**.
+- Riesgo residual: el reconocimiento heurístico no reemplaza NER; un nombre inventado
+  de una sola palabra usado exclusivamente al comienzo de una oración puede no ser
+  detectado, mientras los nombres internos y de varias palabras siguen cubiertos.
+
+## 65. Números escritos con palabras se trataban como cifras inventadas
+
+- ID: `LVR-076`; severidad media.
+- Reproducción real ciclo #8: una fuente decía “tres automóviles” y “dos unidades”,
+  mientras la revisión usó `3` y `2`; el validador emitió
+  `invented_number:2`/`invented_number:3` durante seis intentos.
+- Causa raíz: `_extract_numbers` sólo reconocía dígitos y no equivalencias numéricas
+  básicas en español.
+- Corrección: la extracción normaliza números cardinales explícitos escritos con
+  palabras y dígitos al mismo valor antes de comparar. Los artículos `un`/`una` no
+  equivalen automáticamente a `1`, y una cifra verdaderamente ausente (`99`)
+  continúa fallando.
+- Tests:
+  `test_validation_accepts_numeric_digits_when_source_uses_spanish_words` y
+  `test_validation_does_not_treat_articles_as_numeric_one`, además de
+  `test_validation_rejects_invented_facts`.
+- Estado actual: **resuelto para ciclos posteriores al reinicio del commit**.
+- Riesgo residual: la comparación sigue siendo una defensa heurística por presencia,
+  no una validación semántica de la relación entre cada cifra y el hecho descrito.
+
+## 66. El prewarm exitoso de Facebook no dejaba evidencia explícita
+
+- ID: `LVR-077`; severidad baja.
+- Reproducción: un fallo de prewarm quedaba registrado y bloqueaba Graph, pero el caso
+  exitoso sólo podía inferirse porque la publicación posterior había ocurrido.
+- Causa raíz: faltaba un log estructurado en la rama `success`.
+- Corrección: el cliente registra HTTP de página, HTTP de imagen y bytes leídos, sin
+  copiar URLs firmadas, tokens ni contenido.
+- Test: `test_link_preview_prewarm_requires_public_og_image` exige la evidencia en el
+  logger rotativo.
+- Estado actual: **resuelto para ciclos posteriores al reinicio del commit**.
+- Riesgo residual: la disponibilidad verificada no controla cuándo Meta refresca su
+  caché interna.

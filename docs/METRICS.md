@@ -143,33 +143,41 @@ auditoría y el PR.
 
 ## Snapshot operativo 2026-07-27
 
-Snapshot puntual después del ciclo #7 en modo `all`:
+Snapshot puntual después del ciclo #8 en modo `all`:
 
 | Métrica | Valor |
 |---|---:|
-| ciclo | 7 |
-| scraping/rewrite | `success`, 10/10 |
-| Web | `failed`, 0/1, `strict_category_policiales` |
-| Facebook | `no_work`, 0/0 |
-| Instagram | `no_work`, 0/0 |
-| cola Web | 33 |
-| cola Meta | 37 |
-| cola social activa | 0 |
+| ciclo | 8 |
+| scraping/rewrite | `success`, 16/16 |
+| Web | `degraded`, 24/26; 2 terminales sensibles |
+| Facebook | `success`, 8/8; 16 diferidas por cupo |
+| Instagram | `success`, 8/8; 5 diferidas |
+| cola Web | 0 |
+| cola Meta de origen | 26 |
+| social Facebook/Instagram pending | 16/3 |
 | rewrite pending/processing/failed/dead-letter | 0/0/0/0 |
 | heartbeat | `fresh` |
 | filesystem libre durante preflight | 34.065 MB |
 
-El supervisor mantiene el límite de una publicación por canal y ciclo. La secuencia
-Web 24→26→29 activó correctamente `backlog_growing`; después del ciclo #7 quedó en
-33. Esto demuestra un cuello de botella de capacidad durante el rollout conservador,
-pero no autoriza por sí solo a aumentar volumen.
+La ventana inicial quedó en 20 identidades y el scraping del mismo ciclo incorporó
+seis nuevas. Web sin cupo procesó las 26 en 1.151,578 segundos: publicó 24, registró
+siete publicaciones degradadas y envió dos entradas sensibles a estado terminal. La
+cola Web quedó en cero; el resultado general permaneció `degraded`, como exige el
+contrato para 24/26.
+
+Facebook respetó exactamente el cupo configurado de ocho. Instagram procesó ocho:
+siete publicaciones externas y una deduplicación con evidencia existente; el
+`StageResult` las cuenta como ocho resultados aceptables. Lo restante permanece
+durable para ciclos posteriores y no se vació.
+
+Durante este ciclo se reprodujeron falsos positivos del validador editorial con
+sustantivos/verbos al comienzo de oración y con equivalencias “dos/tres” frente a
+`2/3`. `LVR-075` y `LVR-076` conservan la reproducción, corrección y regresiones. Esos
+correctivos se cargan en el reinicio controlado posterior al ciclo; la evidencia del
+ciclo #8 corresponde al commit registrado por su heartbeat, no al código posterior.
 
 El ciclo #5 fue `degraded`: Instagram rechazó 1/1 mientras Web y Facebook fueron
 `success`. El elemento quedó en dead-letter y no se reintentó; el ciclo #6 confirmó
 que la integración seguía operable. Los rechazos posteriores a `LVR-069` agregan al
 evento terminal `http_status`, código/subcódigo y tipo del proveedor sin copiar el
 mensaje ni el cuerpo externo.
-
-El fallo Web del ciclo #7 fue un bloqueo editorial deliberado. El journal conserva
-`strict_category_policiales` y la política `strict=true/allowed=false`; no cuenta como
-publicación ni como pérdida de cola.

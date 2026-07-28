@@ -1,13 +1,15 @@
 # Estado actual
 
-Última actualización: 2026-07-27 19:16 ART.
+Última actualización: 2026-07-27 21:13 ART.
 
 ## Rama, revisión y release
 
 - Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
 - Rama desplegada: `reliability/baseline-2026-07-23`.
-- Commit de código identificado por el heartbeat:
-  `1fe63cc018a52fa66f8f454cf87c4f40c4995068`.
+- Commit de código identificado por el heartbeat al iniciar el ciclo #8:
+  `e6b0459d3944c6a2a702062c1a3af1afd981b484`.
+- Último commit de código validado focalmente: `49e17d0` (se aplicará en el próximo
+  reinicio controlado del supervisor).
 - PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
 - CI remoto conocido: `reliability-windows` verde en Actions run
   [`30308227631`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30308227631).
@@ -25,11 +27,12 @@ Verificaciones ejecutadas en el host Windows con el venv del repositorio:
 |---|---|
 | Python | 3.10.0 |
 | `pip check` | sin dependencias rotas |
-| suite | 220 tests, OK, `.env` deshabilitado |
+| suite | 235 tests, OK, `.env` deshabilitado y directorios temporales |
 | E2E local | 17/17, `production_calls=false` |
 | `compileall` | OK |
 | `git diff --check` | OK |
 | `doctor supervisor` con perfil operativo | `success`, 8/8 |
+| dry-run CI | `success`, `production_calls=false` |
 | filesystem del host | `success`, 7/7, 34.065 MB libres |
 
 `doctor core` sin overrides sigue fallando correctamente porque el `.env` histórico
@@ -50,16 +53,36 @@ supervisor detenido:
 - Eventos y motivos: `data/queue_events.json`.
 - Backups previos: `data/backups/`.
 
-Snapshot después del ciclo #7:
+El operador reemplazó la distinción por fecha por una línea de base de orden durable.
+Con backup previo y supervisor detenido se aplicó:
 
-- Web: 33 pendientes, todas del corte en adelante.
-- Meta: 37 entradas del corte en adelante.
+```text
+queue-cutover --keep-latest 20 --apply
+```
+
+Resultado:
+
+- Web: 33→20; 13 payloads de canal archivados.
+- Meta: 37→20; 17 payloads de canal archivados.
+- Social activa: 0.
+- Identidades únicas activas: 20, presentes en ambos canales.
+- Orden desconocido: 0.
+
+Los elementos anteriores se registraron como
+`operator_baseline_older_than_latest_window`; no se marcaron como publicaciones
+externas sin ID/URL.
+
+Snapshot al iniciar el ciclo #8:
+
+- Web: 20 pendientes de la ventana más reciente.
+- Meta: 20 entradas de las mismas identidades.
 - Social activa: 0.
 - Rewrite: 0 pending, 0 processing, 0 failed, 0 dead-letter.
 - Backlog histórico de Facebook: 0 pendientes sin clasificar, 0 ambiguos.
 
-No se borró ni sobrescribió el historial para “limpiar” las colas. La fecha mínima
-de ingreso queda fijada por `ARTICLE_NOT_BEFORE_DATE=2026-07-27`.
+No se borró ni sobrescribió el historial para “limpiar” las colas.
+`ARTICLE_NOT_BEFORE_DATE` queda desactivado en el perfil operativo porque una noticia
+válida puede no traer fecha.
 
 ## Integraciones reales
 
@@ -116,13 +139,22 @@ sensible, no una caída de CMS/Meta.
 
 ## Estado operativo
 
-- Supervisor: activo, PID registrado `29276` al actualizar este documento.
+- Supervisor: activo, PID registrado `52088` al iniciar el ciclo #8.
 - Modo: `all`.
 - Canales solicitados/habilitados: Web, Facebook e Instagram.
-- Límite efectivo: una publicación por canal y ciclo.
+- Límite efectivo: Web sin límite; Facebook 8 e Instagram 8 por ciclo.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
-- Último ciclo observado: #7 `degraded`, 3/4 etapas aceptables.
+- Último ciclo: #8 `degraded`, 3/4 etapas aceptables.
+- Scraping/rewrite: `success` 16/16.
+- Web: `degraded` 24/26, siete publicaciones degradadas, dos terminales sensibles y
+  cola final 0.
+- Facebook: `success` 8/8, con 16 elementos durables diferidos por cupo.
+- Instagram: `success` 8/8, con cinco diferidos; siete publicaciones y una
+  deduplicación aceptable.
+- El feedback produjo revisiones materiales y el sexto resultado seguro se publicó
+  como `degraded`. Los falsos positivos observados con comienzos de oración y
+  equivalencias número-palabra quedaron corregidos en `LVR-075`/`LVR-076`.
 - Ciclo #7 Web: `failed` 0/1 por `strict_category_policiales`, terminal trazable y
   sin publicación; Facebook/Instagram `no_work`.
 - Ciclo #5: `degraded`, 3/4; rechazo Instagram aislado y no reintentado.
@@ -162,9 +194,10 @@ servicio solicitado por el operador está activo con límites y watchdog.
 - El commit activo tiene cambios de trabajo todavía no integrados en `main`.
 - La causa exacta del rechazo Instagram del ciclo #5 no puede reconstruirse porque
   ocurrió antes de persistir metadatos sanitizados; no se reprodujo en el ciclo #6.
-- El backlog Web creció 24→26→29 y llegó a 33; el límite inicial de una publicación
-  por ciclo es menor que el ingreso observado. La alerta `backlog_growing` se emitió
-  localmente. No se aumenta volumen hasta completar más ciclos sanos.
+- El backlog Web creció 24→26→29→33 bajo el límite anterior. Con Web ilimitada, el
+  ciclo #8 procesó las 26 entradas disponibles y dejó la cola en cero.
+- Facebook conserva 16 pendientes e Instagram 3 pendientes después de aplicar el
+  cupo de ocho; son trabajo diferido, no pérdida ni fallo.
 - El contenido y selectores de terceros pueden cambiar sin aviso.
 
 Próximo gate: revisar y subir el diff sin secretos, obtener CI/review del PR y agregar

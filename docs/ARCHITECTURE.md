@@ -29,6 +29,7 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `openIA/rewrite_news.py` | cola durable, reescritura, clasificación, captions y fan-out web/meta |
 | `utils/editorial_policy.py` | política explícita de fallbacks y sensibilidad |
 | `pipeline/node_webapp/*` | validación editorial, medios R2, payload, contrato CMS y URL web |
+| `utils/social_caption.py` | caption único compartido por Instagram y Facebook |
 | `utils/social_queue.py` | estados independientes de Facebook/Instagram |
 | `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff |
 | `utils/file_manager.py` | locks, lectura estricta, atomicidad, backups, cuarentena y restore |
@@ -132,6 +133,33 @@ Un fallo de Meta registra en el log rotativo y, si termina en dead-letter, en
 HTTP/código/subcódigo/tipo del proveedor, retry y outcome. No persiste el cuerpo
 arbitrario de la respuesta ni su mensaje, para evitar copiar tokens devueltos por un
 tercero.
+
+### Revisión editorial verificable
+
+El enriquecedor conserva el resultado normalizado de cada intento. Una revisión
+recibe los warnings exactos y el intento anterior, y registra qué campos cambiaron.
+Sólo cambios en contenido, estructura o metadata editorial cuentan como materiales;
+un cambio aislado del score autodeclarado no se considera corrección.
+
+Al agotar seis intentos se conserva el último resultado únicamente cuando no contiene
+warnings factuales, judiciales o de HTML. Se marca
+`editorialFinalAttemptUsed=true`, se publica como `degraded` y se registra el
+historial de revisión. Los bloqueos duros conservan la política de fallback segura.
+
+### Publicación Facebook y preview
+
+Facebook reutiliza exactamente el caption de Instagram y construye el mensaje con
+título, caption y URL Web. Antes de llamar a Graph, el prewarm valida mediante GET
+SSRF-safe que la página sea HTML pública y que `og:image` sea una imagen pública
+descargable dentro del límite configurado. Un prewarm fallido es `degraded`,
+`publication_outcome=not_published`; el claim queda recuperable.
+
+### Línea de base de colas
+
+`queue-cutover --keep-latest N` ordena identidades cross-channel mediante timestamps
+durables de encolado. La operación multiarchivo conserva las últimas N, archiva el
+resto con payload completo y transiciona estados sociales antiguos a `excluded` o
+dead-letter si estaban en `processing`. No usa `fecha` ni fabrica evidencia externa.
 
 ## Compatibilidad y migración
 

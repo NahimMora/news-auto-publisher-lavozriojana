@@ -312,15 +312,16 @@ El script:
 1. exige el `venv` del repositorio;
 2. fija `PIPELINE_DEPLOYMENT_MODE=all`;
 3. enciende los tres kill switches de forma explícita;
-4. fija `ARTICLE_NOT_BEFORE_DATE=2026-07-27`;
+4. desactiva el cutoff por fecha editorial y usa la línea de base durable de colas;
 5. mantiene `CANARY_ENABLED=false`;
 6. habilita alertas con outbox local y sin webhook;
 7. registra metadata de despliegue;
 8. ejecuta `doctor --scope supervisor`;
 9. sólo inicia si el doctor devuelve exit `0`.
 
-El modo `all` inyecta un máximo de una publicación por canal y ciclo. No aumentar
-los límites legacy del `.env` durante la observación inicial.
+El modo `all` inyecta Web sin límite de lote (`0` y sin cupo por categoría) y un
+máximo de 8 publicaciones por plataforma Meta y ciclo. Los kill switches siguen
+siendo autoritativos.
 
 Verificación:
 
@@ -376,6 +377,55 @@ python cli.py queue-cutover --from-date 2026-07-27 --apply
 
 El comando archiva payloads completos, registra eventos y conserva backups. Una fecha
 desconocida bloquea el corte; no se interpreta como noticia vieja ni se descarta.
+
+## Línea de base por últimas noticias
+
+Cuando la fecha editorial falta o no es confiable, no se debe inferir antigüedad.
+Con el supervisor detenido:
+
+```powershell
+python cli.py queue-cutover --keep-latest 20 --report-only --json
+python cli.py backup
+python cli.py queue-cutover --keep-latest 20 --apply --json
+python cli.py queue-cutover --keep-latest 20 --report-only --json
+```
+
+El primer reporte no modifica archivos y debe indicar `unknown_order=0`. La
+aplicación conserva las 20 identidades más recientes usando `web_queued_at` y
+`queued_at`, archiva payloads anteriores y registra eventos. Un timestamp durable
+ausente bloquea toda la operación. “Excluido de la línea de base” no equivale a
+“publicado”: sin ID o URL externa nunca se crea esa evidencia.
+
+## Feedback editorial y sexto intento
+
+Cada revisión envía a OpenAI los warnings exactos, instrucciones por tipo y el
+payload normalizado del intento anterior. `revision_history` registra campos
+cambiados y cambios materiales. Cambiar sólo `quality_score` no cuenta como
+corrección.
+
+Con `EDITORIAL_FINAL_ATTEMPT_ACTION=publish_last_safe`, el sexto intento se publica
+sólo si quedan observaciones de calidad/similitud. Cifras, fechas o nombres
+inventados, afirmaciones judiciales inseguras y HTML no permitido siguen bloqueando
+el resultado. Una publicación del sexto intento queda `degraded` y genera evento.
+
+## Preview de Facebook
+
+Antes de Graph, Facebook arma:
+
+```text
+título
+
+caption exacto de Instagram
+
+URL pública de la noticia
+```
+
+Con `FB_LINK_PREWARM_ENABLED=true`, el cliente descarga la nota con user-agent del
+crawler de Facebook, exige HTML, extrae un `og:image` público, lo descarga con límite
+de tamaño y recién entonces publica. Un timeout, HTTP inválido, Content-Type
+incorrecto o imagen ausente deja la noticia pendiente como `degraded`; no se llama a
+Graph. Revisar `logs/fb_client.log` y la disponibilidad pública de CMS/R2 antes de
+reintentar.
 
 ## UI manual de videos
 

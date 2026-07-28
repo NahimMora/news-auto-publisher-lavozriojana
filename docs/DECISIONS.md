@@ -350,5 +350,54 @@ autenticado con versión/capacidades.
 **Motivo**: una publicación real valida escritura, pero no reemplaza un chequeo seguro
 para cada arranque.
 
-**Consecuencias**: el servicio fue activado por autorización explícita y con límite
-uno por ciclo, pero no se declara release 24/7 listo ni se crea el tag.
+**Consecuencias**: el servicio fue activado por autorización explícita. El límite
+inicial de uno por ciclo fue reemplazado luego por la decisión documentada “Web sin
+cupo y Meta con ocho por ciclo”; no se declara release 24/7 listo ni se crea el tag.
+
+### 2026-07-27 — Línea de base por orden durable, no por fecha editorial
+
+**Decisión**: conservar las 20 noticias únicas más recientes según los timestamps
+durables de Web/Meta. Archivar el resto con payload y evento; no marcarlo como
+publicado sin evidencia externa.
+
+**Motivo**: algunas fuentes omiten o degradan la fecha editorial. El timestamp de cola
+se genera dentro del sistema, permite un orden reproducible y no depende del HTML.
+
+**Consecuencias**: `ARTICLE_NOT_BEFORE_DATE` queda apagado en el perfil operativo. Un
+item sin timestamp durable bloquea el corte completo. La selección inicial dejó
+20/20 en Web y 20/20 en Meta.
+
+### 2026-07-27 — Sexto intento editorial seguro y medible
+
+**Decisión**: cada revisión recibe el intento anterior y todos los warnings. Si el
+sexto intento sólo conserva problemas de calidad/similitud, se publica el último
+resultado como `degraded`; warnings factuales, judiciales o HTML continúan bloqueando.
+
+**Motivo**: el flujo anterior descartaba mejoras reales y volvía al texto original.
+Además, feedback genérico sin el intento previo podía repetir la misma respuesta.
+
+**Consecuencias**: queda `revision_history`, se detecta `revision_no_material_change`
+y cambiar sólo el score no cuenta. La política editorial sensible no se relaja ante
+datos inventados o afirmaciones inseguras.
+
+### 2026-07-27 — Mensaje y preview verificable de Facebook
+
+**Decisión**: Facebook usa título + caption exacto de Instagram + URL Web. Antes de
+Graph, un prewarm SSRF-safe debe validar la página y descargar su `og:image`.
+
+**Motivo**: pasar sólo el campo `link` no demuestra que Meta encontrará una imagen
+pública en ese momento.
+
+**Consecuencias**: un preview no verificable difiere la publicación sin outcome
+ambiguo. El mismo constructor de caption evita divergencias entre plataformas.
+
+### 2026-07-27 — Web sin cupo y Meta con ocho por ciclo
+
+**Decisión**: el supervisor inyecta Web ilimitada y 8 publicaciones por ciclo para
+Facebook y 8 para Instagram.
+
+**Motivo**: el CMS administrado por el operador no aplica rate limit y el cupo anterior
+de uno generó crecimiento comprobado de backlog. Meta conserva un límite explícito.
+
+**Consecuencias**: los kill switches y backoffs continúan siendo autoritativos. Un
+rate limit corta y conserva el resto pendiente; el límite no implica éxito forzado.
