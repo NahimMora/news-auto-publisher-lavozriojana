@@ -713,14 +713,19 @@ class FacebookClientTests(unittest.TestCase):
         image.headers = {"Content-Type": "image/jpeg"}
 
         with patch("meta.fb_client.safe_get", side_effect=[page, image]) as get:
-            result = fb_client.prewarm_link_preview(
-                "https://lavozriojana.com.ar/noticias/nota"
-            )
+            with self.assertLogs("fb_client", level="INFO") as captured:
+                result = fb_client.prewarm_link_preview(
+                    "https://lavozriojana.com.ar/noticias/nota"
+                )
 
         self.assertTrue(result.ok)
         self.assertEqual(result.details["og_image_url"], "https://media.lavozriojana.com/og/nota.jpg")
         self.assertEqual(get.call_count, 2)
         self.assertIn("facebookexternalhit", get.call_args_list[0].kwargs["headers"]["User-Agent"])
+        self.assertTrue(
+            any("preview de facebook verificado" in line.lower() for line in captured.output),
+            captured.output,
+        )
 
     def test_link_preview_prewarm_fails_without_og_image(self):
         page = FakeResponse(200, None)

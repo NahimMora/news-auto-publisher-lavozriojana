@@ -187,6 +187,12 @@ def prewarm_link_preview(link: str) -> OperationResult:
             image.close()
         except (AttributeError, TypeError):
             pass
+        logger.info(
+            "Preview de Facebook verificado page_status=%s image_status=%s image_bytes=%s",
+            status,
+            image_status,
+            total,
+        )
         return OperationResult(
             StageStatus.SUCCESS,
             details={"og_image_url": og_image},
