@@ -58,6 +58,7 @@ FILES = {
     "editorial_routing_events.json": [],
     "topic_publication_state.json": {},
     "media_library.json": [],
+    "premium_packages.json": [],
 }
 
 for filename, default in FILES.items():
