@@ -1,6 +1,55 @@
 # Backlog
 
-Última actualización: 2026-07-27. Los ítems resueltos se conservan.
+Última actualización: 2026-07-30. Los ítems resueltos se conservan.
+
+## En progreso — capa editorial premium (rama `feature/premium-editorial-layer`)
+
+Nota sobre los conteos "N/N tests totales" de cada fase abajo: son checkpoints
+históricos tomados en el momento en que esa fase se cerró por primera vez: no
+reflejan la ronda de correcciones del 2026-07-30 (transición automatic↔candidate
+completa, política de renderers por workflow, más tests), que agregó casos y
+resplit archivos. **El conteo final reconciliado y verificado es 336/336** — ver
+`docs/METRICS.md` "Auditoría de conteo de tests" para el desglose exacto y los
+comandos usados.
+
+- [x] Fase 1: router editorial determinístico (automatic/candidate/suppressed),
+  gate de vínculo riojano + cap de tema de 12h para Instagram (opt-in vía
+  `EDITORIAL_ROUTER_ENABLED`, apagado por defecto), modo report-only
+  (`cli.py editorial-route --report-only`), persistencia aditiva en
+  `data/editorial_candidates.json`, `data/editorial_routing_events.json` y
+  `data/topic_publication_state.json`. Override manual completo (rule 16):
+  `demote_automatic_to_candidate` (automática pendiente → candidata, excluye de
+  la cola social), `add_published_to_candidates` (automática ya publicada →
+  candidata premium sin alterar el historial), `update_candidate_status`
+  candidate↔automatic/discarded — todas atómicas, con lock e idempotentes. Ver
+  `docs/DECISIONS.md` 2026-07-30 "Override manual completo".
+- [x] Fase 2: biblioteca multimedia de diez días (`utils/media_library.py`),
+  agregación de candidatas/publicadas/premium/assets, buscador local
+  case/accent-insensitive, cleanup seguro con `active_publication` guard.
+  13/13 tests nuevos OK, 266/266 tests totales OK.
+- [x] Fase 3: estudio de publicaciones premium — contrato versionado, importador de
+  ChatGPT, renderer Pillow interino (mismo para preview/publicación), carrusel
+  Instagram nuevo, media directa Facebook sin link (activado sólo con
+  `publish_mode=direct_media`+`workflow=manual_premium` explícitos), orquestador
+  degraded/retry-por-canal, pestaña "Estudio Premium" + "Candidatas" en
+  `video_reel_manager.py`. 28/28 tests nuevos OK, 294/294 tests totales OK, smoke
+  E2E manual (import → preview → publish dry-run) verificado contra el servidor real.
+- [x] Fase 4: composiciones still de Remotion (`PremiumSlide`,
+  `AutomaticInstagramCard`, `FacebookOgCard`), paleta oficial sin dorado (`GOLD`
+  reemplazado por `AZUL`), highlight terms compartido con Reels (`Main` con prop
+  compatible hacia atrás). Política de renderers **separada por workflow**
+  (corrección 2026-07-30): `AUTOMATIC_STATIC_RENDER_ENGINE=pillow`,
+  `PREMIUM_STATIC_RENDER_ENGINE=remotion`, `OG_STATIC_RENDER_ENGINE=pillow`,
+  `STATIC_RENDER_ENGINE` legacy sólo como override explícito — ver
+  `docs/DECISIONS.md`. Benchmark real de 10 fixtures
+  (`scripts/benchmark_static_render.py`, ver `docs/METRICS.md`): Remotion ~560x
+  más lento que Pillow por render, de ahí que sólo premium lo use por defecto.
+- [x] Fase 5: validación final, compatibilidad y documentación consolidada — ver
+  conteo exacto de tests y resultados de revalidación en `docs/METRICS.md` y el
+  registro de commits de esta rama.
+
+No mergeado a `main`. No autoriza publicaciones reales ni canary; requiere
+autorización explícita posterior por fase.
 
 ## Cerrado por la línea de base del 2026-07-23
 

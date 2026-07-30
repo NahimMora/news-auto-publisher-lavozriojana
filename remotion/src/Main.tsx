@@ -10,10 +10,10 @@ import {
 import { Video } from "@remotion/media";
 import { z } from "zod";
 import {
+  AZUL,
   CAPTION_H_COMPACT,
   FOOTER_H,
   FOOTER_Y,
-  GOLD,
   GRADIENT_BG_DARK,
   GRADIENT_FOOTER,
   GRADIENT_HEADLINE_SCRIM,
@@ -33,9 +33,12 @@ import {
   W,
   WHITE,
 } from "./constants";
+import { HighlightedTitle } from "./shared/HighlightedTitle";
 
 // `durationInFrames` no se usa dentro del componente: solo existe para que
 // calculateMetadata (Root.tsx) fije la duración real del reel por prop.
+// `highlightTerms` es opcional y compatible con props viejas (default []):
+// un caller anterior a la Fase 4 que no lo envíe sigue funcionando igual.
 export const MainSchema = z.object({
   titulo: z.string(),
   seccion: z.string(),
@@ -43,6 +46,7 @@ export const MainSchema = z.object({
   assetFile: z.string(), // ruta relativa a public/ (p.ej. "tmp/<id>.mp4"); "" si assetType="none"
   kenBurnsVariant: z.number(), // 0/1/2 — dirección del paneo cuando assetType="image"
   durationInFrames: z.number(),
+  highlightTerms: z.array(z.string()).optional().default([]),
 });
 
 export type MainProps = z.infer<typeof MainSchema>;
@@ -64,6 +68,7 @@ export const Main: React.FC<MainProps> = ({
   assetType,
   assetFile,
   kenBurnsVariant,
+  highlightTerms,
 }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
@@ -260,16 +265,18 @@ export const Main: React.FC<MainProps> = ({
             </div>
           </div>
 
-          <div
+          <HighlightedTitle
+            text={titulo.toUpperCase()}
+            highlightTerms={highlightTerms}
+            color={WHITE}
+            highlightColor={AZUL}
             style={{
               opacity: titleOpacity,
               translate: `0px ${titleTranslateY}px`,
               fontFamily: "Arial, sans-serif", fontWeight: 900, fontSize: titleFontSize,
-              lineHeight: 1.15, color: WHITE, textShadow: "0 3px 10px rgba(0,0,0,0.6)",
+              lineHeight: 1.15, textShadow: "0 3px 10px rgba(0,0,0,0.6)",
             }}
-          >
-            {titulo.toUpperCase()}
-          </div>
+          />
         </div>
       </div>
 
@@ -312,7 +319,7 @@ export const Main: React.FC<MainProps> = ({
             WebkitMaskSize: "contain", WebkitMaskRepeat: "no-repeat", WebkitMaskPosition: "center",
           }}
         />
-        <div style={{ fontFamily: "Arial, sans-serif", fontWeight: 700, fontSize: 30, color: GOLD }}>
+        <div style={{ fontFamily: "Arial, sans-serif", fontWeight: 700, fontSize: 30, color: AZUL }}>
           {HANDLE}
         </div>
       </div>

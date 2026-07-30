@@ -1,6 +1,53 @@
 # Estado actual
 
-Última actualización: 2026-07-27 23:30 ART.
+Última actualización: 2026-07-30 (agrega la capa editorial premium; el resto del
+documento describe el estado previo de la rama de confiabilidad y sigue vigente).
+
+## Capa editorial premium (rama `feature/premium-editorial-layer`, no mergeada)
+
+Construida sobre `main` (`dd9b7fe`) en cinco fases, cada una con pruebas propias.
+No se hizo merge, no se tocó `.env` productivo ni `data/` real, y no se ejecutó
+ninguna publicación real (todos los clientes Meta se probaron con mocks/dry-run).
+
+- **Fase 1 — Router editorial**: `utils/editorial_router.py` clasifica cada noticia
+  en `automatic|candidate|suppressed` por canal. Sólo restringe Instagram, y sólo si
+  `EDITORIAL_ROUTER_ENABLED=true` (default `false` — comportamiento actual sin
+  cambios hasta activación explícita). Modo report-only:
+  `python cli.py editorial-route --report-only`. Overrides manuales completos
+  (corrección 2026-07-30): `demote_automatic_to_candidate` (automática pendiente →
+  candidata), `add_published_to_candidates` (automática ya publicada → candidata
+  premium sin alterar el historial), `update_candidate_status` candidate↔automatic/
+  discarded — todas atómicas, con lock e idempotentes.
+- **Fase 2 — Biblioteca multimedia**: `utils/media_library.py` agrega candidatas,
+  publicadas (con evidencia real), premium y assets de imagen en una búsqueda local
+  de diez días. `python cli.py media-library search/cleanup`.
+- **Fase 3 — Estudio Premium**: contrato versionado (`utils/premium_contract.py`),
+  importador de ChatGPT, orquestador social-only (`utils/premium_publisher.py`,
+  nunca crea artículo web ni llama al CMS), carrusel nuevo en
+  `meta/ig_client.py::post_premium_carousel_to_instagram`, media directa sin link
+  nueva en `meta/fb_client.py::post_premium_direct_media_to_facebook`. Pestañas
+  "Estudio Premium" y "Candidatas" en la UI manual (`video_reel_manager.py`).
+- **Fase 4 — Sistema visual Remotion**: composiciones still `PremiumSlide`,
+  `AutomaticInstagramCard`, `FacebookOgCard`; paleta de marca sin dorado; highlight
+  terms compartido con Reels (`Main`, compatible hacia atrás). Política de motor
+  **por workflow** (corrección 2026-07-30): `PREMIUM_STATIC_RENDER_ENGINE=remotion`
+  por defecto (Estudio Premium, manual y bajo volumen);
+  `AUTOMATIC_STATIC_RENDER_ENGINE=pillow` y `OG_STATIC_RENDER_ENGINE=pillow` por
+  defecto (sin wiring real a Remotion todavía); `STATIC_RENDER_ENGINE` legacy sólo
+  como override explícito. Benchmark real en `docs/METRICS.md` (Remotion es ~560x
+  más lento que Pillow por re-bundling por slide — ver Known Issue #69).
+- **Fase 5 — Validación**: **336/336 tests Python OK** (236 preexistentes en `main`
+  + 100 nuevos: router 29, biblioteca 13, premium 14, meta premium 14, Remotion 30 —
+  ver `docs/METRICS.md` para el detalle exacto de esta cuenta, incluida la
+  reconciliación de una cifra incorrecta reportada en una síntesis previa de esta
+  misma rama), 17/17 E2E dry-run OK, `compileall`/`pip check`/`doctor core` OK,
+  `npx tsc --noEmit`/`npx eslint src` sin errores nuevos, `npx remotion bundle` OK,
+  `git diff --check` OK, sin secretos en el diff. CI (`reliability-windows`) es
+  Python-only: no instala Node, por lo que los 4 tests de render Remotion real se
+  saltean ahí automáticamente (no es un fallo).
+
+Requiere autorización explícita antes de: activar `EDITORIAL_ROUTER_ENABLED=true` en
+producción, desactivar `PREMIUM_PUBLISH_DRY_RUN`, o mergear esta rama a `main`.
 
 ## Rama, revisión y release
 

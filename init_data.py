@@ -54,6 +54,13 @@ FILES = {
     },
     "queue_events.json": [],
     "noticias_filtradas_body_keywords.json": [],
+    "editorial_candidates.json": [],
+    "editorial_routing_events.json": [],
+    "topic_publication_state.json": {},
+    "media_library.json": [],
+    "premium_packages.json": [],
+    "premium_ig_posted.json": {"posted": {}},
+    "premium_fb_posted.json": {"posted": {}},
 }
 
 for filename, default in FILES.items():

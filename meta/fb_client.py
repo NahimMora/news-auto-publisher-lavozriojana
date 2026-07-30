@@ -1,8 +1,10 @@
 """Cliente tipado de Facebook Graph API."""
 from __future__ import annotations
 
+import json
 import os
 import time
+import uuid
 from urllib.parse import urlparse
 
 import requests
@@ -410,3 +412,140 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
 def post_to_facebook(noticia: dict) -> bool:
     """Wrapper compatible con el contrato booleano histórico."""
     return post_to_facebook_detailed(noticia).ok
+
+
+# ── Media directa premium (Fase 3): social-only, sin link, sin CMS ────────
+# El backoff se comparte con el flujo automático (misma página/cuenta real
+# de Meta, vía ``_load_state``/``_backoff_until``/``_set_backoff`` sobre
+# ``FB_STATE_PATH``). El dedup usa un registro propio para no mezclar
+# identidades premium con el lote automático.
+PREMIUM_FB_STATE_PATH = str(data_dir() / "premium_fb_posted.json")
+
+
+def _load_premium_state() -> dict:
+    return load_json(PREMIUM_FB_STATE_PATH, {"posted": {}}, expected_type=dict)
+
+
+def _mark_premium_posted(dedup_key: str, package: dict, external_id: str) -> None:
+    def mutate(state):
+        state.setdefault("posted", {})[dedup_key] = {
+            "posted_at": int(time.time()),
+            "dedup_key": dedup_key,
+            "external_id": external_id,
+            "package_id": package.get("id"),
+            "titulo": package.get("title"),
+        }
+        return state
+
+    update_json(PREMIUM_FB_STATE_PATH, mutate, {"posted": {}}, expected_type=dict)
+
+
+def premium_dedup_key(package: dict) -> str:
+    explicit = str(package.get("premium_dedup_key") or "").strip()
+    if explicit:
+        return explicit
+    basis = str(package.get("id") or package.get("title") or "")
+    return f"premium:{url_hash(basis) if basis else uuid.uuid4().hex}"
+
+
+def post_premium_direct_media_to_facebook(package: dict, slide_images: list[bytes]) -> OperationResult:
+    """Publica foto(s) directas sin URL web, social-only.
+
+    Se activa únicamente si ``publish_mode == "direct_media"`` y
+    ``workflow == "manual_premium"`` están presentes de forma explícita en
+    el paquete — nunca se infiere el modo por ausencia de link. El caption
+    nunca incluye una URL.
+    """
+    if package.get("publish_mode") != "direct_media" or package.get("workflow") != "manual_premium":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_publish_mode")
+    if not PAGE_ID or PAGE_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if PAGE_ID in DISABLED_PAGE_IDS:
+        return OperationResult(
+            StageStatus.NO_WORK,
+            error_type="platform_disabled",
+            details={"page_id_configured": True},
+        )
+    if not slide_images:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_slide_count")
+
+    try:
+        automatic_state = _load_state()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    until = _backoff_until(automatic_state)
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+
+    try:
+        premium_state = _load_premium_state()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    dedup_key = premium_dedup_key(package)
+    existing = premium_state.get("posted", {}).get(dedup_key)
+    if existing is not None:
+        return OperationResult(
+            StageStatus.SUCCESS,
+            external_id=str(existing.get("external_id") or ""),
+            deduplicated=True,
+        )
+
+    try:
+        token = get_page_token()
+    except ValueError as exc:
+        logger.error("No se obtuvo token de página: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+
+    caption = str(package.get("caption") or "")  # nunca se agrega link acá
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+
+    try:
+        if len(slide_images) == 1:
+            files = {"source": ("slide.jpg", slide_images[0], "image/jpeg")}
+            data = {"caption": caption, "access_token": token}
+            response = requests.post(f"{GRAPH_API}/{PAGE_ID}/photos", data=data, files=files, timeout=timeout)
+            result = _api_result(response)
+        else:
+            media_fbids: list[str] = []
+            for index, image_bytes in enumerate(slide_images):
+                files = {"source": (f"slide-{index}.jpg", image_bytes, "image/jpeg")}
+                data = {"published": "false", "access_token": token}
+                response = requests.post(f"{GRAPH_API}/{PAGE_ID}/photos", data=data, files=files, timeout=timeout)
+                uploaded = _api_result(response)
+                if not uploaded.ok:
+                    return uploaded
+                media_fbids.append(uploaded.external_id)
+            attached_media = json.dumps([{"media_fbid": fbid} for fbid in media_fbids])
+            data = {"message": caption, "attached_media": attached_media, "access_token": token}
+            response = requests.post(f"{GRAPH_API}/{PAGE_ID}/feed", data=data, timeout=timeout)
+            result = _api_result(response)
+    except requests.RequestException as exc:
+        logger.error("Error de red publicando media directa premium: %s", exc)
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+            details={"publication_outcome": "unknown"},
+        )
+
+    if result.ok:
+        try:
+            _mark_premium_posted(dedup_key, package, result.external_id)
+        except JsonStateError as exc:
+            logger.error("Publicado media directa premium pero no se persistió evidencia: %s", exc)
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="published_state_write_error",
+                external_id=result.external_id,
+                details={"publication_outcome": "confirmed"},
+            )
+        logger.info("Publicación premium directa en Facebook: %s", str(package.get("title") or "")[:70])
+    else:
+        logger.error("Facebook rechazó la publicación premium: %s", result.to_dict())
+    return result

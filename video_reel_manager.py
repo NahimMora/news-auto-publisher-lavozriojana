@@ -21,7 +21,7 @@ import time
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -64,6 +64,20 @@ _UPLOAD_CONTENT_TYPES = {
 
 # Jobs de publicación de Publicaciones: job_id → {done, web_ok, ig_ok, fb_ok, messages, error, public_url}
 _custom_jobs: dict[str, dict] = {}
+
+# Jobs de publicación del Estudio Premium: job_id → {done, status, result, error}
+_premium_jobs: dict[str, dict] = {}
+
+
+def _premium_publish_background(job_id: str, package_id: str) -> None:
+    try:
+        from utils.premium_publisher import publish_package
+
+        result = publish_package(package_id)
+        _premium_jobs[job_id] = {"done": True, "status": result.get("status"), "result": result, "error": None}
+    except Exception as exc:
+        logger.exception("Error en premium_publish_background job %s", job_id[:8])
+        _premium_jobs[job_id] = {"done": True, "status": "failed", "result": None, "error": str(exc)}
 
 
 def validate_bind_host(host: str) -> str:
@@ -257,6 +271,8 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
   <div class="tabnav">
     <button class="tabbtn active" id="navbtn_videos" onclick="showTab('videos')">Videos</button>
     <button class="tabbtn" id="navbtn_custom" onclick="showTab('custom')">Publicaciones</button>
+    <button class="tabbtn" id="navbtn_premium" onclick="showTab('premium')">Estudio Premium</button>
+    <button class="tabbtn" id="navbtn_candidates" onclick="showTab('candidates')">Candidatas</button>
   </div>
 </header>
 <div class="app" id="app_videos">
@@ -481,6 +497,104 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
 </section>
 
 </div><!-- #app_custom -->
+
+<div class="app hidden" id="app_premium">
+<aside>
+  <div class="pipe-block">
+    <div class="block-title"><h3>Importar paquete de ChatGPT</h3></div>
+    <div class="field">
+      <label>Pegar paquete de ChatGPT (JSON)</label>
+      <textarea id="premium_import_text" rows="8" placeholder='{"title": "...", "slides": [...]}'></textarea>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="importPremiumPackage()">Importar</button>
+    </div>
+    <div class="status" id="st_premium_import"></div>
+  </div>
+
+  <div class="pipe-block">
+    <div class="block-title"><h3>Borrador actual</h3></div>
+    <div class="field"><label>Título</label><input id="premium_title"></div>
+    <div class="field"><label>Caption (sin link)</label><textarea id="premium_caption" rows="3"></textarea></div>
+    <div class="field"><label>Sección</label><input id="premium_section"></div>
+    <div class="field">
+      <label>Plantilla</label>
+      <select id="premium_template">
+        <option value="lvr_cronica">lvr_cronica</option>
+        <option value="lvr_datos">lvr_datos</option>
+        <option value="lvr_visual">lvr_visual</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Highlight terms (separados por coma, 1-3)</label>
+      <input id="premium_highlights" placeholder="incendio, Chilecito">
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="premium_dest_ig" checked> Instagram</label>
+      <label><input type="checkbox" id="premium_dest_fb" checked> Facebook</label>
+    </div>
+    <div class="actions">
+      <button class="secondary" onclick="addPremiumSlide('image_text')">+ Slide</button>
+      <button class="primary" onclick="savePremiumDraft()">Guardar borrador</button>
+    </div>
+    <div class="status" id="st_premium_draft"></div>
+  </div>
+
+  <div class="pipe-block">
+    <div class="block-title"><h3>Slides</h3></div>
+    <div id="premium_slides_list"></div>
+  </div>
+
+  <div class="pipe-block">
+    <div class="block-title"><h3>Buscar en biblioteca</h3></div>
+    <div class="field"><input id="premium_library_query" placeholder="incendio, Chilecito..."></div>
+    <div class="actions"><button class="secondary" onclick="searchPremiumLibrary()">Buscar</button></div>
+    <div id="premium_library_results"></div>
+  </div>
+
+  <div class="pipe-block">
+    <div class="block-title"><h3>Publicar</h3></div>
+    <div class="actions">
+      <button class="primary" onclick="previewPremium()">Generar preview</button>
+      <button class="primary" onclick="publishPremium()">Publicar (IG + FB)</button>
+    </div>
+    <div class="status" id="st_premium_publish"></div>
+  </div>
+</aside>
+
+<main>
+  <div id="premium_preview_grid" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center"></div>
+</main>
+
+<section class="list">
+  <p class="list-title">Borradores premium</p>
+  <div id="premiumDraftList"></div>
+</section>
+</div><!-- #app_premium -->
+
+<div class="app hidden" id="app_candidates">
+<main style="width:100%">
+  <div class="pipe-block" style="max-width:900px;margin:0 auto">
+    <div class="block-title"><h3>Mover noticia por identidad</h3></div>
+    <div class="field">
+      <label>Identidad (meta_queue_key / dedup_key / canonical_url)</label>
+      <input id="override_identity" placeholder="link:abc123...">
+    </div>
+    <div class="field"><label>Motivo</label><input id="override_reason" placeholder="Nota nacional sin vínculo riojano comprobado"></div>
+    <div class="actions">
+      <button class="secondary" onclick="demoteAutomaticToCandidate()">Quitar de automático → candidatas</button>
+      <button class="secondary" onclick="addPublishedToCandidates()">Añadir a candidatas premium (ya publicada)</button>
+    </div>
+    <div class="status" id="st_override"></div>
+  </div>
+  <div class="pipe-block" style="max-width:900px;margin:0 auto">
+    <div class="block-title"><h3>Candidatas de Instagram</h3></div>
+    <div class="status" id="st_candidates"></div>
+    <div id="candidates_list"></div>
+  </div>
+</main>
+</div><!-- #app_candidates -->
+
 <script>
 // ── State ────────────────────────────────────────────────────
 let _currentVideoId = null;
@@ -795,13 +909,21 @@ let _customPollTimer = null;
 let _customDedupKey = '';
 
 function showTab(name) {
-  const isVideos = name === 'videos';
-  document.getElementById('app_videos').classList.toggle('hidden', !isVideos);
-  document.getElementById('app_custom').classList.toggle('hidden', isVideos);
-  document.getElementById('navbtn_videos').classList.toggle('active', isVideos);
-  document.getElementById('navbtn_custom').classList.toggle('active', !isVideos);
-  document.getElementById('tab_title').textContent = isVideos ? '· Videos Reel' : '· Publicaciones';
-  if (!isVideos) loadCustomLists();
+  const tabs = ['videos', 'custom', 'premium', 'candidates'];
+  const titles = {
+    videos: '· Videos Reel',
+    custom: '· Publicaciones',
+    premium: '· Estudio Premium',
+    candidates: '· Candidatas',
+  };
+  for (const tab of tabs) {
+    document.getElementById('app_' + tab).classList.toggle('hidden', tab !== name);
+    document.getElementById('navbtn_' + tab).classList.toggle('active', tab === name);
+  }
+  document.getElementById('tab_title').textContent = titles[name] || '';
+  if (name === 'custom') loadCustomLists();
+  if (name === 'premium') loadPremiumDraftList();
+  if (name === 'candidates') loadCandidates();
 }
 
 function _customSetThumb(url) {
@@ -1018,6 +1140,384 @@ setupDropzone('custom_dropzone', 'custom_file_input', 'image', (d, file) => {
   show('cblock_content');
   setStatus('st_custom_fetch', `✓ Imagen subida: ${file.name}`, 'ok');
 }, e => setStatus('st_custom_fetch', `✗ ${e.message}`, 'err'));
+
+// ══ Estudio Premium (Fase 3) ═══════════════════════════════════
+let _premiumPackage = null;
+let _selectedAssetId = '';
+let _selectedAssetLabel = '';
+
+function _fmtErrList(list) {
+  return (list && list.length) ? list.join(' · ') : '';
+}
+
+async function importPremiumPackage() {
+  const raw_text = val('premium_import_text');
+  try {
+    const r = await fetch('/api/premium/import', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({raw_text}),
+    });
+    const d = await r.json();
+    if (!d.package) {
+      setStatus('st_premium_import', `✗ ${_fmtErrList(d.errors)}`, 'err');
+      return;
+    }
+    _premiumPackage = d.package;
+    renderPremiumEditor();
+    setStatus(
+      'st_premium_import',
+      d.warnings && d.warnings.length ? `✓ Importado con avisos: ${_fmtErrList(d.warnings)}` : '✓ Importado',
+      'ok',
+    );
+    loadPremiumDraftList();
+  } catch (e) {
+    setStatus('st_premium_import', `✗ ${e.message}`, 'err');
+  }
+}
+
+function renderPremiumEditor() {
+  if (!_premiumPackage) return;
+  setVal('premium_title', _premiumPackage.title);
+  setVal('premium_caption', _premiumPackage.caption);
+  setVal('premium_section', _premiumPackage.section);
+  document.getElementById('premium_template').value = _premiumPackage.template || 'lvr_cronica';
+  setVal('premium_highlights', (_premiumPackage.highlight_terms || []).join(', '));
+  const dest = _premiumPackage.destination || [];
+  document.getElementById('premium_dest_ig').checked = dest.includes('instagram');
+  document.getElementById('premium_dest_fb').checked = dest.includes('facebook');
+  renderPremiumSlides();
+}
+
+function renderPremiumSlides() {
+  const list = document.getElementById('premium_slides_list');
+  list.textContent = '';
+  const slides = (_premiumPackage && _premiumPackage.slides) || [];
+  slides.forEach((slide, index) => {
+    const row = document.createElement('div');
+    row.className = 'item';
+
+    const header = document.createElement('b');
+    header.textContent = `#${index + 1} — ${slide.type}`;
+    row.appendChild(header);
+
+    const typeSelect = document.createElement('select');
+    ['cover', 'image_text', 'full_image', 'key_points', 'quote', 'number', 'closing'].forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      if (t === slide.type) opt.selected = true;
+      typeSelect.appendChild(opt);
+    });
+    typeSelect.addEventListener('change', () => { slide.type = typeSelect.value; renderPremiumSlides(); });
+    row.appendChild(typeSelect);
+
+    const textArea = document.createElement('textarea');
+    textArea.rows = 2;
+    textArea.value = slide.text || '';
+    textArea.placeholder = 'Texto del slide';
+    textArea.addEventListener('input', () => { slide.text = textArea.value; });
+    row.appendChild(textArea);
+
+    const assetLabel = document.createElement('small');
+    assetLabel.textContent = slide.asset_id ? `Imagen asignada: ${slide.asset_id}` : 'Sin imagen asignada';
+    row.appendChild(assetLabel);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'actions';
+    const mkBtn = (label, handler) => {
+      const b = document.createElement('button');
+      b.className = 'secondary';
+      b.textContent = label;
+      b.addEventListener('click', handler);
+      return b;
+    };
+    btnRow.appendChild(mkBtn('↑', () => { moveSlide(slide.id, -1); }));
+    btnRow.appendChild(mkBtn('↓', () => { moveSlide(slide.id, 1); }));
+    btnRow.appendChild(mkBtn('Duplicar', () => { duplicateSlideUI(slide.id); }));
+    btnRow.appendChild(mkBtn('Eliminar', () => { removeSlideUI(slide.id); }));
+    btnRow.appendChild(mkBtn('Asignar imagen seleccionada', () => {
+      if (!_selectedAssetId) { alert('Primero elegí una imagen en "Buscar en biblioteca"'); return; }
+      slide.asset_id = _selectedAssetId;
+      renderPremiumSlides();
+    }));
+    row.appendChild(btnRow);
+
+    list.appendChild(row);
+  });
+}
+
+function _ensurePackage() {
+  if (!_premiumPackage) {
+    _premiumPackage = {
+      schema_version: 1, workflow: 'manual_premium', status: 'draft',
+      destination: ['instagram', 'facebook'], publish_mode: 'direct_media',
+      template: 'lvr_cronica', title: '', caption: '', section: '',
+      highlight_terms: [], source_item_ids: [], slides: [], sources: [],
+    };
+  }
+}
+
+function addPremiumSlide(type) {
+  _ensurePackage();
+  _premiumPackage.slides.push({
+    id: 'tmp_' + Math.random().toString(16).slice(2),
+    type, text: '', title: '', items: [], highlights: [], asset_id: '', source_ids: [],
+  });
+  renderPremiumSlides();
+}
+
+function moveSlide(id, dir) {
+  const slides = _premiumPackage.slides;
+  const i = slides.findIndex(s => s.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= slides.length) return;
+  [slides[i], slides[j]] = [slides[j], slides[i]];
+  renderPremiumSlides();
+}
+
+function duplicateSlideUI(id) {
+  const slides = _premiumPackage.slides;
+  const i = slides.findIndex(s => s.id === id);
+  if (i < 0) return;
+  const clone = Object.assign({}, slides[i], {id: 'tmp_' + Math.random().toString(16).slice(2)});
+  slides.splice(i + 1, 0, clone);
+  renderPremiumSlides();
+}
+
+function removeSlideUI(id) {
+  if (_premiumPackage.slides.length <= 2) { alert('El mínimo es 2 slides'); return; }
+  _premiumPackage.slides = _premiumPackage.slides.filter(s => s.id !== id);
+  renderPremiumSlides();
+}
+
+async function savePremiumDraft() {
+  _ensurePackage();
+  _premiumPackage.title = val('premium_title');
+  _premiumPackage.caption = val('premium_caption');
+  _premiumPackage.section = val('premium_section');
+  _premiumPackage.template = document.getElementById('premium_template').value;
+  _premiumPackage.highlight_terms = val('premium_highlights').split(',').map(s => s.trim()).filter(Boolean);
+  _premiumPackage.destination = [
+    document.getElementById('premium_dest_ig').checked ? 'instagram' : null,
+    document.getElementById('premium_dest_fb').checked ? 'facebook' : null,
+  ].filter(Boolean);
+
+  try {
+    const r = await fetch('/api/premium/draft', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({package: _premiumPackage}),
+    });
+    const d = await r.json();
+    _premiumPackage = d.package;
+    setStatus(
+      'st_premium_draft',
+      d.errors && d.errors.length ? `✗ ${_fmtErrList(d.errors)}` : '✓ Borrador guardado',
+      d.errors && d.errors.length ? 'err' : 'ok',
+    );
+    loadPremiumDraftList();
+  } catch (e) {
+    setStatus('st_premium_draft', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function previewPremium() {
+  if (!_premiumPackage || !_premiumPackage.id) { alert('Guardá el borrador primero'); return; }
+  try {
+    const r = await fetch('/api/premium/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: _premiumPackage.id}),
+    });
+    const d = await r.json();
+    const grid = document.getElementById('premium_preview_grid');
+    grid.textContent = '';
+    (d.images || []).forEach(b64 => {
+      const img = document.createElement('img');
+      img.src = 'data:image/jpeg;base64,' + b64;
+      img.style.maxWidth = '260px';
+      img.style.borderRadius = '8px';
+      grid.appendChild(img);
+    });
+    setStatus('st_premium_publish', _fmtErrList(d.warnings) || '✓ Preview generado', d.warnings?.length ? 'warn' : 'ok');
+  } catch (e) {
+    setStatus('st_premium_publish', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function publishPremium() {
+  if (!_premiumPackage || !_premiumPackage.id) { alert('Guardá el borrador primero'); return; }
+  setStatus('st_premium_publish', 'Publicando…', '');
+  try {
+    const r = await fetch('/api/premium/publish', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: _premiumPackage.id}),
+    });
+    const d = await r.json();
+    if (!d.ok) { setStatus('st_premium_publish', `✗ ${d.error || 'error'}`, 'err'); return; }
+    pollPremiumJob(d.job_id);
+  } catch (e) {
+    setStatus('st_premium_publish', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function pollPremiumJob(jobId) {
+  try {
+    const r = await fetch(`/api/premium/publish-status/${jobId}`);
+    const job = await r.json();
+    if (!job.done) { setTimeout(() => pollPremiumJob(jobId), 1500); return; }
+    if (job.error) { setStatus('st_premium_publish', `✗ ${job.error}`, 'err'); return; }
+    const results = (job.result && job.result.channel_results) || {};
+    const parts = Object.entries(results).map(([ch, res]) => `${ch}: ${res.ok ? 'OK' : (res.error_type || 'fallo')}`);
+    setStatus('st_premium_publish', `Estado: ${job.status} — ${parts.join(' · ')}`, job.status === 'published' ? 'ok' : 'warn');
+    loadPremiumDraftList();
+  } catch (e) {
+    setStatus('st_premium_publish', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function searchPremiumLibrary() {
+  const query = val('premium_library_query');
+  try {
+    const r = await fetch(`/api/media-library?query=${encodeURIComponent(query)}`);
+    const d = await r.json();
+    const container = document.getElementById('premium_library_results');
+    container.textContent = '';
+    (d.rows || []).slice(0, 20).forEach(row => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const title = document.createElement('b');
+      title.textContent = row.titulo || '(sin título)';
+      item.appendChild(title);
+      const meta = document.createElement('small');
+      meta.textContent = `${row.resource_type} · ${row.estado || ''} · usado ${row.used_count || 0}x`;
+      item.appendChild(meta);
+      const btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.textContent = 'Usar esta imagen';
+      btn.addEventListener('click', () => {
+        _selectedAssetId = row.asset_id || row.resource_id || '';
+        _selectedAssetLabel = row.titulo || _selectedAssetId;
+        alert(`Imagen seleccionada: ${_selectedAssetLabel}. Ahora tocá "Asignar imagen seleccionada" en la slide deseada.`);
+      });
+      item.appendChild(btn);
+      container.appendChild(item);
+    });
+  } catch (e) {
+    // sin resultado visible: no rompe la UI
+  }
+}
+
+async function loadPremiumDraftList() {
+  try {
+    const r = await fetch('/api/premium/packages');
+    const d = await r.json();
+    const container = document.getElementById('premiumDraftList');
+    container.textContent = '';
+    (d.packages || []).forEach(pkg => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const title = document.createElement('b');
+      title.textContent = pkg.title || '(sin título)';
+      item.appendChild(title);
+      const meta = document.createElement('small');
+      meta.textContent = `${pkg.status} · ${(pkg.slides || []).length} slides`;
+      item.appendChild(meta);
+      const btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.textContent = 'Cargar';
+      btn.addEventListener('click', () => { _premiumPackage = pkg; renderPremiumEditor(); });
+      item.appendChild(btn);
+      container.appendChild(item);
+    });
+  } catch (e) {
+    // lista vacía si falla
+  }
+}
+
+// ══ Candidatas ═══════════════════════════════════════════════
+async function loadCandidates() {
+  try {
+    const r = await fetch('/api/editorial/candidates?status=candidate');
+    const d = await r.json();
+    const container = document.getElementById('candidates_list');
+    container.textContent = '';
+    (d.candidates || []).forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const title = document.createElement('b');
+      title.textContent = c.titulo || '(sin título)';
+      item.appendChild(title);
+      const meta = document.createElement('small');
+      meta.textContent = `${c.seccion || ''} · ${c.topic_key || ''} · ${c.route_reason || ''}`;
+      item.appendChild(meta);
+      const btnRow = document.createElement('div');
+      btnRow.className = 'actions';
+      const promote = document.createElement('button');
+      promote.className = 'primary';
+      promote.textContent = 'Promover a automática';
+      promote.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'automatic'));
+      const discard = document.createElement('button');
+      discard.className = 'secondary';
+      discard.textContent = 'Descartar';
+      discard.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'discarded'));
+      btnRow.appendChild(promote);
+      btnRow.appendChild(discard);
+      item.appendChild(btnRow);
+      container.appendChild(item);
+    });
+    setStatus('st_candidates', `${(d.candidates || []).length} candidatas`, '');
+  } catch (e) {
+    setStatus('st_candidates', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function demoteAutomaticToCandidate() {
+  const identity = val('override_identity');
+  const reason = val('override_reason') || 'manual_ui_override';
+  if (!identity) { alert('Ingresá la identidad de la noticia'); return; }
+  try {
+    const r = await fetch('/api/editorial/candidates/demote', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({identity, reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) { setStatus('st_override', `✗ ${d.error || 'error'}`, 'err'); return; }
+    setStatus('st_override', d.changed ? '✓ Movida a candidatas' : 'Ya estaba en candidatas (sin cambios)', 'ok');
+    loadCandidates();
+  } catch (e) {
+    setStatus('st_override', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function addPublishedToCandidates() {
+  const identity = val('override_identity');
+  const reason = val('override_reason') || 'reutilizar en carrusel premium';
+  if (!identity) { alert('Ingresá la identidad de la noticia'); return; }
+  try {
+    const r = await fetch('/api/editorial/candidates/add-published', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({identity, reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) { setStatus('st_override', `✗ ${d.error || 'error'}`, 'err'); return; }
+    setStatus('st_override', d.changed ? '✓ Agregada a candidatas premium (publicación histórica intacta)' : 'Ya estaba agregada', 'ok');
+    loadCandidates();
+  } catch (e) {
+    setStatus('st_override', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function setCandidateStatus(candidateId, status) {
+  try {
+    const r = await fetch('/api/editorial/candidates/status', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({candidate_id: candidateId, status}),
+    });
+    const d = await r.json();
+    if (!d.ok) { setStatus('st_candidates', `✗ ${d.error || 'error'}`, 'err'); return; }
+    loadCandidates();
+  } catch (e) {
+    setStatus('st_candidates', `✗ ${e.message}`, 'err');
+  }
+}
 </script>
 </body>
 </html>"""
@@ -1227,7 +1727,9 @@ class VideoReelHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json(403, {"error": str(exc)})
             return
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
 
         if path == "/":
             self._send(200, HTML.encode("utf-8"), "text/html; charset=utf-8")
@@ -1235,6 +1737,65 @@ class VideoReelHandler(BaseHTTPRequestHandler):
 
         if path == "/api/videos":
             self._json(200, load_video_state())
+            return
+
+        # ── Estudio Premium (Fase 3) ────────────────────────────
+        if path == "/api/premium/packages":
+            from utils.premium_post_queue import list_packages
+
+            status = (query.get("status") or [None])[0]
+            self._json(200, {"packages": list_packages(status=status)})
+            return
+
+        if path == "/api/premium/draft":
+            from utils.premium_post_queue import get_package
+
+            package_id = _safe_object_id((query.get("id") or [""])[0])
+            if not package_id:
+                self._json(400, {"error": "id inválido"})
+                return
+            package = get_package(package_id)
+            if package is None:
+                self._json(404, {"error": "paquete no encontrado"})
+                return
+            self._json(200, {"package": package})
+            return
+
+        if path.startswith("/api/premium/publish-status/"):
+            job_id = _safe_object_id(path[len("/api/premium/publish-status/"):])
+            if not job_id:
+                self._json(400, {"error": "job_id inválido"})
+                return
+            job = _premium_jobs.get(job_id)
+            if not job:
+                self._json(404, {"error": "job not found"})
+                return
+            self._json(200, job)
+            return
+
+        if path == "/api/editorial/candidates":
+            from utils.editorial_router import list_candidates
+
+            status = (query.get("status") or [None])[0]
+            self._json(200, {"candidates": list_candidates(channel="instagram", status=status)})
+            return
+
+        if path == "/api/media-library":
+            from utils.media_library import search_library
+
+            all_time = (query.get("all_time") or ["0"])[0] in {"1", "true"}
+            rows = search_library(
+                query=(query.get("query") or [None])[0],
+                seccion=(query.get("seccion") or [None])[0],
+                fuente=(query.get("fuente") or [None])[0],
+                topic_key=(query.get("topic_key") or [None])[0],
+                only_candidatas=(query.get("candidatas") or ["0"])[0] in {"1", "true"},
+                only_publicadas=(query.get("publicadas") or ["0"])[0] in {"1", "true"},
+                only_premium=(query.get("premium") or ["0"])[0] in {"1", "true"},
+                only_automaticas=(query.get("automaticas") or ["0"])[0] in {"1", "true"},
+                window_days=None if all_time else 10,
+            )
+            self._json(200, {"rows": rows})
             return
 
         # Servir video renderizado: /api/preview/{video_id}.mp4
@@ -1611,6 +2172,135 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 )
                 t.start()
                 self._json(200, {"ok": True, "job_id": job_id})
+                return
+
+            # ── Estudio Premium (Fase 3) ────────────────────────
+            if path == "/api/premium/import":
+                from utils.premium_importer import import_chatgpt_package
+                from utils.premium_post_queue import save_package
+
+                raw_text = str(payload.get("raw_text") or "")
+                package, errors, warnings = import_chatgpt_package(raw_text)
+                if package is not None:
+                    package = save_package(package)
+                self._json(200, {"package": package, "errors": errors, "warnings": warnings})
+                return
+
+            if path == "/api/premium/draft":
+                from utils.premium_contract import validate_package
+                from utils.premium_post_queue import save_package
+
+                package = payload.get("package")
+                if not isinstance(package, dict):
+                    self._json(400, {"error": "package requerido"})
+                    return
+                saved = save_package(package)
+                errors, warnings = validate_package(saved)
+                self._json(200, {"package": saved, "errors": errors, "warnings": warnings})
+                return
+
+            if path == "/api/premium/preview":
+                import base64
+
+                from utils.premium_post_queue import get_package
+                from utils.premium_renderer import render_package_with_engine
+                from utils.remotion_renderer import RemotionRenderError
+
+                package_id = _safe_object_id(str(payload.get("id") or ""))
+                if not package_id:
+                    self._json(400, {"error": "id inválido"})
+                    return
+                package = get_package(package_id)
+                if package is None:
+                    self._json(404, {"error": "paquete no encontrado"})
+                    return
+                try:
+                    images, warnings, engine = render_package_with_engine(package)
+                except RemotionRenderError as exc:
+                    self._json(409, {"error": str(exc)})
+                    return
+                self._json(
+                    200,
+                    {
+                        "ok": True,
+                        "images": [base64.b64encode(image).decode("ascii") for image in images],
+                        "warnings": warnings,
+                        "engine": engine,
+                    },
+                )
+                return
+
+            if path == "/api/premium/publish":
+                from utils.premium_post_queue import get_package
+
+                package_id = _safe_object_id(str(payload.get("id") or ""))
+                if not package_id or get_package(package_id) is None:
+                    self._json(404, {"error": "paquete no encontrado"})
+                    return
+                job_id = uuid.uuid4().hex
+                _premium_jobs[job_id] = {"done": False, "status": "processing", "result": None, "error": None}
+                t = threading.Thread(
+                    target=_premium_publish_background,
+                    args=(job_id, package_id),
+                    daemon=True,
+                )
+                t.start()
+                self._json(200, {"ok": True, "job_id": job_id})
+                return
+
+            if path == "/api/premium/retry":
+                from utils.premium_publisher import retry_channel
+
+                package_id = _safe_object_id(str(payload.get("id") or ""))
+                channel = str(payload.get("channel") or "")
+                if not package_id:
+                    self._json(400, {"error": "id inválido"})
+                    return
+                try:
+                    result = retry_channel(package_id, channel)
+                except (KeyError, ValueError) as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                self._json(200, result)
+                return
+
+            if path == "/api/editorial/candidates/status":
+                from utils.editorial_router import update_candidate_status
+
+                candidate_id = str(payload.get("candidate_id") or "")
+                new_status = str(payload.get("status") or "")
+                try:
+                    item = update_candidate_status(candidate_id, new_status, operator="manual_ui")
+                except (KeyError, ValueError) as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "item": item})
+                return
+
+            if path == "/api/editorial/candidates/demote":
+                from utils.editorial_router import demote_automatic_to_candidate
+
+                identity = str(payload.get("identity") or "")
+                reason = str(payload.get("reason") or "manual_ui_override")
+                try:
+                    result = demote_automatic_to_candidate(identity, reason=reason, operator="manual_ui")
+                except (KeyError, ValueError) as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                self._json(200, {"ok": True, **result})
+                return
+
+            if path == "/api/editorial/candidates/add-published":
+                from utils.editorial_router import add_published_to_candidates
+
+                identity = str(payload.get("identity") or "")
+                reason = str(payload.get("reason") or "reutilizar en carrusel premium")
+                try:
+                    result = add_published_to_candidates(identity, reason=reason, operator="manual_ui")
+                except (KeyError, ValueError) as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                self._json(200, {"ok": True, **result})
                 return
 
             self._json(404, {"error": "not_found"})

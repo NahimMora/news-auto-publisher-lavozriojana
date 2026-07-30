@@ -197,6 +197,27 @@ El heartbeat registra resultados, colas, commit, release declarado, modo,
 fingerprint sin secretos, operador y referencia de backup. Lea
 [el runbook](docs/RUNBOOK.md) antes de cambiar de modo o restaurar.
 
+## Capa editorial premium (rama `feature/premium-editorial-layer`)
+
+Flujo manual, separado del pipeline automático, para preparar publicaciones
+premium (carrusel Instagram + foto(s) directas en Facebook, sin artículo web ni
+link) a partir de contenido preparado con ChatGPT. Ver
+[docs/RUNBOOK.md](docs/RUNBOOK.md) para el detalle operativo.
+
+```powershell
+python cli.py editorial-route --report-only --json   # candidatas propuestas, sin tocar estado
+python cli.py media-library search --query incendio --json
+python cli.py media-library cleanup                  # dry-run por defecto
+python cli.py videos                                  # UI manual: Videos · Publicaciones · Estudio Premium · Candidatas
+```
+
+Apagado por defecto: `EDITORIAL_ROUTER_ENABLED=false` conserva la selección
+automática de Instagram exactamente como antes. `PREMIUM_STATIC_RENDER_ENGINE`
+(default `remotion`) sólo afecta al Estudio Premium; el flujo automático y el OG
+conservan Pillow por defecto (`AUTOMATIC_STATIC_RENDER_ENGINE`/
+`OG_STATIC_RENDER_ENGINE`, ambos `pillow`) — ver `remotion/README.md` y
+`docs/RUNBOOK.md` para la política completa por workflow.
+
 ## Release
 
 La propuesta es `v1.0.0-reliability-baseline`. No se debe crear ni publicar el tag
