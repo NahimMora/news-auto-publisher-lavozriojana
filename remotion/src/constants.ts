@@ -1,11 +1,14 @@
 // Paleta y layout — espeja utils/video_renderer.py (Python) para mantener
 // consistencia visual entre el fallback estático y las piezas Remotion.
 
+// Paleta oficial: rojo, bordó, negro, blanco y azul. Sin dorado (decisión de
+// producto, ver docs/DECISIONS.md 2026-07-30 "Paleta oficial sin dorado").
 export const ROJO = "#B30000";
+export const BORDO = "#6E0F1A";
+export const AZUL = "#2F6FB0";
 export const NEGRO = "#0B0B0B";
 export const FOOTER_BG = "#111111";
 export const WHITE = "#FFFFFF";
-export const GOLD = "#F6C343";
 
 // Degradados oscuros (reemplazan los bloques de color plano): más cine, más profundidad.
 export const GRADIENT_TOP = "linear-gradient(135deg, #A30000 0%, #3D0000 100%)";
