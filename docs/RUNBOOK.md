@@ -437,4 +437,128 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 ```
 
 El script rechaza un listener externo y un servicio desconocido ocupando el puerto.
-La URL autorizada es únicamente `http://127.0.0.1:8765/`.
+La URL autorizada es únicamente `http://127.0.0.1:8765/`. Además de las pestañas
+Videos y Publicaciones, incluye Estudio Premium y Candidatas (ver más abajo).
+
+## Router editorial (candidatas de Instagram)
+
+Modo report-only, no modifica nada:
+
+```powershell
+python cli.py editorial-route --report-only --json
+python cli.py editorial-route --report-only --limit 20
+```
+
+Muestra, para el historial reciente de `noticias_meta.json`, la ruta propuesta por
+canal, el `topic_key`, el motivo y la excepción aplicada (breaking/material_update)
+sin tocar `data/topic_publication_state.json` ni `data/editorial_candidates.json`.
+
+El router siempre calcula y persiste metadata de ruteo durante la reescritura
+(aditivo, no cambia colas). Sólo la selección automática de Instagram se restringe
+de verdad, y sólo si:
+
+```text
+EDITORIAL_ROUTER_ENABLED=true
+```
+
+Con el flag apagado (default), `meta/run_ig.py` ignora `route_by_channel` y se
+comporta exactamente como antes de esta rama. Antes de activar el flag en
+producción, correr `editorial-route --report-only` sobre el historial real y
+revisar cuántas noticias quedarían como candidatas.
+
+Candidatas: se gestionan desde la pestaña "Candidatas" de la UI manual, o
+directamente:
+
+```powershell
+python -c "from utils.editorial_router import list_candidates; import json; print(json.dumps(list_candidates(channel='instagram', status='candidate'), ensure_ascii=False, indent=2))"
+```
+
+## Biblioteca multimedia
+
+```powershell
+python cli.py media-library search --query incendio --json
+python cli.py media-library search --candidatas --publicadas --json
+python cli.py media-library cleanup                 # dry-run (default)
+python cli.py media-library cleanup --apply          # purga real de assets vencidos
+```
+
+El cleanup nunca borra metadata histórica, sólo archivos físicos vencidos y sin
+referencias de borradores activos (`files_purged=true` en `data/media_library.json`).
+No ejecutar `cleanup --apply` durante una publicación premium activa.
+
+## Estudio Premium (publicaciones sociales sin artículo web)
+
+Pestaña "Estudio Premium" en la UI manual (`http://127.0.0.1:8765/`): pegar el
+paquete de ChatGPT, editar slides, generar preview y publicar. Nunca crea artículo
+web ni depende del CMS; Facebook nunca incluye link.
+
+Antes de un canary real:
+
+```powershell
+$env:PREMIUM_PUBLISH_DRY_RUN="true"
+python cli.py videos
+```
+
+Con el dry-run activo, `/api/premium/publish` completa sin llamar a ninguna API real
+(`channel_results` queda con IDs `dry-run-<canal>`). Nunca activar publicaciones
+premium reales sin autorización explícita del operador, igual que el resto del
+pipeline.
+
+Publicación parcial (`degraded`): revisar `channel_results` del paquete en
+`data/premium_packages.json`; el canal exitoso conserva su `external_id` y nunca se
+reintenta. Reintentar sólo el canal fallido:
+
+```powershell
+python -c "from utils.premium_publisher import retry_channel; import json; print(json.dumps(retry_channel('<package_id>', 'facebook'), ensure_ascii=False, indent=2))"
+```
+
+Un resultado con `requires_reconciliation=true` (outcome ambiguo, típicamente
+`network_error`) no se reintenta automáticamente; conciliar en la plataforma antes de
+usar `force=True` en `retry_channel`.
+
+## Sistema visual Remotion (Fase 4)
+
+Política **por workflow** (corrección 2026-07-30, ver `docs/DECISIONS.md`): cada
+flujo tiene su propia variable y su propio default seguro. Sin ninguna variable
+definida:
+
+| Workflow | Variable | Default |
+|---|---|---:|
+| Automático (Instagram, alto volumen) | `AUTOMATIC_STATIC_RENDER_ENGINE` | `pillow` |
+| Estudio Premium (manual, bajo volumen) | `PREMIUM_STATIC_RENDER_ENGINE` | `remotion` |
+| OG Facebook/web | `OG_STATIC_RENDER_ENGINE` | `pillow` |
+
+Las tres admiten `auto|remotion|pillow`. Precedencia: variable específica del
+workflow (si está definida explícitamente) > `STATIC_RENDER_ENGINE` legacy (sólo si
+está definida explícitamente) > default seguro del workflow. **No activar
+`STATIC_RENDER_ENGINE` sin necesidad**: cambia el motor de cualquier workflow que no
+tenga su propia variable definida, incluido el automático.
+
+Sólo el Estudio Premium tiene wiring real a Remotion en esta entrega
+(`utils/premium_renderer.py::render_package_with_engine`, `workflow="premium"` por
+defecto). El flujo automático de Instagram y el OG de Facebook/web **no llaman a
+Remotion todavía** — sus variables existen para cuando se decida integrarlos, con el
+default correcto ya fijado.
+
+```powershell
+# Ejemplos
+$env:PREMIUM_STATIC_RENDER_ENGINE="pillow"    # fuerza Pillow sólo en premium
+$env:AUTOMATIC_STATIC_RENDER_ENGINE="remotion" # habilita Remotion en automático para pruebas controladas (no hay wiring real todavía)
+
+# Validación manual del proyecto Remotion (no está en CI: CI es Python-only)
+cd remotion
+npm i
+npx tsc --noEmit
+npx eslint src
+npx remotion bundle
+python ..\scripts\benchmark_static_render.py
+```
+
+Un fallback de `auto` a Pillow, o un modo `remotion` explícito sin Remotion
+disponible, queda registrado en `logs/remotion_renderer.log`
+(`workflow=... engine_requested=... engine_used=... fallback_reason=...`) y en
+`logs/premium_renderer.log`, además del resultado estructurado
+(`engine_used`/`render_engine`). Los 4 tests de render real en
+`tests/test_remotion_visual.py::RemotionLiveRenderTests` se saltean automáticamente
+si `remotion/node_modules` no existe (por ejemplo, en CI, que no instala Node) — no
+es un fallo, es el comportamiento esperado sin Node disponible.

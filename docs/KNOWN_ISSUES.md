@@ -706,3 +706,61 @@
 - Estado actual: **mitigado y recuperado automáticamente en el ciclo siguiente**.
 - Riesgo residual: una propagación prolongada retrasa Facebook; se mantiene visible y
   durable, sin publicación parcial ni outcome ambiguo.
+
+## 68. El topic_key del router editorial puede no agrupar el mismo hecho
+
+- ID: Fase 1 router editorial premium; severidad media, aceptada.
+- Descripción: `utils/editorial_router.py::compute_topic_key` es un fingerprint
+  determinístico (entidades capitalizadas que no son inicio de oración + localidad +
+  categoría + fecha), sin embeddings ni clustering externo por decisión explícita del
+  producto. Dos títulos sobre el mismo acontecimiento que no comparten ninguna entidad
+  capitalizada (por ejemplo, uno omite el nombre propio que el otro sí incluye) pueden
+  recibir `topic_key` distintos y no contar como el mismo tema para el cap de 12h/2
+  publicaciones de Instagram.
+- Causa raíz: restricción explícita de producto (sin IA adicional ni costo de
+  embeddings para esta clasificación).
+- Mitigación actual: ninguna automática; es una limitación aceptada de un enfoque
+  determinístico y económico. El motivo de cada decisión queda trazado en
+  `data/editorial_routing_events.json` para auditoría manual.
+- Estado actual: **aceptado por diseño**, documentado en `docs/DECISIONS.md`
+  (2026-07-30).
+- Riesgo residual: en el peor caso, más de dos publicaciones automáticas de Instagram
+  sobre el mismo hecho si sus títulos no comparten entidades — el gate de vínculo
+  riojano y el resto de límites operativos existentes siguen vigentes de todos modos.
+
+## 69. Cada render estático de Remotion re-bundlea desde cero (medido)
+
+- ID: Fase 4 sistema visual Remotion; severidad media, aceptada para el volumen actual.
+- Descripción: `utils/remotion_renderer.py::render_still` invoca
+  `npx remotion still` una vez por slide; cada invocación re-bundlea el proyecto
+  (no hay bundle cacheado ni servidor persistente). El benchmark medido
+  (`scripts/benchmark_static_render.py`, ver `docs/METRICS.md`) dio ~19s promedio
+  por paquete premium con Remotion vs ~0.03s con el fallback Pillow.
+- Causa raíz: decisión de implementación simple para la primera entrega (reutiliza
+  el mismo patrón de subprocess que ya usaba `utils/video_renderer.py` para Reels).
+- Mitigación actual: ninguna — es aceptable para publicación premium manual (2-10
+  slides, pocas veces al día), no para reemplazar Pillow en el flujo automático de
+  alto volumen. `STATIC_RENDER_ENGINE=auto` (default) cae a Pillow si Remotion no
+  está disponible, pero no evalúa el costo de tiempo — sólo la disponibilidad.
+- Estado actual: **documentado, no resuelto**.
+- Riesgo residual: si se decide usar Remotion para el flujo automático de alto
+  volumen, hace falta un servidor de render persistente (`@remotion/renderer`
+  embebido o Remotion Studio en modo server) antes de ese cambio.
+
+## 70. El render Remotion de slides premium no detecta overflow de título
+
+- ID: Fase 4 sistema visual Remotion; severidad baja.
+- Descripción: el renderer Pillow (`utils/premium_renderer.py::render_slide`)
+  mide el alto real del texto envuelto y emite `titulo_desborda` cuando excede el
+  espacio disponible; el path Remotion (`PremiumSlide.tsx`) no realiza esa medición
+  y no genera la advertencia equivalente. Confirmado en el benchmark: el único
+  fixture con título largo (~190 caracteres) produjo `titulo_desborda` sólo en la
+  fila Pillow.
+- Causa raíz: medir overflow de texto renderizado por React requiere una técnica
+  distinta (por ejemplo, `useLayoutEffect` + `getBoundingClientRect` dentro de la
+  composición, o post-procesar el PNG) que no se implementó en esta entrega.
+- Mitigación actual: ninguna; el preview visual sigue mostrando el desborde aunque
+  no se reporte como advertencia estructurada cuando se usa Remotion.
+- Estado actual: **documentado, no resuelto**.
+- Riesgo residual: un operador podría publicar un slide con texto cortado si no lo
+  nota en el preview visual y el motor efectivo fue Remotion.

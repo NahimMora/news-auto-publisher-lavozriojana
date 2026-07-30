@@ -101,6 +101,33 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
 - Mantener los estados Pending/Processing/Completed/Failed/Expired/Dead-letter y el
   journal `queue_events.json`.
 
+## Capa editorial premium (feature/premium-editorial-layer)
+
+- Reels, publicaciones premium y el lote automático son flujos internos separados:
+  colas, dedup y estado propios (`data/premium_*.json`, `data/editorial_*.json`,
+  `data/media_library.json`). No hacer que uno consuma cupos o contadores del otro.
+- Publicaciones premium son social-only: nunca crean artículo web, nunca llaman al
+  publisher del CMS, nunca agregan link en Facebook. El modo `direct_media` de
+  Facebook se activa sólo con `{"publish_mode": "direct_media", "workflow":
+  "manual_premium"}` explícitos — nunca inferirlo por ausencia de URL.
+- El backoff de rate limit de Meta se comparte con el flujo automático (misma cuenta
+  real); el dedup no.
+- Cambios de comportamiento que puedan afectar producción van detrás de un flag
+  apagado por defecto (`EDITORIAL_ROUTER_ENABLED`, `PREMIUM_PUBLISH_DRY_RUN`) o de
+  una variable con default seguro por workflow (`AUTOMATIC_STATIC_RENDER_ENGINE`,
+  `PREMIUM_STATIC_RENDER_ENGINE`, `OG_STATIC_RENDER_ENGINE`), siguiendo el mismo
+  patrón que los kill switches existentes: el comportamiento actual no cambia hasta
+  activación explícita. `STATIC_RENDER_ENGINE` es un override legacy global — nunca
+  usarlo para cambiar el motor de un workflow específico; usar su variable propia.
+- `utils/premium_renderer.py::render_package_with_engine` es el único renderer real
+  para preview y publicación premium — nunca usar un renderer distinto para cada uno.
+  Llama a `utils/remotion_renderer.py::resolve_engine(workflow)`, nunca a
+  `STATIC_RENDER_ENGINE` directamente.
+- El proyecto `remotion/` es Node/npm, no Python: `npx tsc --noEmit` y
+  `npx eslint src` antes de tocar `.tsx`. CI (`reliability-windows`) es Python-only y
+  no instala Node; los tests de render Remotion real se saltean solos si
+  `remotion/node_modules` no existe.
+
 ## Definition of Done
 
 - Suite completa y E2E local pasan.

@@ -31,6 +31,27 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `pipeline/node_webapp/*` | validación editorial, medios R2, payload, contrato CMS y URL web |
 | `utils/social_caption.py` | caption único compartido por Instagram y Facebook |
 | `utils/social_queue.py` | estados independientes de Facebook/Instagram |
+| `utils/editorial_router.py` | router determinístico automatic/candidate/suppressed por canal; gate y cap de tema para Instagram (opt-in vía `EDITORIAL_ROUTER_ENABLED`) |
+| `utils/media_library.py` | biblioteca multimedia de diez días: ingesta de imágenes (hash, master, thumb), búsqueda unificada local (candidatas + publicadas + premium + assets) y cleanup seguro |
+| `utils/premium_contract.py` | contrato versionado de publicaciones premium: validación, edición de slides (mover/duplicar/eliminar/cambiar tipo), validación de highlight_terms |
+| `utils/premium_importer.py` | importa el paquete pegado de ChatGPT; nunca pierde el contenido pegado ni asigna imágenes en firme (sólo sugerencias) |
+| `utils/premium_post_queue.py` | store único de paquetes premium (`data/premium_packages.json`); borradores recuperables aunque tengan errores de validación |
+| `utils/premium_renderer.py` | renderer Pillow interino (mismo renderer para preview y publicación); la Fase 4 reemplaza el cuerpo por Remotion sin cambiar la firma pública |
+| `utils/premium_publisher.py` | orquestador social-only: nunca crea artículo web ni llama al CMS; degraded/retry por canal; ambiguos no se reintentan solos |
+| `meta/ig_client.py::post_premium_carousel_to_instagram` | carrusel premium (2-10 slides), dedup y estado propios (`data/premium_ig_posted.json`), mismo backoff de cuenta que el flujo automático |
+| `meta/fb_client.py::post_premium_direct_media_to_facebook` | foto única o álbum multi-foto sin link, activado sólo con `publish_mode=direct_media` + `workflow=manual_premium` explícitos; backoff compartido con `fb_posted.json`, dedup propio (`data/premium_fb_posted.json`) |
+| `utils/remotion_renderer.py` | wrapper de `npx remotion still`; detección de disponibilidad cacheada, copia de assets a `remotion/public/tmp/` y limpieza |
+| `remotion/src/{PremiumSlide,AutomaticInstagramCard,FacebookOgCard}.tsx` | composiciones still de Remotion (Fase 4); paleta compartida sin dorado (`constants.ts`), highlight terms compartidos (`shared/HighlightedTitle.tsx`) |
+
+`utils/premium_renderer.py::render_package_with_engine` es el punto de entrada real
+para preview/publicación del Estudio Premium: resuelve el motor vía
+`utils/remotion_renderer.py::resolve_engine("premium")`, intenta Remotion primero
+(default de ese workflow), y cae a Pillow (`render_package_bytes`, sin cambios) si
+Remotion no está disponible en modo `auto`. La política de motor es **por
+workflow** (`AUTOMATIC_STATIC_RENDER_ENGINE`, `PREMIUM_STATIC_RENDER_ENGINE`,
+`OG_STATIC_RENDER_ENGINE`, cada una con su propio default seguro) — no una única
+variable global; `STATIC_RENDER_ENGINE` sigue existiendo sólo como override legacy
+explícito. Ver `docs/DECISIONS.md`.
 | `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff |
 | `utils/file_manager.py` | locks, lectura estricta, atomicidad, backups, cuarentena y restore |
 | `utils/stage_result.py` | contrato `success/no_work/degraded/failed/blocked` |

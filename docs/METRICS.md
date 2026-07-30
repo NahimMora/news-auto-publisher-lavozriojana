@@ -126,6 +126,81 @@ La deduplicación usa `ALERT_DEDUP_SECONDS`. Una condición resuelta puede emiti
 recuperación. `alert_outbox.json` conserva `delivery_status`, intentos, error y
 `next_retry_at`; un webhook fallido no convierte el ciclo del pipeline en fallo.
 
+## Auditoría de conteo de tests (rama `feature/premium-editorial-layer`, 2026-07-30)
+
+Una síntesis previa de esta rama reportó "73 tests nuevos" con un desglose
+(router 17, biblioteca 13, premium 28, Remotion 21) que en realidad sumaba 79, no
+73 — una contradicción interna nunca verificada contra una corrida real. Esta
+sección reemplaza esa cifra con el conteo real, medido con los comandos exactos
+indicados, después de la ronda de correcciones (transición automatic↔candidate
+completa, política de renderers por workflow).
+
+| Medición | Comando | Resultado |
+|---|---|---:|
+| Baseline (`main`, sin los 4 archivos de test nuevos) | `python -m unittest discover tests` (con `test_editorial_router.py`, `test_media_library.py`, `test_premium_studio.py`, `test_remotion_visual.py` movidos fuera de `tests/` temporalmente) | **236** |
+| Total actual (con todo restaurado) | `python -m unittest discover tests` | **336** |
+| Neto agregado | 336 − 236 | **100** |
+
+Desglose por archivo (`python -m unittest tests.<módulo>` individual):
+
+| Archivo | Tests | Comando |
+|---|---:|---|
+| `tests/test_editorial_router.py` | 29 | `python -m unittest tests.test_editorial_router` |
+| `tests/test_media_library.py` | 13 | `python -m unittest tests.test_media_library` |
+| `tests/test_premium_studio.py` | 14 | `python -m unittest tests.test_premium_studio` |
+| `tests/test_premium_meta_publishing.py` | 14 | `python -m unittest tests.test_premium_meta_publishing` |
+| `tests/test_remotion_visual.py` | 30 | `python -m unittest tests.test_remotion_visual` |
+| **Total nuevo** | **100** | 29+13+14+14+30 |
+
+Notas de exactitud:
+
+- `pytest` no está instalado en el entorno (`venv/Scripts/python.exe -m pytest
+  --version` → `No module named pytest`); el conteo autoritativo usa
+  `unittest`, la herramienta que ya documenta `AGENTS.md` para este repositorio.
+- Ningún test nuevo usa `@parameterized` ni un patrón que infle el conteo de
+  `unittest`; hay un uso de `self.subTest(...)` en
+  `test_remotion_visual.py::NoGoldInTokensTests.test_new_compositions_do_not_reference_gold`,
+  que cuenta como **un** test en `unittest` (subTest no crea entradas separadas en
+  "Ran N tests").
+- `tests/test_premium_studio.py` originalmente tenía 28 tests; se separó en dos
+  archivos (`test_premium_studio.py` con 14 — contrato/importador/store de
+  borradores — y `test_premium_meta_publishing.py` con 14 — clientes Meta +
+  orquestador) para que cada commit lógico incluya únicamente sus propias
+  pruebas, sin perder ni duplicar ningún caso (28 = 14 + 14, verificado corriendo
+  ambos archivos juntos).
+- El total de 336 fue confirmado corriendo la suite completa dos veces
+  consecutivas con resultado idéntico.
+
+## Benchmark Remotion vs Pillow (Fase 4, medido 2026-07-30)
+
+`scripts/benchmark_static_render.py` renderiza 10 paquetes premium de
+fixture (títulos cortos/largos, con/sin imagen, título vacío, las tres
+plantillas) una vez con cada motor. Resultado real de esta corrida en el
+host de desarrollo (Node v22.20.0, Windows):
+
+| Métrica | Pillow | Remotion |
+|---|---:|---:|
+| Éxito | 10/10 | 10/10 |
+| Tiempo promedio por paquete | 0.034s | 19.119s |
+| Tiempo total (10 paquetes) | 0.344s | 191.188s |
+| Tamaño promedio por paquete (bytes) | 109.499 | 125.983 |
+| Dimensiones | 1080×1350 en todos los casos | 1080×1350 en todos los casos |
+
+Causa del tiempo de Remotion: cada `npx remotion still` (uno por slide)
+re-bundlea el proyecto desde cero — no hay bundle cacheado ni servidor
+persistente en esta implementación. Ver `remotion/README.md` para el
+detalle y la mitigación propuesta (servidor de render persistente antes de
+usar Remotion en un flujo de alto volumen).
+
+Diferencia funcional detectada: el renderer Pillow detecta y reporta
+`titulo_desborda` (overflow) para el único fixture con título largo (~190
+caracteres); el path Remotion no genera esa advertencia todavía (no mide la
+altura real del texto renderizado) — ver `docs/KNOWN_ISSUES.md`.
+
+No se inventaron valores: esta tabla refleja exactamente la salida de la
+corrida documentada; para reproducir, ejecutar
+`python scripts/benchmark_static_render.py`.
+
 ## Métricas de despliegue
 
 El heartbeat versión 2 agrega:
