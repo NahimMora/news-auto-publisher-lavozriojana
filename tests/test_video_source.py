@@ -151,6 +151,22 @@ class GetSourceVideoTests(unittest.TestCase):
         self.assertEqual(result.error_type, "unsupported_url")
 
 
+class RenderIdContractTests(unittest.TestCase):
+    """Regresión: el video_id generado para un render debe pasar la validación de
+    video_reel_manager._safe_object_id (16-64 chars hex), o /api/preview y
+    /api/publish-reel lo rechazan con 400 y el navegador ve un video roto."""
+
+    def test_new_render_id_passes_safe_object_id(self):
+        import video_reel_manager
+
+        for _ in range(20):
+            render_id = video_renderer.new_render_id()
+            self.assertIsNotNone(
+                video_reel_manager._safe_object_id(render_id),
+                f"'{render_id}' (len={len(render_id)}) no pasa _safe_object_id",
+            )
+
+
 class DetectPlatformTests(unittest.TestCase):
     def test_tiktok_is_recognized(self):
         self.assertEqual(

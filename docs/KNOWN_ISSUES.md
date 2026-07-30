@@ -424,6 +424,36 @@
   requiriendo actualizarse (`pip install -U yt-dlp`) cuando una plataforma cambie su
   reproductor y rompa el extractor correspondiente.
 
+## 50. `/api/preview` y `/api/publish-reel` rechazaban todo `video_id` generado
+
+- Reproducción 2026-07-28: usuario reportó que un reel armado desde
+  `https://www.facebook.com/reel/2834912173534528` "no descarga" y el navegador
+  mostraba el error nativo "No video with supported format and MIME type found".
+  La descarga y el render (verificados con ffprobe: h264 1080×1920 + aac) eran
+  válidos — el problema aparecía recién al pedir `/api/preview/{video_id}.mp4` por
+  HTTP, algo que las pruebas anteriores de esta sesión no habían ejercitado porque
+  llamaban a `render_video()` directo en Python, sin pasar por el servidor.
+- Causa raíz: `render_video()` generaba `video_id = uuid.uuid4().hex[:12]` (12
+  caracteres hex), pero `video_reel_manager._safe_object_id` exige `[a-f0-9]{16,64}`
+  al validar el `video_id` de vuelta en `/api/preview` y `/api/publish-reel`. Todo
+  `video_id` generado fallaba esa validación → 400 `{"error": "video_id inválido"}`
+  en vez del video → el `<video>` del navegador interpretaba el JSON de error como
+  intento de video y mostraba el error de formato/MIME no soportado. Bug
+  preexistente, independiente de yt-dlp y de la plataforma de origen (afectaba a
+  cualquier video renderizado, no sólo Facebook); no detectado antes porque el flujo
+  de video nunca tuvo QA automatizada contra el servidor HTTP real (ver #5).
+- Corrección: `video_id` ya no se trunca (`utils/video_renderer.py::new_render_id()`,
+  32 caracteres hex, dentro del rango que exige `_safe_object_id`).
+- Evidencia: `RenderIdContractTests.test_new_render_id_passes_safe_object_id`
+  (`tests/test_video_source.py`) ata ambos contratos entre módulos; verificado además
+  con una llamada HTTP real de punta a punta (`render-video` → `preview`) contra el
+  link de Facebook reportado.
+- Estado actual: **resuelto**.
+- Riesgo residual: ningún otro generador de ID truncado en el repo viola el rango de
+  `_safe_object_id` (se revisó `grep uuid4().hex\[:` completo), pero un futuro cambio
+  que trunque un ID nuevo por debajo de 16 chars reproduciría la misma clase de bug
+  si no se agrega un test de contrato equivalente.
+
 ## 50. El backlog anterior al 27/07 podía publicarse durante el arranque
 
 - Reproducción 2026-07-27: Web tenía 60 entradas anteriores al corte, Meta 425 y la

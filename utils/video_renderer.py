@@ -1,22 +1,28 @@
 """
 Genera video MP4 9:16 (1080×1920) para Reels de Instagram/Facebook.
 
-Arquitectura de composición (ffmpeg filter_complex):
-  1. Canvas negro 1080×1920
-  2. Video fuente (o imagen con Ken Burns) escalado a 1080×760 → pegado en y=285
-  3. Overlay PNG RGBA (layout LVR) superpuesto: el área de video es transparente,
-     los demás bloques (superior, rojo titular, footer, CTA) son opacos.
+Arquitectura de composición:
+  1. Camino normal: todo el reel (bloque superior, panel de video/imagen que crece y se
+     compacta, blur-fill, caption animado, footer, logo) se renderiza en una sola pasada
+     con la composición "Main" de Remotion — ver _render_remotion_main().
+  2. Fallback si Remotion/Node no está disponible o falla: layout estático clásico
+     (overlay PNG con PIL) compuesto con ffmpeg filter_complex — ver
+     _ffmpeg_compose_video/_ffmpeg_compose_image/_ffmpeg_overlay_only.
+  3. Outro de branding (Remotion, cacheado) concatenado al final — ver _append_outro().
 
 Resultado: el video/imagen queda DENTRO del layout, con branding aplicado encima.
 
 Requisitos:
   - ffmpeg en PATH
   - yt-dlp en PATH (opcional, para YouTube/Instagram/X/Facebook)
+  - Node.js + `npm i` en remotion/ (opcional: sin esto, cae al layout estático y sin outro)
 """
 from __future__ import annotations
 
 import io
+import json
 import os
+import shutil
 import subprocess
 import uuid
 from urllib.parse import urlparse
@@ -37,6 +43,14 @@ RENDERS_DIR = str(output_dir() / "renders")
 LOGO_PATH    = os.path.join(BASE_DIR, "data", "media", "logo.png")
 FB_ICON_PATH = os.path.join(BASE_DIR, "data", "media", "fb_icon_base.png")
 IG_ICON_PATH = os.path.join(BASE_DIR, "data", "media", "ig_icon_base.png")
+
+# Proyecto Remotion (branding animado: outro). Ver remotion/README interno.
+REMOTION_DIR = os.path.join(BASE_DIR, "remotion")
+OUTRO_PATH = os.path.join(BASE_DIR, "data", "media", "outro.mp4")
+
+# Calidad de encoding — configurable por env sin tocar código.
+_ENCODE_PRESET = os.getenv("VIDEO_ENCODE_PRESET", "medium")
+_ENCODE_CRF = os.getenv("VIDEO_ENCODE_CRF", "19")
 
 # Resolución reel 9:16
 W, H = 1080, 1920
@@ -90,6 +104,12 @@ def check_ytdlp() -> bool:
         return False
 
 
+def new_render_id() -> str:
+    """ID hex sin truncar: video_reel_manager._safe_object_id exige 16-64 chars al
+    validarlo de vuelta en /api/preview y /api/publish-reel."""
+    return uuid.uuid4().hex
+
+
 def _font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
     key = (size, bold)
     if key in _FONT_CACHE:
@@ -130,6 +150,21 @@ def _download_image(url: str) -> Image.Image | None:
     except Exception as e:
         logger.warning("No se pudo descargar imagen: %s", e)
         return None
+
+
+def _gradient_fill(
+    draw: ImageDraw.Draw, box: tuple[int, int, int, int],
+    top_color: tuple, bottom_color: tuple,
+) -> None:
+    """Rellena un rectángulo con degradado vertical sutil (profundidad en vez de color plano)."""
+    x0, y0, x1, y1 = box
+    height = max(1, y1 - y0)
+    for i in range(height):
+        t = i / height
+        r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
+        g = int(top_color[1] + (bottom_color[1] - top_color[1]) * t)
+        b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
+        draw.line([(x0, y0 + i), (x1, y0 + i)], fill=(r, g, b, 255))
 
 
 def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_w: int, draw: ImageDraw.Draw) -> list[str]:
@@ -438,15 +473,14 @@ def render_overlay(item: dict) -> Image.Image:
     pad2 = 60 * SC
 
     canvas = Image.new("RGBA", (W2, H2), (0, 0, 0, 0))
-
-    # Bloque superior rojo
-    canvas.paste(Image.new("RGBA", (W2, top_h2), (*_ROJO, 255)), (0, 0))
-    # Bloque titular rojo
-    canvas.paste(Image.new("RGBA", (W2, headline_h2), (*_ROJO, 255)), (0, headline_y2))
-    # Footer + área inferior: todo #111111
-    canvas.paste(Image.new("RGBA", (W2, H2 - footer_y2), (*_FOOTER_BG, 255)), (0, footer_y2))
-
     draw = ImageDraw.Draw(canvas)
+
+    # Bloque superior — degradado oscuro (espeja GRADIENT_TOP de Overlay.tsx en Remotion)
+    _gradient_fill(draw, (0, 0, W2, top_h2), (163, 0, 0), (61, 0, 0))
+    # Bloque titular — degradado oscuro, más profundo hacia abajo (espeja GRADIENT_HEADLINE)
+    _gradient_fill(draw, (0, headline_y2, W2, headline_y2 + headline_h2), (138, 0, 0), (61, 0, 0))
+    # Footer + área inferior — degradado casi negro (espeja GRADIENT_BG_DARK)
+    _gradient_fill(draw, (0, footer_y2, W2, H2), (22, 22, 22), (5, 5, 5))
 
     # ── Línea divisora blanca
     draw.rectangle([(0, img_y2 - 8), (W2, img_y2)], fill=(*_WHITE, 255))
@@ -554,12 +588,14 @@ def _ffmpeg_compose_video(source_video: str, overlay_png: str, output: str, dura
     """
     Compone: canvas negro 9:16 + source_video (en área _IMG_Y) + overlay PNG encima.
     El overlay tiene transparencia en el área de video → el video se ve a través.
+    Fallback clásico (PIL + ffmpeg) cuando Remotion no está disponible — ver
+    _render_remotion_main(), que reemplaza esto en el camino normal.
     """
-    # El source_video se escala a 1080×760 con crop centrado
+    # El source_video se escala a 1080×760 con crop centrado + viñeta sutil (dirige el ojo al centro)
     # [bg]→[vid]→[combined]→overlay PNG→[out]
     vid_scale = (
         f"[0:v]scale=1080:760:force_original_aspect_ratio=increase,"
-        f"crop=1080:760[vid]"
+        f"crop=1080:760,vignette=PI/6[vid]"
     )
     filter_graph = (
         f"color=c=0x0B0B0B:s=1080x1920:d={duration}[bg];"
@@ -576,6 +612,8 @@ def _ffmpeg_compose_video(source_video: str, overlay_png: str, output: str, dura
         "-map", "0:a?",       # pasar audio del video fuente si existe
         "-t", str(duration),
         "-c:v", "libx264",
+        "-preset", _ENCODE_PRESET,
+        "-crf", _ENCODE_CRF,
         "-r", "30",
         "-c:a", "aac",        # codificar audio como AAC
         "-pix_fmt", "yuv420p",
@@ -587,19 +625,41 @@ def _ffmpeg_compose_video(source_video: str, overlay_png: str, output: str, dura
         raise RuntimeError(f"ffmpeg error (video): {result.stderr[-800:]}")
 
 
-def _ffmpeg_compose_image(image_jpg: str, overlay_png: str, output: str, duration: int) -> None:
+def _ease_zoom_expr(frames: int, max_zoom: float = 1.06) -> str:
+    """Zoom ease-out (arranca rápido, desacelera) en vez del incremento lineal anterior."""
+    delta = max_zoom - 1.0
+    return f"1+{delta}*(1-pow(1-on/{frames},2))"
+
+
+def _ffmpeg_compose_image(
+    image_jpg: str, overlay_png: str, output: str, duration: int, variant: int = 0,
+) -> None:
     """
-    Compone: canvas negro 9:16 + imagen con Ken Burns (zoom suave) en área _IMG_Y + overlay PNG.
-    Pre-escala la imagen a 2× para que zoompan tenga calidad.
+    Compone: canvas negro 9:16 + imagen con Ken Burns (zoom ease-out + paneo sutil) en área
+    _IMG_Y + overlay PNG. `variant` (0/1/2) alterna la dirección del paneo entre notas —
+    determinístico por nota (ver render_video) para que no todas usen el mismo movimiento.
+    Pre-escala la imagen a 2× para que zoompan tenga calidad. Fallback clásico (PIL +
+    ffmpeg) cuando Remotion no está disponible — ver _render_remotion_main().
     """
     frames = duration * 30  # 30 fps
+    zoom_expr = _ease_zoom_expr(frames)
+    pan_w = f"iw*0.035*(1-on/{frames})"
+    pan_h = f"ih*0.035*(1-on/{frames})"
+    if variant == 1:
+        x_expr, y_expr = f"iw/2-(iw/zoom/2)-{pan_w}", "ih/2-(ih/zoom/2)"
+    elif variant == 2:
+        x_expr, y_expr = "iw/2-(iw/zoom/2)", f"ih/2-(ih/zoom/2)-{pan_h}"
+    else:
+        x_expr, y_expr = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+
     # Escalar imagen al doble del área de video para que el zoom tenga resolución
     img_scale = (
         f"[0:v]scale=2160:-2:force_original_aspect_ratio=increase,"
-        f"zoompan=z='min(zoom+0.0004,1.06)'"
-        f":x='iw/2-(iw/zoom/2)'"
-        f":y='ih/2-(ih/zoom/2)'"
-        f":d={frames}:s=1080x760:fps=30[vid]"
+        f"zoompan=z='{zoom_expr}'"
+        f":x='{x_expr}'"
+        f":y='{y_expr}'"
+        f":d={frames}:s=1080x760:fps=30,"
+        f"vignette=PI/6[vid]"
     )
     filter_graph = (
         f"color=c=0x0B0B0B:s=1080x1920:d={duration}[bg];"
@@ -615,6 +675,8 @@ def _ffmpeg_compose_image(image_jpg: str, overlay_png: str, output: str, duratio
         "-map", "[out]",
         "-t", str(duration),
         "-c:v", "libx264",
+        "-preset", _ENCODE_PRESET,
+        "-crf", _ENCODE_CRF,
         "-r", "30",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
@@ -632,6 +694,8 @@ def _ffmpeg_overlay_only(overlay_png: str, output: str, duration: int) -> None:
         "-loop", "1", "-i", overlay_png,
         "-t", str(duration),
         "-c:v", "libx264",
+        "-preset", _ENCODE_PRESET,
+        "-crf", _ENCODE_CRF,
         "-r", "30",
         "-pix_fmt", "yuv420p",
         "-vf", "scale=1080:1920",
@@ -663,20 +727,172 @@ def get_video_duration(path: str) -> float | None:
     return None
 
 
+def _npx_args(args: list[str]) -> list[str]:
+    """En Windows, npx es un .cmd — subprocess sin shell no lo ejecuta directamente."""
+    if os.name == "nt":
+        return ["cmd", "/c", "npx", *args]
+    return ["npx", *args]
+
+
+def _ensure_outro() -> str | None:
+    """
+    Devuelve la ruta del outro de branding (Remotion), renderizándolo una única vez y
+    cacheándolo en OUTRO_PATH. Si Remotion/Node no está disponible en este entorno,
+    devuelve None — el llamador debe omitir el outro sin romper el render principal.
+    """
+    if os.path.isfile(OUTRO_PATH) and os.path.getsize(OUTRO_PATH) > 0:
+        return OUTRO_PATH
+    if not os.path.isdir(REMOTION_DIR):
+        logger.info("Carpeta remotion/ no encontrada — se omite el outro")
+        return None
+    try:
+        os.makedirs(os.path.dirname(OUTRO_PATH), exist_ok=True)
+        result = subprocess.run(
+            _npx_args(["remotion", "render", "Outro", OUTRO_PATH, "--codec=h264"]),
+            cwd=REMOTION_DIR, capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0 and os.path.isfile(OUTRO_PATH):
+            logger.info("Outro de Remotion renderizado y cacheado en %s", OUTRO_PATH)
+            return OUTRO_PATH
+        logger.warning("No se pudo renderizar el outro con Remotion: %s", result.stderr[-400:])
+        return None
+    except Exception as exc:
+        logger.warning("Error renderizando outro con Remotion: %s", exc)
+        return None
+
+
+def _append_outro(main_path: str, video_id: str) -> bool:
+    """
+    Concatena el outro de branding al final de `main_path` (in-place). Devuelve True si se
+    agregó, False si se omitió (Remotion no disponible o falló la composición) — en ese
+    caso `main_path` queda intacto, el render principal nunca se rompe por esto.
+    """
+    outro_path = _ensure_outro()
+    if not outro_path:
+        return False
+    combined_path = os.path.join(RENDERS_DIR, f"_final_{video_id}.mp4")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", main_path,
+        "-i", outro_path,
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map", "[v]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", _ENCODE_PRESET,
+        "-crf", _ENCODE_CRF,
+        "-r", "30",
+        "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        combined_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning("No se pudo agregar el outro (se publica sin outro): %s", result.stderr[-400:])
+        try:
+            os.remove(combined_path)
+        except Exception:
+            pass
+        return False
+    os.remove(main_path)
+    os.replace(combined_path, main_path)
+    return True
+
+
+def _render_remotion_main(
+    item: dict, video_id: str, duration: int,
+    asset_path: str | None, asset_type: str, ken_burns_variant: int,
+) -> str | None:
+    """
+    Renderiza la composición "Main" de Remotion, que reemplaza todo el compositing de
+    ffmpeg: bloque superior, panel de video/imagen (creciente + fondo blur-fill), caption
+    animado (título/sección, se encoge y termina flotando sobre el video), footer con
+    íconos, logo. Devuelve la ruta del mp4 generado, o None si Remotion no está disponible
+    o falla — el llamador debe caer al pipeline clásico (PIL + ffmpeg).
+
+    `asset_path` es la ruta local ya descargada del video/imagen (o None si el item no
+    trae ninguno — asset_type se fuerza a "none" en ese caso). Remotion solo puede leer
+    assets dentro de remotion/public/, así que se copia ahí bajo public/tmp/ con el
+    video_id como nombre, y se borra al terminar (no queda nada del contenido de terceros
+    dando vueltas en el repo).
+    """
+    if not os.path.isdir(REMOTION_DIR):
+        return None
+
+    titulo = str(item.get("titulo_reel") or item.get("titulo") or "").upper()
+    seccion = str(item.get("seccion") or "sociedad").upper()
+    frames = max(1, duration * 30)
+
+    asset_file = ""
+    tmp_asset_path: str | None = None
+    effective_type = asset_type
+    if asset_path:
+        ext = ".mp4" if asset_type == "video" else ".jpg"
+        asset_file = f"tmp/{video_id}{ext}"
+        tmp_asset_path = os.path.join(REMOTION_DIR, "public", "tmp", f"{video_id}{ext}")
+        os.makedirs(os.path.dirname(tmp_asset_path), exist_ok=True)
+        shutil.copy2(asset_path, tmp_asset_path)
+    else:
+        effective_type = "none"
+
+    props_path = os.path.join(RENDERS_DIR, f"_mainprops_{video_id}.json")
+    output_path = os.path.join(RENDERS_DIR, f"_main_{video_id}.mp4")
+    try:
+        with open(props_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "titulo": titulo,
+                "seccion": seccion,
+                "assetType": effective_type,
+                "assetFile": asset_file,
+                "kenBurnsVariant": ken_burns_variant,
+                "durationInFrames": frames,
+            }, f)
+        result = subprocess.run(
+            _npx_args([
+                "remotion", "render", "Main", output_path,
+                "--codec=h264", f"--props={props_path}",
+            ]),
+            cwd=REMOTION_DIR, capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode == 0 and os.path.isfile(output_path):
+            return output_path
+        logger.warning("No se pudo renderizar Main con Remotion: %s", result.stderr[-500:])
+        return None
+    except Exception as exc:
+        logger.warning("Error renderizando Main con Remotion: %s", exc)
+        return None
+    finally:
+        try:
+            os.remove(props_path)
+        except Exception:
+            pass
+        if tmp_asset_path:
+            try:
+                os.remove(tmp_asset_path)
+            except Exception:
+                pass
+
+
 def render_video(item: dict) -> tuple[str, str, int, dict]:
     """
     Genera el MP4 del reel.
 
     Flujo:
       1. Intentar descargar video fuente (video_url / source_url de YT/IG/TikTok/X/MP4)
-      2a. Si hay video: usa su duración real → composición ffmpeg (video + overlay)
-      2b. Si hay imagen del artículo: Ken Burns + overlay con duración del item
-      2c. Sin ninguno: solo overlay sobre negro con duración del item
+      2a. Si hay video: usa su duración real
+      2b. Si hay imagen del artículo: Ken Burns con esa duración
+      2c. Sin ninguno: solo el layout de branding, sin panel de video/imagen
+      3. Renderiza todo con Remotion (composición "Main" — panel de video/imagen que
+         crece, caption animado, blur-fill, footer, logo). Si Remotion/Node no está
+         disponible o falla, cae al pipeline clásico (overlay estático PIL + ffmpeg).
+      4. Concatena el outro de branding al final.
 
     Retorna (ruta_mp4, video_id, duracion_segundos, info) donde `info` incluye
-    `source_used` ("video" | "image_fallback" | "overlay_only") y, cuando el video
-    fuente se pidió pero no se pudo descargar, `fallback_reason` con el motivo
-    (`error_type` de la descarga) y un mensaje corto para mostrarle al operador.
+    `source_used` ("video" | "image_fallback" | "overlay_only"), `engine`
+    ("remotion" | "ffmpeg_fallback"), `outro_added` (True si se pudo concatenar el outro)
+    y, cuando el video fuente se pidió pero no se pudo descargar, `fallback_reason` con el
+    motivo (`error_type` de la descarga) y un mensaje corto para mostrarle al operador.
     Lanza RuntimeError si ffmpeg no está disponible.
     """
     if not check_ffmpeg():
@@ -689,20 +905,21 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
     fallback_duration = max(3, min(90, int(item.get("duration_seconds") or 15)))
     os.makedirs(RENDERS_DIR, exist_ok=True)
 
-    video_id = uuid.uuid4().hex[:12]
+    video_id = new_render_id()
     output_path = os.path.join(RENDERS_DIR, f"{video_id}.mp4")
-    overlay_path = os.path.join(RENDERS_DIR, f"_ovl_{video_id}.png")
-    temp_files: list[str] = [overlay_path]
+    temp_files: list[str] = []
+
+    # Variante de paneo Ken Burns determinística por nota (no aleatoria, para reproducibilidad)
+    titulo_for_variant = str(item.get("titulo_reel") or item.get("titulo") or "")
+    ken_burns_variant = sum(ord(c) for c in titulo_for_variant) % 3 if titulo_for_variant else 0
 
     try:
-        # Generar overlay PNG
-        logger.info("Generando overlay PNG del layout LVR…")
-        overlay_img = render_overlay(item)
-        overlay_img.save(overlay_path, "PNG")
-
-        # Intentar obtener video fuente
+        # Obtener video o imagen fuente — la duración real hace falta antes de renderizar
+        # (tanto Remotion como el fallback ffmpeg necesitan saber cuántos frames/segundos).
         source_video, source_result = get_source_video(item)
         info: dict = {}
+        asset_path: str | None = None
+        asset_type = "none"
         if source_video:
             info["source_used"] = "video"
             if (
@@ -710,14 +927,10 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
                 and os.path.basename(source_video).startswith("_src_")
             ):
                 temp_files.append(source_video)
-            # Usar duración real del video descargado
             real_dur = get_video_duration(source_video)
             duration = max(3, min(90, int(real_dur))) if real_dur else fallback_duration
-            logger.info(
-                "Componiendo con video fuente: %s (%.1fs)",
-                os.path.basename(source_video), duration,
-            )
-            _ffmpeg_compose_video(source_video, overlay_path, output_path, duration)
+            asset_path = source_video
+            asset_type = "video"
         else:
             duration = fallback_duration
             if not source_result.ok:
@@ -729,7 +942,6 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
                     "No se pudo obtener video fuente (%s); se usa fallback de imagen",
                     source_result.error_type,
                 )
-            # Fallback: imagen del artículo con Ken Burns
             imagen_url = str(item.get("imagen_url") or "")
             local_image = str(item.get("local_image_path") or "").strip()
             if local_image:
@@ -748,13 +960,37 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
                 img_path = os.path.join(RENDERS_DIR, f"_img_{video_id}.jpg")
                 temp_files.append(img_path)
                 src_img.convert("RGB").save(img_path, "JPEG", quality=92)
-                logger.info("Componiendo con imagen + Ken Burns: %s", imagen_url[:60])
-                _ffmpeg_compose_image(img_path, overlay_path, output_path, duration)
+                asset_path = img_path
+                asset_type = "image"
                 info["source_used"] = "image_fallback"
+            else:
+                info["source_used"] = "overlay_only"
+
+        logger.info("Renderizando reel (%ds, asset=%s)…", duration, asset_type)
+        main_path = _render_remotion_main(item, video_id, duration, asset_path, asset_type, ken_burns_variant)
+
+        if main_path:
+            os.replace(main_path, output_path)
+            info["engine"] = "remotion"
+            logger.info("Reel renderizado con Remotion (Main)")
+        else:
+            info["engine"] = "ffmpeg_fallback"
+            logger.info("Remotion no disponible/falló — usando pipeline clásico (PIL + ffmpeg)")
+            overlay_img = render_overlay(item)
+            overlay_path = os.path.join(RENDERS_DIR, f"_ovl_{video_id}.png")
+            temp_files.append(overlay_path)
+            overlay_img.save(overlay_path, "PNG")
+            if asset_type == "video":
+                logger.info("Componiendo con video fuente: %s (%.1fs)", os.path.basename(asset_path), duration)
+                _ffmpeg_compose_video(asset_path, overlay_path, output_path, duration)
+            elif asset_type == "image":
+                logger.info("Componiendo con imagen + Ken Burns")
+                _ffmpeg_compose_image(asset_path, overlay_path, output_path, duration, variant=ken_burns_variant)
             else:
                 logger.info("Sin imagen ni video — generando solo overlay sobre negro")
                 _ffmpeg_overlay_only(overlay_path, output_path, duration)
-                info["source_used"] = "overlay_only"
+
+        info["outro_added"] = _append_outro(output_path, video_id)
 
         size_mb = os.path.getsize(output_path) / 1_048_576
         logger.info("Video renderizado: %s (%.1f MB, %ds)", output_path, size_mb, duration)
