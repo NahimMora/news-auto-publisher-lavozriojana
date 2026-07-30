@@ -59,6 +59,8 @@ FILES = {
     "topic_publication_state.json": {},
     "media_library.json": [],
     "premium_packages.json": [],
+    "premium_ig_posted.json": {"posted": {}},
+    "premium_fb_posted.json": {"posted": {}},
 }
 
 for filename, default in FILES.items():

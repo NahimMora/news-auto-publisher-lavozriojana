@@ -574,6 +574,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "EDITORIAL_FINAL_ATTEMPT_ACTION",
                 "EDITORIAL_ROUTER_ENABLED",
                 "ENABLE_EDITORIAL_NEWS_ENRICHER",
+                "PREMIUM_PUBLISH_DRY_RUN",
                 "ENABLE_R2_OG_IMAGE",
                 "FB_ALLOW_DIRECT_TOKEN_FALLBACK",
                 "FB_DISABLED_PAGE_IDS",

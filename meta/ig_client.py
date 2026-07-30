@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import uuid
 from urllib.parse import urlparse
 
 import requests
@@ -529,3 +530,165 @@ def post_to_instagram(noticia: dict) -> bool:
     if result.error_type == "rate_limit":
         raise IGRateLimitError("IG en período de backoff por rate limit")
     return result.ok
+
+
+# ── Carrusel premium (Fase 3): flujo social-only, dedup y cola propias ────
+# Reutiliza el mismo backoff de rate limit (misma cuenta de Meta), pero un
+# estado de publicados independiente de ``ig_posted.json`` para no mezclar
+# el dedup del lote automático con el de publicaciones premium manuales.
+PREMIUM_IG_STATE_PATH = str(data_dir() / "premium_ig_posted.json")
+PREMIUM_CAROUSEL_MIN_SLIDES = 2
+PREMIUM_CAROUSEL_MAX_SLIDES = 10
+
+
+def _load_premium_state() -> dict:
+    return load_json(PREMIUM_IG_STATE_PATH, {"posted": {}}, expected_type=dict)
+
+
+def _mark_premium_posted(dedup_key: str, package: dict, external_id: str) -> None:
+    def mutate(state):
+        state.setdefault("posted", {})[dedup_key] = {
+            "posted_at": int(time.time()),
+            "dedup_key": dedup_key,
+            "external_id": external_id,
+            "package_id": package.get("id"),
+            "titulo": package.get("title"),
+        }
+        return state
+
+    update_json(PREMIUM_IG_STATE_PATH, mutate, {"posted": {}}, expected_type=dict)
+
+
+def premium_dedup_key(package: dict) -> str:
+    explicit = str(package.get("premium_dedup_key") or "").strip()
+    if explicit:
+        return explicit
+    basis = str(package.get("id") or package.get("title") or "")
+    return f"premium:{url_hash(basis) if basis else uuid.uuid4().hex}"
+
+
+def premium_carousel_already_posted(package: dict) -> str | None:
+    """Devuelve el external_id ya publicado para este paquete, si existe."""
+    try:
+        state = _load_premium_state()
+    except JsonStateError:
+        return None
+    record = state.get("posted", {}).get(premium_dedup_key(package))
+    if isinstance(record, dict):
+        return str(record.get("external_id") or "") or None
+    return None
+
+
+def post_premium_carousel_to_instagram(package: dict, slide_images: list[bytes]) -> OperationResult:
+    """Publica un carrusel premium social-only (sin artículo web, sin CMS).
+
+    ``slide_images`` son los bytes ya renderizados de cada slide (mismo
+    renderer que el preview del Estudio Premium), en el orden final.
+    """
+    if not IG_ACCOUNT_ID or IG_ACCOUNT_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if not IG_ACCESS_TOKEN or IG_ACCESS_TOKEN == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    count = len(slide_images)
+    if not (PREMIUM_CAROUSEL_MIN_SLIDES <= count <= PREMIUM_CAROUSEL_MAX_SLIDES):
+        return OperationResult(
+            StageStatus.FAILED,
+            error_type="invalid_slide_count",
+            details={"count": count},
+        )
+
+    try:
+        until = rate_limit_until()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+
+    dedup_key = premium_dedup_key(package)
+    try:
+        state = _load_premium_state()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    existing = state.get("posted", {}).get(dedup_key)
+    if existing is not None:
+        return OperationResult(
+            StageStatus.SUCCESS,
+            external_id=str(existing.get("external_id") or ""),
+            deduplicated=True,
+        )
+
+    uploaded: list[tuple[str, str]] = []
+    try:
+        for image_bytes in slide_images:
+            tmp_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+                    tmp_path = handle.name
+                    handle.write(image_bytes)
+                public_url, key = r2_storage.upload_temp(tmp_path, ttl_hint="ig")
+                uploaded.append((public_url, key))
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except FileNotFoundError:
+                        pass
+    except Exception as exc:
+        for _, key in uploaded:
+            r2_storage.delete(key)
+        return OperationResult(
+            StageStatus.FAILED,
+            error_type="r2_upload_error",
+            details={"message": type(exc).__name__},
+        )
+
+    child_ids: list[str] = []
+    for public_url, _ in uploaded:
+        created = _create_container(
+            {
+                "image_url": public_url,
+                "is_carousel_item": "true",
+                "access_token": IG_ACCESS_TOKEN,
+            }
+        )
+        if not created.ok:
+            for _, key in uploaded:
+                r2_storage.delete(key)
+            return created
+        child_ids.append(created.external_id)
+
+    # Instagram ya descargó cada imagen al crear su contenedor hijo.
+    for _, key in uploaded:
+        r2_storage.delete(key)
+
+    parent = _create_container(
+        {
+            "media_type": "CAROUSEL",
+            "children": ",".join(child_ids),
+            "caption": str(package.get("caption") or ""),
+            "access_token": IG_ACCESS_TOKEN,
+        }
+    )
+    if not parent.ok:
+        return parent
+
+    published = _publish_container(parent.external_id)
+    if not published.ok:
+        return published
+    try:
+        _mark_premium_posted(dedup_key, package, published.external_id)
+    except JsonStateError as exc:
+        logger.error("Carrusel premium publicado pero no se persistió la evidencia: %s", exc)
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="published_state_write_error",
+            external_id=published.external_id,
+            details={"publication_outcome": "confirmed", "container_id": parent.external_id},
+        )
+    logger.info("Carrusel premium publicado en Instagram: %s", str(package.get("title") or "")[:70])
+    return published
