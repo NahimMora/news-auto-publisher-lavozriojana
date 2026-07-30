@@ -23,6 +23,7 @@ from utils.file_manager import (
 from utils.durable_queue import DurableQueue
 from utils.editorial_policy import evaluate_fallback_policy
 from utils.editorial_priority import priority_interleave
+from utils.editorial_router import apply_routing
 from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
 from utils.logging_setup import setup_logger
@@ -69,6 +70,14 @@ META_FIELDS = (
     "queued_at",
     "fallbacks_used",
     "fallback_policy",
+    "editorial_route",
+    "route_by_channel",
+    "route_reason",
+    "topic_key",
+    "topic_post_number",
+    "material_update",
+    "breaking",
+    "routed_at_ts",
 )
 
 WEB_EXCLUDE_FIELDS = {
@@ -531,6 +540,16 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             )
             failed += 1
             continue
+
+        # Router editorial: sólo para noticias que efectivamente van a cola
+        # (no para las bloqueadas por política de fallback arriba). Aditivo
+        # y resiliente: un fallo acá nunca reintenta la reescritura ni la
+        # llamada a OpenAI; se conserva "automatic" por omisión.
+        try:
+            routing_decision = apply_routing(rewritten)
+            rewritten.update(routing_decision.to_dict())
+        except (JsonStateError, ValueError) as exc:
+            logger.warning("Router editorial falló, se conserva comportamiento actual: %s", exc)
 
         try:
             meta_item = build_meta_item(rewritten)

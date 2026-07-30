@@ -45,8 +45,31 @@ IG_ALLOWED_CATEGORIES = {
 }
 
 
+def _router_enabled() -> bool:
+    return str(os.getenv("EDITORIAL_ROUTER_ENABLED", "false")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "si",
+        "sí",
+    }
+
+
 def _allowed_for_instagram(noticia: dict) -> bool:
     return item_category(noticia) in IG_ALLOWED_CATEGORIES or item_is_breaking(noticia)
+
+
+def _routed_for_instagram(noticia: dict) -> bool:
+    """Fase 1: el router editorial sólo restringe Instagram, y sólo si está
+    habilitado explícitamente (ver docs/DECISIONS.md). Un ítem sin metadata
+    de ruteo (nunca pasó por el router, o el router falló al reescribir) se
+    trata como "automatic" para no cambiar comportamiento por accidente.
+    """
+    route = (noticia.get("route_by_channel") or {}).get("instagram")
+    if route is None:
+        return True
+    return route == "automatic"
 
 
 def _bootstrap_queue() -> tuple[int, int, int]:
@@ -54,15 +77,19 @@ def _bootstrap_queue() -> tuple[int, int, int]:
     included = 0
     omitted_by_policy = 0
     missing_web_url = 0
+    router_enabled = _router_enabled()
     for noticia in noticias:
         if not str(noticia.get("web_url") or noticia.get("noticia_url") or "").strip():
             missing_web_url += 1
             continue
-        if _allowed_for_instagram(noticia):
-            enqueue(noticia, platform="instagram")
-            included += 1
-        else:
+        if not _allowed_for_instagram(noticia):
             omitted_by_policy += 1
+            continue
+        if router_enabled and not _routed_for_instagram(noticia):
+            omitted_by_policy += 1
+            continue
+        enqueue(noticia, platform="instagram")
+        included += 1
     return included, omitted_by_policy, missing_web_url
 
 

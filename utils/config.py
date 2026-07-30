@@ -572,6 +572,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "EDITORIAL_ENRICHER_MIN_SCORE",
                 "EDITORIAL_ENRICHER_MODEL",
                 "EDITORIAL_FINAL_ATTEMPT_ACTION",
+                "EDITORIAL_ROUTER_ENABLED",
                 "ENABLE_EDITORIAL_NEWS_ENRICHER",
                 "ENABLE_R2_OG_IMAGE",
                 "FB_ALLOW_DIRECT_TOKEN_FALLBACK",

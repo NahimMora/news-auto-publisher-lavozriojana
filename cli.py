@@ -39,6 +39,7 @@ from utils.queue_cutover import (
     build_latest_window_report,
 )
 from utils.stage_result import StageResult, StageStatus, aggregate_results
+from utils.editorial_router import report_routing
 
 
 BASE_DIR = str(ROOT_DIR)
@@ -555,6 +556,42 @@ def cmd_queue_cutover(args) -> int:
         return 1
 
 
+def cmd_editorial_route(args) -> int:
+    """Modo report-only: procesa noticias_meta.json sin tocar estado productivo."""
+    from utils.file_manager import JsonStateError, load_json
+    from utils.paths import data_dir
+
+    try:
+        noticias = load_json(str(data_dir() / "noticias_meta.json"), [], expected_type=list)
+        rows = report_routing(noticias, limit=args.limit)
+    except JsonStateError as exc:
+        result = {"status": "failed", "error_type": "state_error", "message": str(exc)}
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 1
+
+    payload = {
+        "status": "success",
+        "report_only": True,
+        "evaluated": len(rows),
+        "rows": rows,
+    }
+    if args.output:
+        Path(args.output).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    if args.json or args.output:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        for row in rows:
+            print(
+                f"[{row['editorial_route']:>10}] ig={row['route_by_channel']['instagram']:>9} "
+                f"topic#{row['topic_post_number']} {row['route_reason'][:60]:<60} "
+                f"{str(row['titulo'] or '')[:70]}"
+            )
+    return 0
+
+
 def _safe_data_filename(value: str) -> Path:
     name = Path(str(value or "")).name
     if name != value or not name.endswith(".json"):
@@ -703,6 +740,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     alert_check_parser.add_argument("--json", action="store_true")
 
+    editorial_route_parser = sub.add_parser(
+        "editorial-route",
+        help="Router editorial en modo report-only: nunca modifica colas ni estado",
+    )
+    editorial_route_parser.add_argument(
+        "--report-only",
+        action="store_true",
+        required=True,
+        help="Único modo disponible en esta fase; explícito a propósito",
+    )
+    editorial_route_parser.add_argument("--limit", type=int, default=None)
+    editorial_route_parser.add_argument("--output", help="Ruta opcional para volcar el reporte JSON")
+    editorial_route_parser.add_argument("--json", action="store_true")
+
     video_parser = sub.add_parser("videos", help="Abre la UI local de Reels")
     video_parser.add_argument("--host", default="127.0.0.1")
     video_parser.add_argument("--port", type=int, default=8765)
@@ -734,6 +785,7 @@ def main(argv: list[str] | None = None) -> int:
         "queue-cutover": cmd_queue_cutover,
         "alert-test": cmd_alert_test,
         "alert-check": cmd_alert_check,
+        "editorial-route": cmd_editorial_route,
         "videos": cmd_videos,
         "logs": cmd_logs,
         "backup": cmd_backup,
