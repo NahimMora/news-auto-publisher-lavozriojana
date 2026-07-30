@@ -81,13 +81,37 @@ def text_candidates(item: dict) -> list[str]:
     return candidates
 
 
+def title_candidates(item: dict) -> list[str]:
+    candidates = []
+    for field in (
+        "titulo",
+        "title",
+        "titulo_original",
+        "titulo_original_scrapeado",
+        "titulo_instagram",
+        "seoTitle",
+        "ogTitle",
+    ):
+        value = str(item.get(field) or "").strip()
+        if value:
+            candidates.append(value)
+    return candidates
+
+
 def item_similarity(a: dict, b: dict) -> float:
+    # Si ambos elementos tienen título, la identidad editorial se decide por esos
+    # títulos. Comparar cualquier excerpt contra cualquier excerpt con `max()` hacía
+    # que boilerplate idéntico descartara noticias distintas.
+    left_titles = title_candidates(a)
+    right_titles = title_candidates(b)
+    left_values = left_titles or text_candidates(a)
+    right_values = right_titles or text_candidates(b)
     best = 0.0
-    for left in text_candidates(a):
+    for left in left_values:
         left_tokens = normalize_tokens(left)
         if not left_tokens:
             continue
-        for right in text_candidates(b):
+        for right in right_values:
             right_tokens = normalize_tokens(right)
             if not right_tokens:
                 continue

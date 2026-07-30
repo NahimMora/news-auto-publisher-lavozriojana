@@ -3,7 +3,7 @@ import random
 import time
 from utils.logging_setup import setup_logger
 
-logger = setup_logger("publish_throttle")
+logger = setup_logger("publish_throttle", "publish_throttle.log")
 
 ENABLED = os.getenv("PUBLISH_THROTTLE_ENABLED", "true").lower() == "true"
 DELAY_MIN = float(os.getenv("PUBLISH_DELAY_MIN_SECONDS", "20"))

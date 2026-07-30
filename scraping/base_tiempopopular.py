@@ -7,14 +7,22 @@ import re
 import shutil
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlsplit
 from utils.url_normalization import canonical_url, url_hash
 from utils.image_processor import process_image, optimize_image, FOTOS_DIR
 from utils.logging_setup import setup_logger
+from utils.safe_http import safe_get
+from utils.scraper_contract import (
+    ArticleScrapeResult,
+    LinkScrapeResult,
+    request_error_details,
+)
+from utils.stage_result import StageStatus
 
 BASE_SITE = "https://www.tiempopopular.com.ar"
 
 # Patrón de URL de artículo: /YYYY/MM/DD/slug/
-ARTICLE_URL_RE = re.compile(r"/\d{4}/\d{2}/\d{2}/.+/$")
+ARTICLE_URL_RE = re.compile(r"^/\d{4}/\d{2}/\d{2}/[^?#]+/?$")
 
 HEADERS = {
     "User-Agent": (
@@ -30,18 +38,24 @@ MAX_LINKS = int(os.getenv("SCRAPER_MAX_LINKS", "8"))
 
 # ── LINKS SCRAPER ────────────────────────────────────────────────────────────
 
-def scrap_links(section_url: str, section_name: str) -> list[str]:
+def scrap_links_result(section_url: str, section_name: str) -> LinkScrapeResult:
     """
     Extrae URLs de artículos de una sección de tiempopopular.com.ar.
     Selector principal: li > h3 > a (estructura estándar del sitio).
     """
-    logger = setup_logger(f"scraper.{section_name}.links")
+    logger = setup_logger(f"scraper.{section_name}.links", "scrapers.log")
     try:
         r = requests.get(section_url, headers=HEADERS, timeout=25)
         r.raise_for_status()
     except Exception as e:
         logger.error(f"Error accediendo a {section_url}: {e}")
-        return []
+        error_type, http_status = request_error_details(e)
+        return LinkScrapeResult(
+            status=StageStatus.FAILED,
+            error_type=error_type,
+            http_status=http_status,
+            message=str(e),
+        )
 
     soup = BeautifulSoup(r.text, "html.parser")
     seen = set()
@@ -67,33 +81,48 @@ def scrap_links(section_url: str, section_name: str) -> list[str]:
                 break
 
     logger.info(f"{section_name.capitalize()}: {len(links)} artículos encontrados")
-    return links
+    return LinkScrapeResult(
+        status=StageStatus.SUCCESS if links else StageStatus.NO_WORK,
+        links=links,
+    )
+
+
+def scrap_links(section_url: str, section_name: str) -> list[str]:
+    """Compatibilidad: nuevos consumidores deben usar ``scrap_links_result``."""
+    return scrap_links_result(section_url, section_name).links
 
 
 def _is_article_url(href: str) -> bool:
     """Valida que la URL sea un artículo (no una sección ni página de categoría)."""
-    if not href or not href.startswith("http"):
+    if not href:
         return False
-    if BASE_SITE not in href:
+    parsed = urlsplit(urljoin(BASE_SITE + "/", href))
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if parsed.scheme not in {"http", "https"} or host != "tiempopopular.com.ar":
         return False
-    path = href.replace(BASE_SITE, "")
-    return bool(ARTICLE_URL_RE.search(path))
+    return bool(ARTICLE_URL_RE.fullmatch(parsed.path))
 
 
 # ── NOTICIA SCRAPER ──────────────────────────────────────────────────────────
 
-def scrap_noticia(url: str, section_name: str) -> dict | None:
+def scrap_noticia_result(url: str, section_name: str) -> ArticleScrapeResult:
     """
     Extrae título, párrafos e imagen de un artículo de tiempopopular.com.ar.
     Estructura WordPress: h1 para título, .entry-content para cuerpo, og:image para imagen.
     """
-    logger = setup_logger(f"scraper.{section_name}.noticia")
+    logger = setup_logger(f"scraper.{section_name}.noticia", "scrapers.log")
     try:
         r = requests.get(url, headers=HEADERS, timeout=25)
         r.raise_for_status()
     except Exception as e:
         logger.error(f"Error accediendo a {url}: {e}")
-        return None
+        error_type, http_status = request_error_details(e)
+        return ArticleScrapeResult(
+            status=StageStatus.FAILED,
+            error_type=error_type,
+            http_status=http_status,
+            message=str(e),
+        )
 
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -101,13 +130,21 @@ def scrap_noticia(url: str, section_name: str) -> dict | None:
     titulo = _extract_title(soup, url)
     if not titulo:
         logger.warning(f"Sin título en: {url}")
-        return None
+        return ArticleScrapeResult(
+            status=StageStatus.FAILED,
+            error_type="selector_mismatch",
+            message="title_missing",
+        )
 
     # ── Párrafos del cuerpo ──────────────────────────────────
     parrafos = _extract_paragraphs(soup)
     if not parrafos:
         logger.warning(f"Sin contenido en: {url}")
-        return None
+        return ArticleScrapeResult(
+            status=StageStatus.FAILED,
+            error_type="selector_mismatch",
+            message="body_missing",
+        )
 
     # ── Imagen destacada ─────────────────────────────────────
     imagen_url = _extract_image(soup)
@@ -118,7 +155,7 @@ def scrap_noticia(url: str, section_name: str) -> dict | None:
     # ── Descarga y optimización ──────────────────────────────
     imagen_local, imagen_optimizada = _download_image(imagen_url, section_name, url, logger)
 
-    return {
+    article = {
         "titulo": titulo,
         "url": url,
         "canonical_url": canonical_url(url),
@@ -130,6 +167,19 @@ def scrap_noticia(url: str, section_name: str) -> dict | None:
         "fecha": fecha,
         "source": f"tiempopopular_{section_name}",
     }
+    warnings = []
+    if imagen_url and not imagen_optimizada:
+        warnings.append("image_download_failed")
+    return ArticleScrapeResult(
+        status=StageStatus.DEGRADED if warnings else StageStatus.SUCCESS,
+        article=article,
+        warnings=warnings,
+    )
+
+
+def scrap_noticia(url: str, section_name: str) -> dict | None:
+    """Compatibilidad: nuevos consumidores deben usar ``scrap_noticia_result``."""
+    return scrap_noticia_result(url, section_name).article
 
 
 def _extract_title(soup: BeautifulSoup, url: str) -> str | None:
@@ -223,7 +273,12 @@ def _download_image(
     opt_path = os.path.join(FOTOS_DIR, f"{section_name}_{uid}_opt.jpg")
 
     try:
-        resp = requests.get(imagen_url, headers=HEADERS, timeout=20)
+        resp = safe_get(
+            imagen_url,
+            requester=requests.get,
+            headers=HEADERS,
+            timeout=20,
+        )
         resp.raise_for_status()
         if not process_image(resp.content, raw_path):
             return None, None

@@ -129,6 +129,39 @@ _DATE_RE = re.compile(
     re.IGNORECASE,
 )
 _NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)*(?:\s?(?:%|km|kilometros|metros|anos|a\u00f1os|minutos|horas))?\b", re.IGNORECASE)
+_SPANISH_NUMBER_WORDS = {
+    "cero": "0",
+    "uno": "1",
+    "dos": "2",
+    "tres": "3",
+    "cuatro": "4",
+    "cinco": "5",
+    "seis": "6",
+    "siete": "7",
+    "ocho": "8",
+    "nueve": "9",
+    "diez": "10",
+    "once": "11",
+    "doce": "12",
+    "trece": "13",
+    "catorce": "14",
+    "quince": "15",
+    "dieciseis": "16",
+    "diecisiete": "17",
+    "dieciocho": "18",
+    "diecinueve": "19",
+    "veinte": "20",
+    "treinta": "30",
+    "cuarenta": "40",
+    "cincuenta": "50",
+    "sesenta": "60",
+    "setenta": "70",
+    "ochenta": "80",
+    "noventa": "90",
+    "cien": "100",
+    "ciento": "100",
+    "mil": "1000",
+}
 _CAP_WORD = r"(?:[A-Z\u00c1\u00c9\u00cd\u00d3\u00da\u00dc\u00d1][a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00fc\u00f1]+|[A-Z\u00c1\u00c9\u00cd\u00d3\u00da\u00dc\u00d1]{2,})"
 _PROPER_RE = re.compile(
     rf"\b{_CAP_WORD}(?:[ \t]+(?:de|del|la|las|los|y|e|en|san|santa|general)?[ \t]*{_CAP_WORD})*\b"
@@ -222,6 +255,9 @@ class EditorialResult:
     content_html: str = ""
     fallback_used: bool = False
     warnings: list[str] = field(default_factory=list)
+    attempt_count: int = 0
+    final_attempt_used: bool = False
+    revision_history: list[dict] = field(default_factory=list)
 
 
 def normalize(value: str) -> str:
@@ -366,7 +402,19 @@ def _result_factual_text(result: EditorialResult) -> str:
 
 
 def _extract_numbers(text: str) -> set[str]:
-    return {re.sub(r"\s+", "", m.group(0)).lower() for m in _NUMBER_RE.finditer(text or "")}
+    numbers = {
+        re.sub(r"\s+", "", m.group(0)).lower()
+        for m in _NUMBER_RE.finditer(text or "")
+    }
+    # El modelo puede expresar "tres autos" como "3 autos". Ambos representan
+    # el mismo dato factual y no deben disparar reintentos editoriales falsos.
+    normalized_words = re.findall(r"\b[a-z]+\b", normalize(text or ""))
+    numbers.update(
+        _SPANISH_NUMBER_WORDS[word]
+        for word in normalized_words
+        if word in _SPANISH_NUMBER_WORDS
+    )
+    return numbers
 
 
 def _extract_dates(text: str) -> set[str]:
@@ -400,6 +448,16 @@ _PROPER_NOUN_STOPWORDS = {
     "Esta",
     "Tambien",
     "Tambi\u00e9n",
+    "Ademas",
+    "Adem\u00e1s",
+    "Ambos",
+    "Ante",
+    "Durante",
+    "Detencion",
+    "Detenci\u00f3n",
+    "Fallecimiento",
+    "Tragico",
+    "Tr\u00e1gico",
 }
 _PROPER_NOUN_MONTHS = {m.title() for m in _MONTHS}
 _ACRONYM_STOPWORDS = {
@@ -434,6 +492,13 @@ def _extract_proper_nouns(text: str) -> set[str]:
     return out
 
 
+def _strip_leading_proper_stopwords(value: str) -> str:
+    words = value.split()
+    while len(words) > 1 and words[0] in _PROPER_NOUN_STOPWORDS:
+        words.pop(0)
+    return " ".join(words)
+
+
 def _acronyms_in(text: str) -> set[str]:
     return {normalize(m.group(0)).replace(" ", "").upper() for m in _ACRONYM_RE.finditer(text or "")}
 
@@ -455,6 +520,11 @@ def _is_present(candidate: str, original: str) -> bool:
     candidate_norm = normalize(candidate)
     original_norm = normalize(original)
     return bool(candidate_norm and candidate_norm in original_norm)
+
+
+def _match_starts_sentence(text: str, match: re.Match) -> bool:
+    prefix = text[: match.start()].rstrip()
+    return not prefix or prefix[-1] in ".!?\n"
 
 
 def _html_warnings(content_html: str) -> list[str]:
@@ -573,10 +643,22 @@ def validate_editorial_result(
     seen_warnings: set[str] = set()
     for match in _PROPER_RE.finditer(output):
         whole = clean_text(match.group(0)).strip(" .,:;")
+        # Una sola palabra con mayúscula al comienzo de oración puede ser un
+        # verbo o sustantivo editorial ("Avanza", "Están", "Fallecimiento").
+        # Los nombres de varias palabras, acrónimos y entidades dentro de la
+        # oración continúan sujetos a la validación factual.
+        if (
+            len(whole.split()) == 1
+            and not whole.isupper()
+            and _match_starts_sentence(output, match)
+        ):
+            continue
         if whole and _name_is_allowed(whole, original_acronyms):
             continue
         for chunk in _CONNECTOR_SPLIT_RE.split(match.group(0)):
-            name = clean_text(chunk).strip(" .,:;")
+            name = _strip_leading_proper_stopwords(
+                clean_text(chunk).strip(" .,:;")
+            )
             if not name or name in _PROPER_NOUN_STOPWORDS or name in _PROPER_NOUN_MONTHS:
                 continue
             if len(name) <= 2 or name in seen_warnings:
@@ -849,26 +931,44 @@ key_points y tags deben salir de datos visibles en la noticia.
 
 
 def _feedback_for_warnings(warnings: list[str], *, min_score: float) -> str:
-    joined = "; ".join(warnings)
-    if any(w.startswith(("invented_number", "invented_date", "invented_proper_noun")) for w in warnings):
-        return (
-            "El intento anterior agrego datos no comprobados. Reescribi usando solo cifras, fechas, "
-            "nombres, instituciones y lugares que aparezcan literalmente en la noticia original. "
-            f"Warnings: {joined}"
+    directives: list[str] = []
+    factual_prefixes = ("invented_number", "invented_date", "invented_proper_noun")
+
+    if any(w.startswith(factual_prefixes) for w in warnings):
+        invented = ", ".join(
+            warning.split(":", 1)[1]
+            for warning in warnings
+            if warning.startswith(factual_prefixes) and ":" in warning
+        )
+        directives.append(
+            "Elimina o reemplaza estos datos no comprobados por expresiones literales de la fuente: "
+            f"{invented}."
         )
     if any("linear_paraphrase" in w or "copy_paste_similarity" in w for w in warnings):
-        return (
-            "El intento anterior quedo demasiado parecido al texto original. Reorganizalo por ejes, "
-            "condensa repeticiones y cambia la redaccion sin alterar ningun hecho. "
-            f"Warnings: {joined}"
+        directives.append(
+            "Reorganiza el contenido por ejes, cambia el orden y la estructura de las oraciones, "
+            "y condensa repeticiones sin alterar los hechos."
         )
     if any(w.startswith("quality_score_below_threshold") for w in warnings):
-        return (
-            f"El intento anterior tuvo quality_score menor a {min_score:.2f}. Mejora claridad, SEO, "
-            "estructura y precision, manteniendo solo datos verificables del texto original. "
-            f"Warnings: {joined}"
+        directives.append(
+            f"Mejora claridad, estructura, SEO y precision hasta superar {min_score:.2f}, "
+            "sin agregar datos."
         )
-    return f"Corregi el intento anterior sin inventar datos. Warnings: {joined}"
+    if any(w.startswith("disallowed_html_") for w in warnings):
+        directives.append("Devuelve texto JSON sin HTML, atributos, scripts ni etiquetas.")
+    if any(w.startswith("unsafe_judicial_claim") for w in warnings):
+        directives.append(
+            "No afirmes culpabilidad: atribui denuncias e investigaciones y usa lenguaje condicional."
+        )
+    if "revision_no_material_change" in warnings:
+        directives.append(
+            "El intento anterior no tuvo cambios materiales: modifica de forma visible los campos "
+            "observados, en especial titulo, lead, secciones y metadatos señalados."
+        )
+    if not directives:
+        directives.append("Corregi todos los puntos observados sin inventar datos.")
+
+    return " ".join(directives) + f" Warnings exactos: {'; '.join(warnings)}"
 
 
 def _quality_warnings(result: EditorialResult, *, min_score: float) -> list[str]:
@@ -877,7 +977,74 @@ def _quality_warnings(result: EditorialResult, *, min_score: float) -> list[str]
     return []
 
 
-def _call_ai_enricher(noticia: dict, *, feedback: str | None = None) -> dict:
+def _editorial_feedback_snapshot(result: EditorialResult) -> dict:
+    return {
+        "title": result.title,
+        "excerpt": result.excerpt,
+        "lead": result.lead,
+        "source_paragraph": result.source_paragraph,
+        "sections": [
+            {
+                "heading": section.heading,
+                "paragraphs": list(section.paragraphs),
+                "items": list(section.items),
+            }
+            for section in result.sections
+        ],
+        "closing_paragraph": result.closing_paragraph,
+        "seo_title": result.seo_title,
+        "meta_description": result.meta_description,
+        "social_title": result.social_title,
+        "social_description": result.social_description,
+        "focus_keyword": result.focus_keyword,
+        "quality_score": result.quality_score,
+        "tags": list(result.tags),
+    }
+
+
+def _changed_revision_fields(previous: dict | None, current: dict) -> list[str]:
+    if not previous:
+        return []
+    changed: list[str] = []
+    for key in sorted(set(previous) | set(current)):
+        before = json.dumps(previous.get(key), ensure_ascii=False, sort_keys=True)
+        after = json.dumps(current.get(key), ensure_ascii=False, sort_keys=True)
+        if normalize(before) != normalize(after):
+            changed.append(key)
+    return changed
+
+
+_MATERIAL_REVISION_FIELDS = {
+    "title",
+    "excerpt",
+    "lead",
+    "source_paragraph",
+    "sections",
+    "closing_paragraph",
+    "seo_title",
+    "meta_description",
+    "social_title",
+    "social_description",
+}
+
+
+def _hard_editorial_warnings(warnings: list[str]) -> list[str]:
+    prefixes = (
+        "invented_number:",
+        "invented_date:",
+        "invented_proper_noun:",
+        "unsafe_judicial_claim:",
+        "disallowed_html_",
+    )
+    return [warning for warning in warnings if warning.startswith(prefixes)]
+
+
+def _call_ai_enricher(
+    noticia: dict,
+    *,
+    feedback: str | None = None,
+    previous_attempt: dict | None = None,
+) -> dict:
     from openai import OpenAI
 
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -899,6 +1066,8 @@ def _call_ai_enricher(noticia: dict, *, feedback: str | None = None) -> dict:
     }
     if feedback:
         user_payload["revision_feedback"] = feedback
+    if previous_attempt:
+        user_payload["previous_attempt"] = previous_attempt
 
     last_error: Exception | None = None
     for attempt in range(1, retry_count + 1):
@@ -909,7 +1078,9 @@ def _call_ai_enricher(noticia: dict, *, feedback: str | None = None) -> dict:
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
-                temperature=0.35,
+                # Una revisión necesita variación estructural real. La validación
+                # factual posterior sigue siendo autoritativa.
+                temperature=0.55 if feedback else 0.35,
                 max_tokens=1800,
                 response_format={"type": "json_object"},
             )
@@ -934,17 +1105,40 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
     attempts = 1 + max_revisions
     feedback: str | None = None
     last_warnings: list[str] = []
+    previous_attempt: dict | None = None
+    revision_history: list[dict] = []
 
     for attempt in range(1, attempts + 1):
         try:
-            data = _call_ai_enricher(noticia, feedback=feedback)
+            data = _call_ai_enricher(
+                noticia,
+                feedback=feedback,
+                previous_attempt=previous_attempt,
+            )
             result = _result_from_ai_payload(data, noticia)
         except Exception as exc:
             last_warnings = [f"editorial_ai_error:{exc}"]
             break
 
+        current_attempt = _editorial_feedback_snapshot(result)
+        changed_fields = _changed_revision_fields(previous_attempt, current_attempt)
+        material_changed_fields = [
+            field for field in changed_fields if field in _MATERIAL_REVISION_FIELDS
+        ]
         warnings = validate_editorial_result(result, noticia, check_similarity=True)
         warnings.extend(_quality_warnings(result, min_score=min_score))
+        if previous_attempt is not None and not material_changed_fields:
+            warnings.append("revision_no_material_change")
+        revision_history.append(
+            {
+                "attempt": attempt,
+                "warnings": list(warnings),
+                "changed_fields": changed_fields,
+                "material_changed_fields": material_changed_fields,
+            }
+        )
+        result.attempt_count = attempt
+        result.revision_history = list(revision_history)
         if not warnings:
             _log_diagnostics(result)
             return result
@@ -952,6 +1146,7 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
         last_warnings = warnings
         if attempt < attempts:
             feedback = _feedback_for_warnings(warnings, min_score=min_score)
+            previous_attempt = current_attempt
             logger.warning(
                 "Editorial attempt %s/%s rejected for %s: %s; retrying with feedback",
                 attempt,
@@ -961,9 +1156,32 @@ def prepare_editorial(noticia: dict) -> EditorialResult:
             )
             continue
 
-        logger.warning("Editorial fallback for %s after %s attempts: %s", result.title[:70], attempts, warnings)
+        final_action = os.getenv("EDITORIAL_FINAL_ATTEMPT_ACTION", "publish_last_safe").strip().lower()
+        hard_warnings = _hard_editorial_warnings(warnings)
+        if final_action == "publish_last_safe" and not hard_warnings:
+            result.fallback_used = True
+            result.final_attempt_used = True
+            result.warnings = list(warnings)
+            logger.warning(
+                "Editorial final seguro usado para %s tras %s intentos: %s",
+                result.title[:70],
+                attempts,
+                warnings,
+            )
+            _log_diagnostics(result)
+            return result
+
+        logger.warning(
+            "Editorial fallback para %s tras %s intentos; bloqueos duros=%s warnings=%s",
+            result.title[:70],
+            attempts,
+            hard_warnings,
+            warnings,
+        )
 
     result = build_fallback_editorial(noticia, last_warnings or ["editorial_enrichment_failed"])
+    result.attempt_count = len(revision_history)
+    result.revision_history = list(revision_history)
     _log_diagnostics(result)
     return result
 

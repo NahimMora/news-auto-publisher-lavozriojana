@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+.env
+
+# Ignore the output video from Git but not videos you import into src/.
+out
+
+# Assets temporales copiados por el pipeline Python para cada render (ver
+# utils/video_renderer.py: _render_remotion_main)
+public/tmp

@@ -1,55 +1,85 @@
-# BACKLOG.md
+# Backlog
 
-> Backlog inicial derivado de gaps encontrados al documentar el sistema
-> (2026-07-20). No tiene aún priorización formal por sprint/fecha — usar como punto de
-> partida y reordenar según necesidad real del operador.
+Última actualización: 2026-07-27. Los ítems resueltos se conservan.
 
-## Alta prioridad (operación)
+## Cerrado por la línea de base del 2026-07-23
 
-- [ ] Confirmar y restaurar la ejecución continua del supervisor (`python cli.py
-      status`) — el log no muestra actividad desde 2026-07-13.
-- [ ] Diagnosticar y resolver el backlog creciente de publicaciones en Facebook
-      (ver `KNOWN_ISSUES.md`).
-- [ ] Enrutar los loggers de `meta/fb_client.py` y `meta/facebook_token_manager.py` a
-      archivo (hoy solo consola, se pierden con `stdout=DEVNULL`).
-- [ ] Agregar `psutil` a `requirements.txt` (se usa en `cli.py` pero no está declarado).
+- [x] Contrato estructurado y códigos de salida.
+- [x] Heartbeat, stale y métricas de colas.
+- [x] Logs rotativos y redacción de secretos.
+- [x] `requirements.txt` completo, incluido `psutil`.
+- [x] JSON atómico, locks, backup, restore y cuarentena.
+- [x] Reescritura recuperable y estados terminales trazables.
+- [x] Configuración tipada y `doctor`.
+- [x] Contratos mockeados de CMS, Meta y R2.
+- [x] Fixtures para diez secciones y E2E local de 17 escenarios.
+- [x] Seguridad de UI, uploads, paths y SSRF.
 
-## Media prioridad (observabilidad y calidad)
+## Cerrado en preparación 24/7 del 2026-07-26
 
-- [ ] Definir y calcular métricas agregadas de publicaciones/día y tasa de éxito por
-      plataforma (ver `METRICS.md`) en vez de leerlas del log crudo.
-- [ ] Integrar Meta Insights API para medir alcance/impresiones reales por post, no solo
-      confirmación de publicación.
-- [ ] Automatizar backups periódicos de `data/` (hoy son manuales/ad hoc, solo 3
-      snapshots existentes).
-- [ ] Ampliar cobertura de tests: hoy solo `pipeline/node_webapp` y clientes de
-      Meta/social_queue tienen tests; scrapers, generación de imagen/video y el
-      supervisor/CLI no tienen tests automatizados.
+- [x] Workflow CI Windows reproducible y aislado.
+- [x] Gate que verifica `production_calls=false`.
+- [x] Estado `blocked` no exitoso.
+- [x] `preflight` para sources, OpenAI, R2, CMS, Facebook, Instagram, filesystem y
+  supervisor.
+- [x] Canary gated, una vez por canal, idempotente y sin cola general.
+- [x] Conciliación Facebook report-only y aplicación por decisiones.
+- [x] Motor de alertas con dedupe, recovery, outbox y webhook opcional.
+- [x] Modos `observe`, `web_only`, `web_facebook`, `web_instagram`, `all`.
+- [x] Kill switches autoritativos y límites controlados por deployment mode.
+- [x] Heartbeat con trazabilidad de despliegue.
+- [x] Variante de host/slash final de Tiempo Popular cubierta por test y preflight
+  vivo.
+- [x] CI remoto verde en PR #1.
+- [x] `main` protegido con `reliability-windows` obligatorio y strict.
+- [x] Scope `doctor core` separado de binarios multimedia opcionales.
+- [x] Carrera transitoria de lock Windows reproducida y corregida.
 
-## Media prioridad (producto)
+## Cerrado en la activación controlada del 2026-07-27
 
-- [ ] Evaluar agregar verificación/aprobación humana opcional antes de publicar (hoy es
-      100% automático una vez que la nota pasa el filtro editorial de OpenAI).
-- [ ] Conectar analítica del sitio (`lavozriojana.com`) para medir visitas/CTR
-      atribuibles a las notas publicadas por este pipeline.
-- [ ] Evaluar extender fuentes de scraping más allá de `tiempopopular.com.ar` y
-      `nuevarioja.com.ar`.
+- [x] Venv del host instalado y `pip check` limpio.
+- [x] Suite ampliada a 217 tests y E2E local verde.
+- [x] Backlog anterior al 27/07 archivado sin pérdida ni edición manual.
+- [x] Corte inicial por fecha ejecutado y preservado como evidencia histórica.
+- [x] Backlog histórico de Facebook sin pendientes ni ambiguos.
+- [x] Preflight real de OpenAI, R2, Facebook e Instagram.
+- [x] Canary Instagram con permalink y cleanup confirmados.
+- [x] Arranque Web y Facebook con evidencia externa.
+- [x] Primer ciclo 24/7 completo con cuatro etapas aceptables.
+- [x] UI manual restringida a localhost y disponible.
+- [x] Watchdog local cada cinco minutos para supervisor y UI.
+- [x] Línea de base independiente de fecha: últimas 20 identidades por timestamp
+  durable, con backup, archivo y eventos.
+- [x] Feedback editorial con intento anterior, detección de cambios materiales y uso
+  trazable del sexto resultado seguro.
+- [x] Falsos positivos editoriales por sustantivos genéricos y equivalencias
+  número-palabra cubiertos por regresiones.
+- [x] Facebook con título + caption compartido + URL y prewarm verificable de OG.
+- [x] Capacidad operativa ajustada: Web sin límite y Meta 8 por plataforma/ciclo.
 
-## Baja prioridad / exploratorio
+## Bloqueos para release oficial 24/7
 
-- [ ] Evaluar reemplazo del almacenamiento en JSON planos por una base de datos liviana
-      (ej. SQLite) si el volumen de notas/colas empieza a generar problemas de
-      integridad o performance.
-- [ ] Investigar si `IG_CHROME_PROFILE_DIR` (hook de Selenium sin implementar,
-      actualmente `PENDIENTE` en `.env`) sigue siendo necesario o se puede eliminar.
-- [ ] Documentar formalmente el contrato de la API privada que expone el CMS externo
-      (`WEBAPP_BASE_URL`), para que cambios ahí no rompan `pipeline/node_webapp/publisher.py`
-      sin aviso.
+- [ ] Obtener revisión/aprobación del PR.
+- [ ] Definir o implementar un endpoint CMS GET seguro y ejecutar su preflight.
+- [ ] Probar webhook real o aceptar formalmente operación con outbox local.
+- [ ] Observar varios ciclos adicionales sin fallos ni backlog creciente.
+- [ ] Completar una publicación Instagram de noticia nueva no deduplicada.
+- [ ] Ensayar un reboot completo y verificar las tareas programadas.
+- [ ] Ensayar rollback de modo y release.
+- [ ] Merge aprobado y creación posterior del tag propuesto.
 
-## Deuda técnica
+## Mantenimiento medio
 
-- [ ] `.git` de este proyecto estaba roto/mezclado con otro repo (Desktop-level) al
-      momento de crear esta documentación — verificar que el nuevo repo dedicado quede
-      correctamente aislado y no vuelva a mezclarse con otros proyectos del mismo disco.
-- [ ] No hay README.md en el repo — considerar uno breve que apunte a `/docs` y
-      `AGENTS.md` como punto de entrada.
+- [ ] Incorporar un watchdog externo simple para alertar si se apaga todo el host.
+- [ ] Definir retención/archivo de logs, eventos y outbox según capacidad del host.
+- [ ] Mantener fixtures frente a cambios de HTML.
+- [ ] Validar filesystem si el estado se mueve a un share de red.
+- [ ] Documentar un staging externo si se crea.
+
+## Riesgos aceptados o fuera de alcance
+
+- [ ] La aprobación editorial humana sigue opcional; no hay decisión que la haga
+  obligatoria.
+- [ ] No hay staging externo independiente.
+- [ ] Analytics, audiencia, monetización y nuevas plataformas siguen fuera de alcance.
+- [ ] No se migra JSON a base de datos sin evidencia de insuficiencia.

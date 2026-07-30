@@ -12,13 +12,19 @@ from datetime import datetime, timezone
 import requests
 
 from utils.editorial_priority import is_breaking as _is_breaking
-from utils.file_manager import load_json, save_json
+from utils.file_manager import (
+    FileLock,
+    _load_json_unlocked,
+    _save_json_unlocked,
+    load_json,
+    save_json,
+)
 from utils.logging_setup import setup_logger
+from utils.paths import data_dir
 
 logger = setup_logger("editorial_flags", "publish_web.log")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-FLAGS_PATH = os.path.join(DATA_DIR, "editorial_flags.json")
+FLAGS_PATH = str(data_dir() / "editorial_flags.json")
 
 # Solo estas categorías pueden activar featured
 _FEATURED_CATEGORIES = {"politica", "economia", "interior", "sociedad", "policiales"}
@@ -121,6 +127,46 @@ def register_breaking(flags: dict, post_id: str) -> dict:
 def register_featured(flags: dict, post_id: str) -> dict:
     flags["featured"] = {"post_id": post_id, "activated_at": _now_iso()}
     return flags
+
+
+def reconcile_after_publish(
+    *,
+    post_id: str,
+    is_breaking: bool,
+    is_featured: bool,
+) -> list[str]:
+    """Serializa la rotación de flags y preserva conflictos si el PATCH falla."""
+    errors: list[str] = []
+    with FileLock(FLAGS_PATH):
+        flags = _load_json_unlocked(
+            FLAGS_PATH,
+            {"breaking": None, "featured": None, "reconciliation_required": []},
+            expected_type=dict,
+        )
+        flags.setdefault("reconciliation_required", [])
+        transitions = (
+            ("breaking", is_breaking, {"isBreaking": False}),
+            ("featured", is_featured, {"isFeatured": False, "editorialPriority": 0}),
+        )
+        for name, activate, clear_fields in transitions:
+            if not activate:
+                continue
+            previous = flags.get(name)
+            previous_id = str(previous.get("post_id") or "") if isinstance(previous, dict) else ""
+            if previous_id and previous_id != post_id and not _patch_post(previous_id, clear_fields):
+                reason = f"{name}_previous_post_not_cleared:{previous_id}"
+                errors.append(reason)
+                conflict = {
+                    "type": name,
+                    "post_id": previous_id,
+                    "detected_at": _now_iso(),
+                    "reason": reason,
+                }
+                if conflict not in flags["reconciliation_required"]:
+                    flags["reconciliation_required"].append(conflict)
+            flags[name] = {"post_id": post_id, "activated_at": _now_iso()}
+        _save_json_unlocked(FLAGS_PATH, flags)
+    return errors
 
 
 def resolve_post_id(response_data: dict | None) -> str:

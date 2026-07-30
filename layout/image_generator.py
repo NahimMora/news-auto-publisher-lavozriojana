@@ -8,6 +8,7 @@ import time
 import requests
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from utils.logging_setup import setup_logger
+from utils.safe_http import safe_get
 
 logger = setup_logger("image_generator", "image_generator.log")
 
@@ -97,8 +98,12 @@ def _download(url: str) -> Image.Image | None:
     if not url:
         return None
     try:
-        r = requests.get(url, timeout=15,
-                         headers={"User-Agent": "Mozilla/5.0"})
+        r = safe_get(
+            url,
+            requester=requests.get,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
         r.raise_for_status()
         return Image.open(io.BytesIO(r.content)).convert("RGBA")
     except Exception as e:
@@ -172,7 +177,7 @@ def _fades(w: int, img_h: int, blend: float, bg_dark: float):
 # ── Iconos sociales desde SVG pre-renderizados ───────────────
 _ICON_CACHE: dict = {}
 
-def _svg_icon(base_path: str, sz: int, color: tuple) -> Image.Image:
+def _svg_icon(base_path: str, sz: int, color: tuple) -> Image.Image | None:
     """
     Carga el PNG base del SVG y lo coloriza con `color`.
     Soporta fondo transparente (usa canal alpha) y fondo blanco (invierte rojo).
@@ -181,11 +186,15 @@ def _svg_icon(base_path: str, sz: int, color: tuple) -> Image.Image:
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
 
-    base = Image.open(base_path).convert("RGBA").resize((sz, sz), Image.LANCZOS)
+    try:
+        base = Image.open(base_path).convert("RGBA").resize((sz, sz), Image.LANCZOS)
+    except (FileNotFoundError, OSError):
+        logger.warning("Ícono social ausente o inválido: %s", base_path)
+        return None
     r, g, b, a = base.split()
 
     # Detectar si el fondo es transparente o blanco
-    min_alpha = min(a.getdata())
+    min_alpha = a.getextrema()[0]
     if min_alpha < 10:
         # Fondo transparente: usar alpha original como máscara
         mask = a
@@ -348,8 +357,10 @@ def generate_post(article: dict, width: int, height: int, preloaded_img: "Image.
 
     fb_icon = _svg_icon(FB_ICON_PATH, icsz, brand)
     ig_icon = _svg_icon(IG_ICON_PATH, icsz, brand)
-    canvas.paste(fb_icon, (fpad, icy), fb_icon)
-    canvas.paste(ig_icon, (fpad + icsz + gap, icy), ig_icon)
+    if fb_icon:
+        canvas.paste(fb_icon, (fpad, icy), fb_icon)
+    if ig_icon:
+        canvas.paste(ig_icon, (fpad + icsz + gap, icy), ig_icon)
 
     url_text = "www.lavozriojana.com"
     ufs      = max(8, int(footer_h * 0.33))

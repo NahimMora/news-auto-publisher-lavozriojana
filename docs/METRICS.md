@@ -1,82 +1,189 @@
-# METRICS.md
+# Métricas operativas
 
-> Este documento define qué métricas importan y de dónde salen (o deberían salir) hoy.
-> Ninguna de estas métricas tiene un dashboard centralizado todavía — se calculan a
-> mano a partir de los archivos en `data/` y `logs/`, o directamente no se está
-> midiendo aún. Cada sección lo indica.
+Última actualización: 2026-07-26. Este documento define métricas calculables; no
+inventa valores ni implica que exista un dashboard.
 
-## Publicaciones diarias
+## Fuentes de verdad
 
-- **Estado**: no hay un contador agregado por día; se puede reconstruir contando
-  entradas por timestamp en `data/fb_posted.json`, `data/ig_posted.json` y
-  `data/noticias_web_publicadas.json`.
-- **Snapshot conocido**: `data/fb_posted.json` registra ~683 publicaciones históricas en
-  Facebook a la fecha de este documento (2026-07-20). No se relevó el conteo equivalente
-  de Instagram ni web en este corte.
-- **Pendiente**: script simple que agrupe estos JSON por fecha y calcule publicaciones/día
-  por plataforma.
+| Dato | Fuente |
+|---|---|
+| resultado de ciclo/etapa | `data/supervisor_heartbeat.json` y logs estructurados |
+| edad del supervisor | `heartbeat_at_ts` |
+| colas activas | JSON de staging, rewrite, web, meta y social |
+| terminales/fallbacks | `data/queue_events.json` |
+| publicaciones confirmadas | `noticias_web_publicadas.json`, `fb_posted.json`, `ig_posted.json` |
+| errores externos | logs rotativos de publisher, R2 y clientes Meta |
 
-## Porcentaje de publicaciones exitosas
+`python cli.py status --json` es la vista segura y de sólo lectura para heartbeat y
+colas.
 
-- **Estado**: se puede leer del log de cada corrida (`logs/run_fb.log`,
-  `logs/run_ig.log`, `logs/publish_web.log`), que reportan "X/Y" publicados por ciclo.
-- **Dato conocido/alerta**: en los ciclos del 2026-07-13 visibles en `run_fb.log`, la
-  tasa fue baja (0/6, 1/7, 4/10) — ver `KNOWN_ISSUES.md` y `CURRENT_STATE.md`.
-- **Pendiente**: no hay agregación histórica de tasa de éxito, solo el log crudo por
-  ciclo.
+## Contadores obligatorios por etapa
 
-## Fallos por plataforma
+Cada `StageResult` expone:
 
-- **Estado**: parcialmente disponible. `run_24x7.log` marca qué paso del ciclo
-  (scraping / rewrite / web / facebook / instagram) falló o completó OK por corrida.
-  Pero los clientes de Facebook (`fb_client.py`, `facebook_token_manager.py`) solo
-  loguean a **consola**, no a archivo, y el proceso corre con stdout/stderr
-  redirigidos a `DEVNULL` — es decir, el detalle del error real de Graph API se pierde
-  (bug conocido, ver `KNOWN_ISSUES.md`).
-- **Pendiente**: enrutar esos loggers a archivo para poder contar fallos por tipo de
-  error (rate limit, token expirado, contenido rechazado, etc.).
+- `received`: entradas visibles al inicio;
+- `selected`: lote elegido;
+- `processed`: intentos ejecutados;
+- `succeeded`: resultados con evidencia;
+- `failed`: intentos fallidos;
+- `deferred`: elementos conservados para otro ciclo;
+- `expired`: terminales por antigüedad;
+- `duration_seconds`;
+- `error_type`, `error_code` y `next_retry_at`.
 
-## Tiempo manual ahorrado
+No se deriva salud a partir de texto de logs. `no_work` es sano; `0/N` no es éxito;
+un lote parcial es `degraded`.
 
-- **Estado**: no medido formalmente (no hay baseline documentado de "cuánto tardaba
-  hacer esto a mano").
-- **Estimación cualitativa**: el pipeline reemplaza, por cada nota, el trabajo manual de
-  buscarla, reescribirla, clasificarla, diseñar la imagen y publicarla en 3 canales —
-  tareas que a mano tomarían varios minutos cada una, multiplicado por el volumen de
-  ~683+ publicaciones históricas solo en Facebook.
-- **Pendiente**: si se quiere una cifra real, definir un tiempo estimado por publicación
-  manual (ej. minutos) y multiplicarlo por el volumen mensual del sistema.
+## Indicadores calculables
 
-## Visitas (al sitio web)
+### Tasa de éxito de etapa
 
-- **Estado**: no trackeado desde este repo. `lavozriojana.com` es una app externa
-  (Node.js) fuera de este código; cualquier analítica de tráfico vive ahí (o en
-  Google Analytics / similar, si está configurado del lado del CMS).
-- **Pendiente**: documentar en el repo del CMS o acá una vez que se confirme la fuente
-  de analítica del sitio.
+```text
+succeeded / processed
+```
 
-## CTR
+Sólo se calcula cuando `processed > 0`; de lo contrario se informa “sin muestra”.
+Debe acompañarse con el status y no usarse para convertir `degraded` en `success`.
 
-- **Estado**: no trackeado. Requeriría integración con Meta Insights (para posts de
-  Facebook/Instagram) y analítica del sitio (para notas web) — ninguna está conectada a
-  este pipeline hoy.
+### Backlog
 
-## Alcance social
+```text
+pending + processing
+```
 
-- **Estado**: no trackeado desde este repo. Se podría obtener vía Meta Graph API
-  Insights (endpoints de `page_impressions`, `ig_media` insights) reusando las mismas
-  credenciales de `FB_PAGE_ACCESS_TOKEN` / `IG_ACCESS_TOKEN` ya configuradas, pero no
-  hay código que lo consulte todavía.
+Se desglosa por rewrite, web, meta, Facebook e Instagram. Para detectar crecimiento
+se necesitan al menos dos heartbeats; el repositorio no afirma tendencia a partir de
+un único snapshot.
 
-## Ingresos
+### Antigüedad
 
-- **Estado**: no aplica / no trackeado. El sistema no gestiona pauta publicitaria ni
-  monetización directa (ver `PRODUCT.md` → "Qué NO intenta resolver").
+- supervisor: ahora menos `heartbeat_at_ts`;
+- ciclo: ahora menos `cycle_finished_at_ts`;
+- cola: ahora menos el timestamp de encolado del elemento más antiguo.
 
-## Resumen de brechas de medición
+El supervisor está stale si supera `PIPELINE_24X7_STALE_SECONDS`.
 
-La brecha más grande hoy no es la falta de dashboards, sino la falta de **logging de
-errores accionable** para Facebook (bloquea calcular "fallos por plataforma" con
-precisión) y la ausencia total de conexión con **Meta Insights** o **analítica del
-sitio** para medir alcance/CTR/visitas. Priorizar esto antes de invertir en un
-dashboard agregado.
+### Fallos por tipo
+
+Agrupar `error_type` y `error_code` por etapa:
+
+- `invalid_credential`;
+- `rate_limit`;
+- `network_error` / `timeout`;
+- `http_4xx` / `server_error`;
+- `invalid_json` / `state_error`;
+- `selector_mismatch`;
+- `ambiguous_external_outcome`.
+
+Los rate limits deben registrar `next_retry_at`.
+
+### Integridad y recuperación
+
+- cantidad en `dead_letter`;
+- cantidad `expired`;
+- cantidad de cuarentenas JSON;
+- trabajos recuperados desde `processing`;
+- conflictos de flags editoriales en `reconciliation_required`;
+- fallbacks publicados o bloqueados por tipo/categoría.
+
+## Publicaciones
+
+Una publicación cuenta sólo si el historial conserva evidencia externa:
+
+- web: ID, URL o slug verificable;
+- Facebook/Instagram: ID de Graph API y, cuando corresponda, URL pública;
+- deduplicación por una publicación ya existente: evidencia explícita, nunca un
+  booleano fabricado.
+
+Los conteos históricos del documento anterior (~683 Facebook, 245 ciclos) provenían
+de una observación puntual de datos/logs operativos del 2026-07-20. No se vuelven a
+presentar como métricas actuales porque esta auditoría no leyó ni modificó esos datos
+para recalcularlos.
+
+## Métricas fuera de alcance
+
+Visitas, CTR, alcance social, audiencia e ingresos no se recolectan en este
+repositorio. Agregarlas sería una funcionalidad de producto y no forma parte de la
+línea de base de confiabilidad.
+
+## Alertas operativas
+
+`utils/alerts.py` calcula y persiste eventos sin dashboard. Un operador debe
+investigar:
+
+- heartbeat stale;
+- cualquier `failed`;
+- `degraded` repetido;
+- backlog creciente entre ciclos;
+- credencial inválida;
+- dead-letter nuevo;
+- JSON corrupto/cuarentena;
+- scraper `selector_mismatch`;
+- rate limit después de `next_retry_at`.
+
+La deduplicación usa `ALERT_DEDUP_SECONDS`. Una condición resuelta puede emitir
+`recovery`. Dead-letter y cuarentena son eventos irreversibles y no generan una falsa
+recuperación. `alert_outbox.json` conserva `delivery_status`, intentos, error y
+`next_retry_at`; un webhook fallido no convierte el ciclo del pipeline en fallo.
+
+## Métricas de despliegue
+
+El heartbeat versión 2 agrega:
+
+- `commit_sha`;
+- `release_tag`;
+- `deployment_mode`;
+- `configuration_fingerprint`;
+- `operator`;
+- `backup_reference`.
+
+El fingerprint omite nombres de variables sensibles y no contiene valores de tokens.
+El estado de gates no se infiere de métricas: se registra explícitamente en la
+auditoría y el PR.
+
+## Snapshot operativo 2026-07-27
+
+Snapshot puntual después del ciclo #8 en modo `all`:
+
+| Métrica | Valor |
+|---|---:|
+| ciclo | 8 |
+| scraping/rewrite | `success`, 16/16 |
+| Web | `degraded`, 24/26; 2 terminales sensibles |
+| Facebook | `success`, 8/8; 16 diferidas por cupo |
+| Instagram | `success`, 8/8; 5 diferidas |
+| cola Web | 0 |
+| cola Meta de origen | 26 |
+| social Facebook/Instagram pending | 16/3 |
+| rewrite pending/processing/failed/dead-letter | 0/0/0/0 |
+| heartbeat | `fresh` |
+| filesystem libre durante preflight | 34.065 MB |
+
+La ventana inicial quedó en 20 identidades y el scraping del mismo ciclo incorporó
+seis nuevas. Web sin cupo procesó las 26 en 1.151,578 segundos: publicó 24, registró
+siete publicaciones degradadas y envió dos entradas sensibles a estado terminal. La
+cola Web quedó en cero; el resultado general permaneció `degraded`, como exige el
+contrato para 24/26.
+
+Facebook respetó exactamente el cupo configurado de ocho. Instagram procesó ocho:
+siete publicaciones externas y una deduplicación con evidencia existente; el
+`StageResult` las cuenta como ocho resultados aceptables. Lo restante permanece
+durable para ciclos posteriores y no se vació.
+
+Durante este ciclo se reprodujeron falsos positivos del validador editorial con
+sustantivos/verbos al comienzo de oración y con equivalencias “dos/tres” frente a
+`2/3`. `LVR-075` y `LVR-076` conservan la reproducción, corrección y regresiones. Esos
+correctivos se cargan en el reinicio controlado posterior al ciclo; la evidencia del
+ciclo #8 corresponde al commit registrado por su heartbeat, no al código posterior.
+
+El ciclo #5 fue `degraded`: Instagram rechazó 1/1 mientras Web y Facebook fueron
+`success`. El elemento quedó en dead-letter y no se reintentó; el ciclo #6 confirmó
+que la integración seguía operable. Los rechazos posteriores a `LVR-069` agregan al
+evento terminal `http_status`, código/subcódigo y tipo del proveedor sin copiar el
+mensaje ni el cuerpo externo.
+
+Observación posterior con el commit final: ciclo #10 Web 6/6 e Instagram 1/1, pero
+Facebook 5/8 porque tres páginas aún no estaban públicamente disponibles para el
+prewarm. Las tres quedaron pendientes y Graph no fue llamado. El ciclo #11 terminó
+`success` 4/4, Facebook 8/8, Web/Instagram `no_work`, cola Web 0, Facebook pending 3
+e Instagram pending 0.

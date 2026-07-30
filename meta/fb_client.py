@@ -1,96 +1,225 @@
-"""
-Cliente de Facebook Graph API para La Voz Riojana.
-Publica noticias en la pagina de Facebook configurada usando el link web para cargar preview OG.
-"""
+"""Cliente tipado de Facebook Graph API."""
+from __future__ import annotations
+
 import os
 import time
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 from meta.facebook_token_manager import get_page_token
-from utils.file_manager import load_json, save_json
+from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
+from utils.operation_result import OperationResult
+from utils.paths import data_dir
+from utils.safe_http import UnsafeURLError, safe_get
+from utils.social_caption import build_instagram_caption
+from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
 
-logger = setup_logger("fb_client")
+logger = setup_logger("fb_client", "fb_client.log")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-FB_STATE_PATH = os.path.join(DATA_DIR, "fb_posted.json")
-GRAPH_API = "https://graph.facebook.com/v19.0"
-
+FB_STATE_PATH = str(data_dir() / "fb_posted.json")
+GRAPH_API = os.getenv("META_GRAPH_API", "https://graph.facebook.com/v19.0").rstrip("/")
 PAGE_ID = os.getenv("FB_PAGE_ID", "")
-DISABLED_PAGE_IDS = set(
-    x.strip() for x in os.getenv("FB_DISABLED_PAGE_IDS", "").split(",") if x.strip()
-)
+DISABLED_PAGE_IDS = {
+    value.strip()
+    for value in os.getenv("FB_DISABLED_PAGE_IDS", "").split(",")
+    if value.strip()
+}
 TEMP_BLOCK_BACKOFF = int(os.getenv("FB_TEMP_BLOCK_BACKOFF_SECONDS", "1800"))
 
 
 def _load_state() -> dict:
-    return load_json(FB_STATE_PATH, {"posted": {}, "page_backoff": {}})
+    return load_json(FB_STATE_PATH, {"posted": {}, "page_backoff": {}}, expected_type=dict)
 
 
-def _save_state(state: dict) -> None:
-    save_json(FB_STATE_PATH, state)
+def _update_state(mutator) -> dict:
+    return update_json(
+        FB_STATE_PATH,
+        mutator,
+        {"posted": {}, "page_backoff": {}},
+        expected_type=dict,
+    )
 
 
 def _is_posted(state: dict, dedup_key: str) -> bool:
     return dedup_key in state.get("posted", {})
 
 
-def _mark_posted(state: dict, dedup_key: str) -> None:
-    state.setdefault("posted", {})[dedup_key] = int(time.time())
+def _mark_posted(dedup_key: str, external_id: str, noticia: dict) -> None:
+    def mutate(state):
+        state.setdefault("posted", {})[dedup_key] = {
+            "posted_at": int(time.time()),
+            "external_id": external_id,
+            "titulo": noticia.get("titulo", ""),
+            "canonical_url": noticia.get("canonical_url") or noticia.get("url") or "",
+        }
+        return state
+
+    _update_state(mutate)
 
 
-def _is_in_backoff(state: dict) -> bool:
-    until = state.get("page_backoff", {}).get(PAGE_ID, 0)
-    return time.time() < until
+def _backoff_until(state: dict) -> int:
+    return int(state.get("page_backoff", {}).get(PAGE_ID, 0) or 0)
 
 
-def _set_backoff(state: dict) -> None:
-    state.setdefault("page_backoff", {})[PAGE_ID] = int(time.time()) + TEMP_BLOCK_BACKOFF
-    logger.warning(f"Backoff activado para pagina {PAGE_ID} por {TEMP_BLOCK_BACKOFF}s")
+def _set_backoff() -> int:
+    until = int(time.time()) + TEMP_BLOCK_BACKOFF
+
+    def mutate(state):
+        state.setdefault("page_backoff", {})[PAGE_ID] = until
+        return state
+
+    _update_state(mutate)
+    logger.warning("Backoff activado para la página configurada por %ss", TEMP_BLOCK_BACKOFF)
+    return until
 
 
-def _build_message(noticia: dict) -> str:
-    cuerpo = str(noticia.get("texto_instagram") or "").strip()
-    if not cuerpo:
-        titulo = noticia.get("titulo", "")
-        parrafos = noticia.get("parrafos", [])
-        primer_parrafo = noticia.get("excerpt", "") or (parrafos[0] if parrafos else "")
-        cuerpo = f"{titulo}\n\n{primer_parrafo}"
+def _build_message(noticia: dict, link: str = "") -> str:
+    title = str(noticia.get("titulo") or noticia.get("titulo_original") or "").strip()
+    parts = [
+        part
+        for part in (title, build_instagram_caption(noticia), link.strip())
+        if part
+    ]
+    return "\n\n".join(parts)
 
-    hashtag_localidad = noticia.get("hashtag_localidad", "")
-    seccion = str(noticia.get("seccion", "")).lower()
 
-    section_tags = {
-        "policiales": "#PoliciaLaRioja #Seguridad",
-        "deportes": "#DeportesRioja #Deportes",
-        "cultura": "#CulturaRioja #Cultura",
-        "espectaculos": "#EspectaculosRioja #Cultura",
-        "politica": "#PoliticaRioja #LaRiojaGobierna",
-        "economia": "#EconomiaRioja #Economia",
-        "salud": "#SaludRioja #Salud",
-        "educacion": "#EducacionRioja #Educacion",
-        "interior": "#InteriorRioja #LaRioja",
-        "sociedad": "#LaRiojaHoy #Sociedad",
+def _prewarm_enabled() -> bool:
+    return os.getenv("FB_LINK_PREWARM_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
-    tags_extra = section_tags.get(seccion, "#RiojaHoy")
-    tags_base = "#LaVozRiojana #LaRioja #Noticias"
-    tags = f"{tags_extra} {tags_base}"
-    if hashtag_localidad:
-        tags = f"{hashtag_localidad} {tags}"
 
-    return f"{cuerpo}\n\n{tags}"
+
+def prewarm_link_preview(link: str) -> OperationResult:
+    """Calienta la nota y su og:image sin publicar ni llamar a Graph."""
+    timeout = int(os.getenv("FB_LINK_PREWARM_TIMEOUT_SECONDS", "20"))
+    max_bytes = int(os.getenv("FB_LINK_PREWARM_MAX_BYTES", str(5 * 1024 * 1024)))
+    user_agent = (
+        "facebookexternalhit/1.1 "
+        "(+https://www.facebook.com/externalhit_uatext.php)"
+    )
+    try:
+        page = safe_get(
+            link,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=timeout,
+        )
+        status = int(getattr(page, "status_code", 0) or 0)
+        content_type = str(
+            getattr(page, "headers", {}).get("Content-Type") or ""
+        ).lower()
+        if status != 200:
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_page_http_error",
+                error_code=status,
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+        if "html" not in content_type:
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_page_content_type",
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+
+        soup = BeautifulSoup(str(getattr(page, "text", "") or ""), "html.parser")
+        try:
+            page.close()
+        except (AttributeError, TypeError):
+            pass
+        tag = soup.find("meta", attrs={"property": "og:image"})
+        og_image = str(tag.get("content") or "").strip() if tag else ""
+        if not _is_http_url(og_image):
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_missing_og_image",
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+
+        image = safe_get(
+            og_image,
+            headers={"User-Agent": user_agent, "Accept": "image/*"},
+            timeout=timeout,
+            stream=True,
+        )
+        image_status = int(getattr(image, "status_code", 0) or 0)
+        image_type = str(
+            getattr(image, "headers", {}).get("Content-Type") or ""
+        ).lower()
+        if image_status != 200 or not image_type.startswith("image/"):
+            try:
+                image.close()
+            except (AttributeError, TypeError):
+                pass
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="link_preview_og_image_unavailable",
+                error_code=image_status,
+                retryable=True,
+                details={"publication_outcome": "not_published"},
+            )
+        total = 0
+        iterator = getattr(image, "iter_content", None)
+        if callable(iterator):
+            for chunk in iterator(chunk_size=64 * 1024):
+                total += len(chunk or b"")
+                if total > max_bytes:
+                    image.close()
+                    return OperationResult(
+                        StageStatus.DEGRADED,
+                        error_type="link_preview_og_image_too_large",
+                        retryable=False,
+                        details={"publication_outcome": "not_published"},
+                    )
+        try:
+            image.close()
+        except (AttributeError, TypeError):
+            pass
+        logger.info(
+            "Preview de Facebook verificado page_status=%s image_status=%s image_bytes=%s",
+            status,
+            image_status,
+            total,
+        )
+        return OperationResult(
+            StageStatus.SUCCESS,
+            details={"og_image_url": og_image},
+        )
+    except (requests.RequestException, UnsafeURLError, ValueError) as exc:
+        logger.warning(
+            "No se pudo precalentar el preview de Facebook: %s",
+            type(exc).__name__,
+        )
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="link_preview_prewarm_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+            details={"publication_outcome": "not_published"},
+        )
 
 
 def _is_http_url(value: object) -> bool:
-    parsed = urlparse(str(value or ""))
+    parsed = urlparse(str(value or "").strip())
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def _is_video_item(noticia: dict) -> bool:
-    return str(noticia.get("media_type") or "").lower() == "video" or bool(noticia.get("video_url"))
+    return str(noticia.get("media_type") or "").lower() == "video" or bool(
+        noticia.get("video_url")
+    )
 
 
 def _video_url(noticia: dict) -> str:
@@ -110,132 +239,174 @@ def _web_link(noticia: dict) -> str:
 
 
 def _dedup_key(noticia: dict) -> str:
-    basis = noticia.get("canonical_url") or noticia.get("url") or _web_link(noticia) or noticia.get("titulo", "")
+    basis = (
+        noticia.get("canonical_url")
+        or noticia.get("url")
+        or _web_link(noticia)
+        or noticia.get("titulo", "")
+    )
     return f"link:{url_hash(str(basis))}"
 
 
-def _post_video_to_facebook(noticia: dict, token: str, state: dict, dedup_key: str) -> bool:
-    video_url = _video_url(noticia)
-    if not video_url:
-        return False
-
-    payload = {
-        "description": _build_message(noticia),
-        "file_url": video_url,
-        "access_token": token,
-    }
-
+def _safe_json(response) -> dict:
     try:
-        r = requests.post(f"{GRAPH_API}/{PAGE_ID}/videos", data=payload, timeout=120)
-        data = r.json()
-
-        if r.status_code == 200 and ("id" in data or "video_id" in data):
-            _mark_posted(state, dedup_key)
-            _save_state(state)
-            logger.info(f"Video publicado en Facebook: {noticia.get('titulo', '')[:70]}")
-            return True
-
-        if "error" in data:
-            error = data["error"]
-            code = error.get("code", 0)
-            msg = error.get("message", "")
-            if code in (32, 613) or "temporarily blocked" in msg.lower():
-                _set_backoff(state)
-                _save_state(state)
-            logger.error(f"Error Graph API FB video [{code}]: {msg}")
-        return False
-    except Exception as e:
-        logger.error(f"Excepcion publicando video en Facebook: {e}")
-        return False
+        data = response.json()
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def post_to_facebook(noticia: dict) -> bool:
-    """Publica una noticia en la pagina de Facebook. Retorna True si exitoso."""
+def _api_result(response) -> OperationResult:
+    data = _safe_json(response)
+    external_id = str(data.get("id") or data.get("post_id") or data.get("video_id") or "")
+    if response.status_code in {200, 201} and external_id:
+        return OperationResult(
+            StageStatus.SUCCESS,
+            external_id=external_id,
+            response=data,
+        )
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    code = error.get("code") or response.status_code
+    message = str(error.get("message") or "")
+    if int(code or 0) == 190 or response.status_code == 401:
+        return OperationResult(
+            StageStatus.FAILED,
+            error_type="invalid_credential",
+            error_code=code,
+            response=data,
+        )
+    if response.status_code == 429 or int(code or 0) in {4, 32, 613} or "temporarily blocked" in message.lower():
+        until = _set_backoff()
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            error_code=code,
+            retryable=True,
+            next_retry_at=until,
+            response=data,
+        )
+    if response.status_code >= 500:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="server_error",
+            error_code=response.status_code,
+            retryable=True,
+            response=data,
+        )
+    return OperationResult(
+        StageStatus.FAILED,
+        error_type="request_rejected" if data else "invalid_response",
+        error_code=response.status_code,
+        response=data or None,
+    )
+
+
+def post_to_facebook_detailed(noticia: dict) -> OperationResult:
+    """Publica una noticia y conserva evidencia externa antes de confirmar éxito."""
     if not PAGE_ID or PAGE_ID == "PENDIENTE":
-        logger.warning("FB_PAGE_ID no configurado, saltando publicacion Facebook")
-        return False
-
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
     if PAGE_ID in DISABLED_PAGE_IDS:
-        logger.info(f"Pagina {PAGE_ID} deshabilitada")
-        return False
+        return OperationResult(
+            StageStatus.NO_WORK,
+            error_type="platform_disabled",
+            details={"page_id_configured": True},
+        )
+    try:
+        state = _load_state()
+    except JsonStateError as exc:
+        logger.error("Estado Facebook ilegible: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
 
-    state = _load_state()
+    until = _backoff_until(state)
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
 
-    if _is_in_backoff(state):
-        logger.warning(f"Pagina {PAGE_ID} en backoff, saltando")
-        return False
-
-    dedup_key = noticia.get("dedup_key") or _dedup_key(noticia)
+    dedup_key = str(noticia.get("dedup_key") or _dedup_key(noticia))
     if _is_posted(state, dedup_key):
-        logger.debug(f"Ya publicado en FB: {noticia.get('titulo', '')[:50]}")
-        return True
+        record = state["posted"].get(dedup_key)
+        external_id = str(record.get("external_id") or "") if isinstance(record, dict) else ""
+        return OperationResult(
+            StageStatus.SUCCESS,
+            external_id=external_id,
+            deduplicated=True,
+        )
 
+    endpoint = "feed"
+    payload = {"message": _build_message(noticia)}
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
     if _is_video_item(noticia):
-        try:
-            token = get_page_token()
-        except ValueError as e:
-            logger.error(str(e))
-            return False
-
-        if _post_video_to_facebook(noticia, token, state, dedup_key):
-            return True
-
-        source_link = str(noticia.get("source_video_url") or noticia.get("url") or "").strip()
-        if _is_http_url(source_link):
-            payload = {
-                "message": _build_message(noticia),
-                "link": source_link,
-                "access_token": token,
-            }
-            try:
-                r = requests.post(f"{GRAPH_API}/{PAGE_ID}/feed", data=payload, timeout=60)
-                data = r.json()
-                if r.status_code == 200 and ("id" in data or "post_id" in data):
-                    _mark_posted(state, dedup_key)
-                    _save_state(state)
-                    logger.info(f"Link de video publicado en Facebook: {noticia.get('titulo', '')[:70]}")
-                    return True
-            except Exception as e:
-                logger.error(f"Excepcion publicando link de video en Facebook: {e}")
-        return False
-
-    link = _web_link(noticia)
-    if not link:
-        logger.warning("Facebook requiere web_url/noticia_url para cargar preview OG: %s", noticia.get("titulo", "")[:70])
-        return False
+        video_url = _video_url(noticia)
+        if not video_url:
+            return OperationResult(StageStatus.FAILED, error_type="invalid_video_url")
+        endpoint = "videos"
+        payload = {
+            "description": _build_message(noticia),
+            "file_url": video_url,
+        }
+        timeout = int(os.getenv("FB_VIDEO_REQUEST_TIMEOUT_SECONDS", "120"))
+    else:
+        link = _web_link(noticia)
+        if not link:
+            logger.warning("Facebook requiere URL web pública para el preview OG")
+            return OperationResult(StageStatus.FAILED, error_type="missing_web_url")
+        if _prewarm_enabled():
+            prewarm = prewarm_link_preview(link)
+            if not prewarm.ok:
+                logger.error(
+                    "Facebook no publica porque el preview web no quedo verificable: %s",
+                    prewarm.error_type,
+                )
+                return prewarm
+        payload["message"] = _build_message(noticia, link)
+        payload["link"] = link
 
     try:
         token = get_page_token()
-    except ValueError as e:
-        logger.error(str(e))
-        return False
-
-    payload = {
-        "message": _build_message(noticia),
-        "link": link,
-        "access_token": token,
-    }
+    except ValueError as exc:
+        logger.error("No se obtuvo token de página: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    payload["access_token"] = token
 
     try:
-        r = requests.post(f"{GRAPH_API}/{PAGE_ID}/feed", data=payload, timeout=60)
-        data = r.json()
+        response = requests.post(
+            f"{GRAPH_API}/{PAGE_ID}/{endpoint}",
+            data=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        logger.error("Error de red publicando en Facebook: %s", exc)
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+            details={"publication_outcome": "unknown"},
+        )
 
-        if r.status_code == 200 and ("id" in data or "post_id" in data):
-            _mark_posted(state, dedup_key)
-            _save_state(state)
-            logger.info(f"Publicado en Facebook: {noticia.get('titulo', '')[:70]}")
-            return True
+    result = _api_result(response)
+    if result.ok:
+        try:
+            _mark_posted(dedup_key, result.external_id, noticia)
+        except JsonStateError as exc:
+            logger.error("Publicado en Facebook pero no se persistió la evidencia: %s", exc)
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="published_state_write_error",
+                external_id=result.external_id,
+                response=result.response,
+                details={"publication_outcome": "confirmed"},
+            )
+        logger.info("Publicado en Facebook: %s", str(noticia.get("titulo") or "")[:70])
+    else:
+        logger.error("Facebook rechazó la publicación: %s", result.to_dict())
+    return result
 
-        if "error" in data:
-            error = data["error"]
-            code = error.get("code", 0)
-            msg = error.get("message", "")
-            if code in (32, 613) or "temporarily blocked" in msg.lower():
-                _set_backoff(state)
-                _save_state(state)
-            logger.error(f"Error Graph API FB [{code}]: {msg}")
-        return False
 
-    except Exception as e:
-        logger.error(f"Excepcion publicando en Facebook: {e}")
-        return False
+def post_to_facebook(noticia: dict) -> bool:
+    """Wrapper compatible con el contrato booleano histórico."""
+    return post_to_facebook_detailed(noticia).ok

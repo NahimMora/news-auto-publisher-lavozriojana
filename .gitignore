@@ -6,4 +6,6 @@ FotosLVR/
 __pycache__/
 *.pyc
 *.pyo
+venv/
+.venv/
 .DS_Store

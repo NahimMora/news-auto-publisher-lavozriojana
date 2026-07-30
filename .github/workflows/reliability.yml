@@ -1,0 +1,91 @@
+name: Reliability baseline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reliability-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHON_DOTENV_DISABLED: "1"
+      PIPELINE_DEPLOYMENT_MODE: observe
+      WEB_PUBLISH_TARGET: "off"
+      FB_PUBLISH_ENABLED: "false"
+      IG_PUBLISH_ENABLED: "false"
+      CANARY_ENABLED: "false"
+      ALERTS_ENABLED: "false"
+      OPENAI_FALLBACK_MODE: allow_non_sensitive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Preparar aislamiento temporal
+        shell: pwsh
+        run: |
+          $paths = @{
+            PYTHONPYCACHEPREFIX = Join-Path $env:RUNNER_TEMP "lvr-pycache"
+            LVR_DATA_DIR = Join-Path $env:RUNNER_TEMP "lvr-data"
+            LVR_LOGS_DIR = Join-Path $env:RUNNER_TEMP "lvr-logs"
+            LVR_OUTPUT_DIR = Join-Path $env:RUNNER_TEMP "lvr-output"
+            LVR_FOTOS_DIR = Join-Path $env:RUNNER_TEMP "lvr-fotos"
+            LVR_BACKUP_DIR = Join-Path $env:RUNNER_TEMP "lvr-backups"
+            LVR_QUARANTINE_DIR = Join-Path $env:RUNNER_TEMP "lvr-quarantine"
+          }
+          foreach ($entry in $paths.GetEnumerator()) {
+            "$($entry.Key)=$($entry.Value)" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Instalar dependencias
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Suite completa sin deprecaciones
+        shell: pwsh
+        run: python -W error::DeprecationWarning -m unittest discover tests
+
+      - name: Compilar módulos
+        shell: pwsh
+        run: python -m compileall -q .
+
+      - name: Doctor core
+        shell: pwsh
+        run: python cli.py doctor --scope core --json
+
+      - name: End-to-end local dry-run
+        shell: pwsh
+        run: |
+          python cli.py run-once --dry-run --json | Out-File -LiteralPath "$env:RUNNER_TEMP\lvr-dry-run.json" -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/verify_ci_safety.py --dry-run-json "$env:RUNNER_TEMP\lvr-dry-run.json"
+
+      - name: Diff y árbol limpios
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dirty = git status --porcelain --untracked-files=all
+          if ($dirty) {
+            $dirty
+            throw "La validación generó archivos dentro del repositorio"
+          }

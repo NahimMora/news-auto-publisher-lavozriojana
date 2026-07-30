@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from PIL import Image
@@ -17,6 +18,8 @@ from pipeline.node_webapp import editorial, media, publisher
 from pipeline.node_webapp.editorial import EditorialResult, EditorialSection
 from pipeline.node_webapp.media import MediaResult
 from utils import manual_video_queue, social_queue
+from utils.operation_result import OperationResult
+from utils.stage_result import StageStatus
 
 
 class FakeResponse:
@@ -104,6 +107,48 @@ class EditorialTests(unittest.TestCase):
         self.assertTrue(any(w.startswith("invented_date:28 de julio") for w in warnings))
         self.assertTrue(any("Juan Perez" in w for w in warnings))
 
+    def test_validation_accepts_numeric_digits_when_source_uses_spanish_words(self):
+        noticia = sample_news(
+            parrafos=[
+                "Se sortearon tres autos: dos unidades para Capital y una para el interior.",
+            ]
+        )
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "El sorteo entregó 3 autos."
+        result.sections = [
+            EditorialSection(
+                heading="Distribución",
+                paragraphs=["La organización destinó 2 unidades a Capital y 1 al interior."],
+            )
+        ]
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertFalse(any(w == "invented_number:2" for w in warnings), warnings)
+        self.assertFalse(any(w == "invented_number:3" for w in warnings), warnings)
+
+    def test_validation_does_not_treat_articles_as_numeric_one(self):
+        noticia = sample_news(
+            parrafos=["Fue un encuentro con una propuesta cultural para toda la familia."]
+        )
+        result = editorial.build_fallback_editorial(noticia)
+        result.title = "Se entregó 1 premio"
+        result.lead = "La organización entregó 1 premio durante el encuentro."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertIn("invented_number:1", warnings)
+
     def test_validation_rejects_disallowed_html(self):
         noticia = sample_news()
         result = editorial.build_fallback_editorial(noticia)
@@ -112,6 +157,41 @@ class EditorialTests(unittest.TestCase):
         warnings = editorial.validate_editorial_result(result, noticia, check_similarity=False)
 
         self.assertIn("disallowed_html_tag:script", warnings)
+
+    def test_generic_editorial_nouns_and_leading_connectors_are_not_proper_names(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.title = "Avanza el operativo tras un trágico fallecimiento en Aimogasta"
+        result.lead = "En Capital continúan las tareas informadas. Están activas."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertFalse(
+            any("Fallecimiento" in warning for warning in warnings),
+            warnings,
+        )
+        self.assertFalse(any("Avanza" in warning for warning in warnings), warnings)
+        self.assertFalse(any("Están" in warning for warning in warnings), warnings)
+        self.assertFalse(any("En Capital" in warning for warning in warnings), warnings)
+
+    def test_validation_still_rejects_single_invented_name_inside_sentence(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "La actividad se realizará en Córdoba."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(
+            result,
+            noticia,
+            check_similarity=False,
+        )
+
+        self.assertTrue(any("Córdoba" in warning for warning in warnings), warnings)
 
     def test_prepare_editorial_retries_when_quality_score_is_low(self):
         noticia = sample_news()
@@ -138,7 +218,14 @@ class EditorialTests(unittest.TestCase):
             "quality_score": 0.5,
             "tags": ["Aimogasta", "Vialidad Provincial"],
         }
-        high_quality = dict(low_quality, quality_score=0.92)
+        high_quality = dict(
+            low_quality,
+            quality_score=0.92,
+            lead=(
+                "Vialidad Provincial mantiene tareas sobre rutas de Capital "
+                "y Aimogasta."
+            ),
+        )
 
         with patch.dict(
             os.environ,
@@ -158,7 +245,229 @@ class EditorialTests(unittest.TestCase):
         self.assertEqual(result.quality_score, 0.92)
         self.assertEqual(call_ai.call_count, 2)
         self.assertIsNone(call_ai.call_args_list[0].kwargs["feedback"])
+        self.assertIsNone(call_ai.call_args_list[0].kwargs["previous_attempt"])
         self.assertIn("quality_score_below_threshold", call_ai.call_args_list[1].kwargs["feedback"])
+        previous_attempt = call_ai.call_args_list[1].kwargs["previous_attempt"]
+        self.assertEqual(
+            previous_attempt["title"],
+            "Vialidad Provincial intensifica mejoras viales en Aimogasta",
+        )
+        self.assertEqual(previous_attempt["quality_score"], 0.5)
+
+    def test_feedback_covers_every_rejection_reason(self):
+        feedback = editorial._feedback_for_warnings(
+            [
+                "invented_number:99",
+                "copy_paste_similarity:0.95",
+                "quality_score_below_threshold:0.50",
+                "disallowed_html_tag:script",
+                "unsafe_judicial_claim:es culpable",
+                "revision_no_material_change",
+            ],
+            min_score=0.86,
+        )
+
+        self.assertIn("99", feedback)
+        self.assertIn("reorganiza", feedback.lower())
+        self.assertIn("0.86", feedback)
+        self.assertIn("html", feedback.lower())
+        self.assertIn("culpabilidad", feedback.lower())
+        self.assertIn("cambios materiales", feedback.lower())
+
+    def test_openai_payload_contains_feedback_and_previous_attempt(self):
+        create = Mock(
+            return_value=SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content='{"quality_score": 0.9}')
+                    )
+                ]
+            )
+        )
+        client = SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(create=create),
+            )
+        )
+        previous = {
+            "title": "Intento anterior",
+            "lead": "Texto anterior",
+            "quality_score": 0.5,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-only",
+                "OPENAI_RETRY_COUNT": "1",
+            },
+            clear=False,
+        ), patch("openai.OpenAI", return_value=client):
+            editorial._call_ai_enricher(
+                sample_news(),
+                feedback="Cambiar estructura y titulo",
+                previous_attempt=previous,
+            )
+
+        user_payload = json.loads(create.call_args.kwargs["messages"][1]["content"])
+        self.assertEqual(
+            user_payload["revision_feedback"],
+            "Cambiar estructura y titulo",
+        )
+        self.assertEqual(user_payload["previous_attempt"], previous)
+        self.assertEqual(create.call_args.kwargs["temperature"], 0.55)
+
+    def test_identical_revision_receives_explicit_no_change_feedback(self):
+        noticia = sample_news()
+        low_quality = {
+            "title": "Vialidad Provincial intensifica mejoras viales en Aimogasta",
+            "excerpt": "Vialidad Provincial informo tareas de mantenimiento vial.",
+            "lead": "Los equipos trabajan sobre rutas de Capital y Aimogasta.",
+            "source_paragraph": "Segun publico Tiempo Popular, avanzaron las tareas viales.",
+            "sections": [
+                {
+                    "heading": "Trabajos en marcha",
+                    "paragraphs": ["Las tareas incluyen conservacion y limpieza de banquinas."],
+                }
+            ],
+            "closing_paragraph": "",
+            "key_points": ["Aimogasta", "Vialidad Provincial"],
+            "seo_title": "Vialidad Provincial mejora rutas",
+            "meta_description": "Trabajos de mantenimiento vial.",
+            "social_title": "Mejoras en rutas",
+            "social_description": "Continuan las tareas viales.",
+            "focus_keyword": "Vialidad Provincial",
+            "quality_score": 0.5,
+            "tags": ["Aimogasta", "Vialidad Provincial"],
+        }
+        accepted = dict(
+            low_quality,
+            quality_score=0.92,
+            title="Mejoras viales avanzan en Aimogasta",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLE_EDITORIAL_NEWS_ENRICHER": "true",
+                "EDITORIAL_ENRICHER_MAX_REVISIONS": "2",
+                "EDITORIAL_ENRICHER_MIN_SCORE": "0.86",
+            },
+            clear=False,
+        ), patch(
+            "pipeline.node_webapp.editorial._call_ai_enricher",
+            side_effect=[low_quality, low_quality, accepted],
+        ) as call_ai:
+            result = editorial.prepare_editorial(noticia)
+
+        self.assertFalse(result.fallback_used)
+        self.assertEqual(call_ai.call_count, 3)
+        self.assertIn(
+            "revision_no_material_change",
+            call_ai.call_args_list[2].kwargs["feedback"],
+        )
+        self.assertIn(
+            "cambios materiales",
+            call_ai.call_args_list[2].kwargs["feedback"].lower(),
+        )
+
+    def test_changing_only_self_reported_score_is_not_a_material_revision(self):
+        noticia = sample_news()
+        payload = {
+            "title": "Vialidad Provincial intensifica mejoras viales en Aimogasta",
+            "excerpt": "Vialidad Provincial informo tareas de mantenimiento vial.",
+            "lead": "Los equipos trabajan sobre rutas de Capital y Aimogasta.",
+            "source_paragraph": "Segun publico Tiempo Popular, avanzaron las tareas.",
+            "sections": [
+                {
+                    "heading": "Trabajos en marcha",
+                    "paragraphs": ["Las tareas incluyen conservacion de caminos."],
+                }
+            ],
+            "closing_paragraph": "",
+            "key_points": ["Aimogasta", "Vialidad Provincial"],
+            "seo_title": "Vialidad Provincial mejora rutas",
+            "meta_description": "Trabajos de mantenimiento vial.",
+            "social_title": "Mejoras en rutas",
+            "social_description": "Continuan las tareas viales.",
+            "focus_keyword": "Vialidad Provincial",
+            "quality_score": 0.5,
+            "tags": ["Aimogasta", "Vialidad Provincial"],
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLE_EDITORIAL_NEWS_ENRICHER": "true",
+                "EDITORIAL_ENRICHER_MAX_REVISIONS": "1",
+                "EDITORIAL_ENRICHER_MIN_SCORE": "0.86",
+                "EDITORIAL_FINAL_ATTEMPT_ACTION": "publish_last_safe",
+            },
+            clear=False,
+        ), patch(
+            "pipeline.node_webapp.editorial._call_ai_enricher",
+            side_effect=[payload, dict(payload, quality_score=0.92)],
+        ):
+            result = editorial.prepare_editorial(noticia)
+
+        self.assertTrue(result.final_attempt_used)
+        self.assertIn("revision_no_material_change", result.warnings)
+        self.assertEqual(
+            [],
+            result.revision_history[-1]["material_changed_fields"],
+        )
+
+    def test_sixth_safe_attempt_is_published_instead_of_original_fallback(self):
+        noticia = sample_news(titulo="Titulo original")
+        attempts = []
+        for number in range(1, 7):
+            attempts.append(
+                {
+                    "title": f"Version editorial {number}",
+                    "excerpt": "Resumen editorial verificable.",
+                    "lead": "Vialidad Provincial informo tareas sobre rutas riojanas.",
+                    "source_paragraph": "Segun publico Tiempo Popular, avanzaron las tareas.",
+                    "sections": [
+                        {
+                            "heading": "Trabajos en marcha",
+                            "paragraphs": ["Las tareas incluyen conservacion de caminos."],
+                        }
+                    ],
+                    "closing_paragraph": "",
+                    "key_points": ["Aimogasta", "Vialidad Provincial"],
+                    "seo_title": f"Version editorial {number}",
+                    "meta_description": "Trabajos viales en La Rioja.",
+                    "social_title": f"Version editorial {number}",
+                    "social_description": "Continuan las tareas viales.",
+                    "focus_keyword": "Vialidad Provincial",
+                    "quality_score": 0.92,
+                    "tags": ["Aimogasta", "Vialidad Provincial"],
+                }
+            )
+
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLE_EDITORIAL_NEWS_ENRICHER": "true",
+                "EDITORIAL_ENRICHER_MAX_REVISIONS": "5",
+                "EDITORIAL_ENRICHER_MIN_SCORE": "0.86",
+                "EDITORIAL_FINAL_ATTEMPT_ACTION": "publish_last_safe",
+            },
+            clear=False,
+        ), patch(
+            "pipeline.node_webapp.editorial._call_ai_enricher",
+            side_effect=attempts,
+        ), patch(
+            "pipeline.node_webapp.editorial.validate_editorial_result",
+            return_value=["copy_paste_similarity:0.95"],
+        ):
+            result = editorial.prepare_editorial(noticia)
+
+        self.assertEqual(result.title, "Version editorial 6")
+        self.assertTrue(result.fallback_used)
+        self.assertTrue(result.final_attempt_used)
+        self.assertEqual(result.attempt_count, 6)
+        self.assertIn("copy_paste_similarity:0.95", result.warnings)
 
 
 class PayloadAndApiTests(unittest.TestCase):
@@ -393,6 +702,44 @@ class ImageGeneratorTests(unittest.TestCase):
 
 
 class FacebookClientTests(unittest.TestCase):
+    def test_link_preview_prewarm_requires_public_og_image(self):
+        page = FakeResponse(200, None)
+        page.text = (
+            '<html><head><meta property="og:image" '
+            'content="https://media.lavozriojana.com/og/nota.jpg"></head></html>'
+        )
+        page.headers = {"Content-Type": "text/html; charset=utf-8"}
+        image = FakeResponse(200, None)
+        image.headers = {"Content-Type": "image/jpeg"}
+
+        with patch("meta.fb_client.safe_get", side_effect=[page, image]) as get:
+            with self.assertLogs("fb_client", level="INFO") as captured:
+                result = fb_client.prewarm_link_preview(
+                    "https://lavozriojana.com.ar/noticias/nota"
+                )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details["og_image_url"], "https://media.lavozriojana.com/og/nota.jpg")
+        self.assertEqual(get.call_count, 2)
+        self.assertIn("facebookexternalhit", get.call_args_list[0].kwargs["headers"]["User-Agent"])
+        self.assertTrue(
+            any("preview de facebook verificado" in line.lower() for line in captured.output),
+            captured.output,
+        )
+
+    def test_link_preview_prewarm_fails_without_og_image(self):
+        page = FakeResponse(200, None)
+        page.text = "<html><head><title>Nota</title></head></html>"
+        page.headers = {"Content-Type": "text/html"}
+
+        with patch("meta.fb_client.safe_get", return_value=page):
+            result = fb_client.prewarm_link_preview(
+                "https://lavozriojana.com.ar/noticias/nota"
+            )
+
+        self.assertEqual(result.status, StageStatus.DEGRADED)
+        self.assertEqual(result.error_type, "link_preview_missing_og_image")
+
     def test_facebook_posts_meta_text_with_web_link_preview(self):
         noticia = sample_news(
             texto_instagram="Texto corto para Meta",
@@ -409,6 +756,12 @@ class FacebookClientTests(unittest.TestCase):
                 "meta.fb_client.get_page_token",
                 return_value="token",
             ), patch(
+                "meta.fb_client.prewarm_link_preview",
+                return_value=OperationResult(StageStatus.SUCCESS),
+            ) as prewarm, patch(
+                "meta.fb_client._prewarm_enabled",
+                return_value=True,
+            ), patch(
                 "meta.fb_client.requests.post",
                 return_value=FakeResponse(200, {"id": "page123_1"}),
             ) as post:
@@ -420,9 +773,12 @@ class FacebookClientTests(unittest.TestCase):
         args, kwargs = post.call_args
         self.assertEqual(args[0], f"{fb_client.GRAPH_API}/page123/feed")
         self.assertEqual(kwargs["data"]["link"], noticia["web_url"])
-        self.assertIn("Texto corto para Meta", kwargs["data"]["message"])
+        self.assertTrue(kwargs["data"]["message"].startswith(noticia["titulo"]))
+        self.assertIn(ig_client._build_caption(noticia), kwargs["data"]["message"])
+        self.assertIn(noticia["web_url"], kwargs["data"]["message"])
         self.assertNotIn("files", kwargs)
         self.assertIn("link:test", saved_state["posted"])
+        prewarm.assert_called_once_with(noticia["web_url"])
 
     def test_facebook_waits_when_web_link_is_missing(self):
         noticia = sample_news(texto_instagram="Texto corto para Meta")
@@ -491,7 +847,7 @@ class InstagramVideoClientTests(unittest.TestCase):
         self.assertIn("video:test", saved_state["posted"])
         self.assertEqual(saved_state["posted"]["video:test"]["titulo"], "Video policial")
 
-    def test_instagram_skips_similar_posted_record(self):
+    def test_instagram_skips_similar_without_fabricating_publication_record(self):
         noticia = {
             "titulo": "Búsqueda de adolescente desaparecido en Chilecito",
             "texto_instagram": "Caption nuevo",
@@ -531,8 +887,8 @@ class InstagramVideoClientTests(unittest.TestCase):
 
         self.assertTrue(ok)
         post.assert_not_called()
-        self.assertIn("link:new", saved_state["posted"])
-        self.assertEqual(saved_state["posted"]["link:new"]["titulo"], noticia["titulo"])
+        self.assertNotIn("link:new", saved_state["posted"])
+        self.assertIn("link:old", saved_state["posted"])
 
 
 class ManualVideoQueueTests(unittest.TestCase):
@@ -596,8 +952,17 @@ class QueueTests(unittest.TestCase):
                 "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
                 str(history),
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                side_effect=[(True, False), (False, False)],
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                side_effect=[
+                    {"published": True, "featured": False, "error": None},
+                    {
+                        "published": False,
+                        "featured": False,
+                        "error": "network_error",
+                        "retryable": True,
+                        "terminal": False,
+                    },
+                ],
             ):
                 publisher.publish_pending()
 
@@ -618,13 +983,46 @@ class QueueTests(unittest.TestCase):
                 "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
                 str(history),
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                side_effect=[(True, False), publisher.InvalidCredentialError("bad key")],
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                side_effect=[
+                    {"published": True, "featured": False, "error": None},
+                    publisher.InvalidCredentialError("bad key"),
+                ],
             ):
                 publisher.publish_pending()
 
             saved = json.loads(queue.read_text(encoding="utf-8"))
         self.assertEqual([item["titulo"] for item in saved], ["B", "C"])
+
+    def test_publish_pending_reports_rate_limit_as_degraded_and_defers_rest(self):
+        noticias = [
+            {"titulo": "A", "web_queue_key": "link:a"},
+            {"titulo": "B", "web_queue_key": "link:b"},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = Path(tmpdir) / "noticias_web_pending.json"
+            history = Path(tmpdir) / "noticias_web_publicadas.json"
+            queue.write_text(json.dumps(noticias), encoding="utf-8")
+            with patch("pipeline.node_webapp.publisher.INPUT", str(queue)), patch(
+                "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
+                str(history),
+            ), patch(
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                return_value={
+                    "published": False,
+                    "featured": False,
+                    "error": "rate_limit",
+                    "retryable": True,
+                    "terminal": False,
+                    "next_retry_at": 9999999999,
+                },
+            ):
+                result = publisher.publish_pending()
+            saved = json.loads(queue.read_text(encoding="utf-8"))
+        self.assertEqual(result.status.value, "degraded")
+        self.assertEqual(result.exit_code, 2)
+        self.assertEqual(result.next_retry_at, 9999999999)
+        self.assertEqual([item["titulo"] for item in saved], ["A", "B"])
 
     def test_publish_pending_prioritizes_sections_and_defers_extra_deportes(self):
         noticias = [
@@ -645,8 +1043,8 @@ class QueueTests(unittest.TestCase):
                 {"WEB_MAX_DEPORTES_PER_RUN": "1", "WEB_PUBLISH_MAX_PER_RUN": "0"},
                 clear=False,
             ), patch(
-                "pipeline.node_webapp.publisher.publish_one",
-                return_value=(True, False),
+                "pipeline.node_webapp.publisher.publish_one_detailed",
+                return_value={"published": True, "featured": False, "error": None},
             ) as publish_one:
                 publisher.publish_pending()
 

@@ -1,66 +1,205 @@
-# CURRENT_STATE.md
+# Estado actual
 
-**Última actualización de este documento**: 2026-07-20 (generado a partir de código,
-`.env`, `data/` y `logs/` — el repo no tenía documentación previa ni historial de git
-propio, ver nota abajo).
+Última actualización: 2026-07-27 23:30 ART.
 
-## Qué funciona
+## Rama, revisión y release
 
-- Scraping de las 4 secciones de `tiempopopular.com.ar` (locales, policiales, interior,
-  deportes) y las 6 secciones de `nuevarioja.com.ar` (política, sociedad, policiales,
-  deportes, interior, internacionales), con deduplicación por URL canónica e historial
-  por sección.
-- Reescritura de títulos, clasificación de categoría y generación de captions
-  estructurados vía OpenAI (`openIA/rewrite_news.py`).
-- Generación de imágenes de post para Instagram y Facebook/OG con diseño propio
-  (`layout/image_generator.py`).
-- Publicación al CMS externo (`lavozriojana.com`) vía API privada.
-- Publicación en Facebook (feed) y en Instagram (posts + Reels) vía Graph API.
-- Supervisor 24/7 con ciclos horarios estables: los logs muestran al menos **245 ciclos
-  completados** (`logs/run_24x7.log`), 4/4 pasos OK por ciclo, hasta el último registro
-  visible (2026-07-13 20:11:15).
-- CLI de operación (`start/stop/status/logs/run-once/videos`) funcional.
-- Herramientas manuales de publicación y QA visual (`video_reel_manager.py`,
-  `pipeline/custom_post.py`, `preview_pipeline.py`).
+- Repositorio: `NahimMora/news-auto-publisher-lavozriojana`.
+- Rama desplegada: `reliability/baseline-2026-07-23`.
+- Commit de código identificado por el heartbeat al iniciar el ciclo #8:
+  `e6b0459d3944c6a2a702062c1a3af1afd981b484`.
+- Commit desplegado y verificado por heartbeat:
+  `ef91a675e64f908136ea2fc9ae30bb12df35a864`.
+- PR borrador: [#1](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/1).
+- CI remoto conocido: `reliability-windows` verde en Actions run
+  [`30308227631`](https://github.com/NahimMora/news-auto-publisher-lavozriojana/actions/runs/30308227631).
+- Propuesta posterior al merge: `v1.0.0-reliability-baseline`.
 
-## Qué funciona parcialmente
+El PR sigue en borrador. No se hizo merge ni se creó el tag. El proceso activo usa
+el identificador `unreleased-reliability-baseline`; no se presenta como release
+oficial.
 
-- **Publicación en Facebook**: en los últimos ciclos visibles en el log (2026-07-13), la
-  cola de Facebook **crecía en vez de bajar** (ej. 127 → 134 en cola en ciclos
-  consecutivos), con tasas de éxito bajas por ciclo (0/6, 1/7, 4/10) y **cero líneas de
-  ERROR** en `logs/run_fb.log` — es decir, algo está fallando pero no queda registrado
-  con detalle suficiente para diagnosticar (ver `KNOWN_ISSUES.md`).
-- **Cobertura de tests**: solo `tests/test_node_webapp_publisher.py` (mockeado) cubre
-  publisher/editorial/media/fb_client/ig_client/rewrite_news/social_queue. No hay tests
-  automatizados para scrapers, generación de imagen/video, ni para el supervisor/CLI —
-  esas capas dependen de verificación manual (`test_scraper.py`, `preview_pipeline.py`).
-- **Backups de `data/`**: existen (`data/backups/`) pero son manuales/ad hoc (solo 3
-  snapshots, todos del 2026-07-01), no un proceso automatizado y periódico.
+## Validación local
 
-## Qué está roto o requiere atención inmediata
+Verificaciones ejecutadas en el host Windows con el venv del repositorio:
 
-- **Sin visibilidad de si el supervisor está corriendo ahora mismo**: los logs no tienen
-  entradas después del 2026-07-13 20:11, y hoy es 2026-07-20 — una semana sin evidencia
-  de actividad. Esto puede significar que el proceso está parado, o simplemente que no
-  se revisó el log más reciente al momento de escribir este documento. **Verificar con
-  `python cli.py status` es el primer paso operativo pendiente.**
-- **`.git` de este proyecto está roto/vacío** (`.git/info` sin `HEAD` ni `objects`): no
-  hay historial de versiones real de este código hasta este commit. Este documento y el
-  resto de `/docs` se generaron leyendo el código y los datos directamente, no a partir
-  de `git log`.
-- **`psutil` se usa en `cli.py` pero no está en `requirements.txt`** — instalar
-  dependencias desde cero (`pip install -r requirements.txt`) puede no ser suficiente
-  para correr el CLI.
-- **Backlog de Facebook** (ver arriba) sin causa raíz confirmada por falta de logging
-  de errores de Graph API.
+| Verificación | Resultado |
+|---|---|
+| Python | 3.10.0 |
+| `pip check` | sin dependencias rotas |
+| suite | 235 tests, OK, `.env` deshabilitado y directorios temporales |
+| E2E local | 17/17, `production_calls=false` |
+| `compileall` | OK |
+| `git diff --check` | OK |
+| `doctor supervisor` con perfil operativo | `success`, 8/8 |
+| dry-run CI | `success`, `production_calls=false` |
+| filesystem del host | `success`, 7/7, 34.065 MB libres |
 
-## Próximo objetivo operativo
+`doctor core` sin overrides sigue fallando correctamente porque el `.env` histórico
+tiene Web encendida mientras el modo por default es `observe`. El arranque productivo
+no oculta esa contradicción: usa
+[`scripts/start_24x7_production.ps1`](../scripts/start_24x7_production.ps1), que fija
+un perfil explícito y exige que `doctor supervisor` pase antes de iniciar.
 
-1. Confirmar si el supervisor 24/7 está corriendo (`python cli.py status`); si no,
-   levantarlo y verificar que los 4 pasos del ciclo vuelvan a completar OK.
-2. Diagnosticar y resolver el backlog creciente de publicaciones en Facebook, empezando
-   por habilitar logging a archivo en `fb_client.py` / `facebook_token_manager.py` (hoy
-   solo loguean a consola, que se descarta porque el proceso corre con
-   `stdout=DEVNULL`).
-3. Agregar `psutil` a `requirements.txt`.
-4. Establecer un mecanismo de backup automático y periódico de `data/` (hoy es manual).
+## Corte y estado de colas
+
+El 2026-07-27 se aplicó `queue-cutover --from-date 2026-07-27 --apply` con el
+supervisor detenido:
+
+- Web: 60 entradas anteriores al corte archivadas.
+- Meta: 425 entradas anteriores al corte archivadas.
+- Social: 23 estados históricos pasaron a `expired` o dead-letter según su estado.
+- Archivo durable: `data/queue_cutover_archive.json`, 485 payloads completos.
+- Eventos y motivos: `data/queue_events.json`.
+- Backups previos: `data/backups/`.
+
+El operador reemplazó la distinción por fecha por una línea de base de orden durable.
+Con backup previo y supervisor detenido se aplicó:
+
+```text
+queue-cutover --keep-latest 20 --apply
+```
+
+Resultado:
+
+- Web: 33→20; 13 payloads de canal archivados.
+- Meta: 37→20; 17 payloads de canal archivados.
+- Social activa: 0.
+- Identidades únicas activas: 20, presentes en ambos canales.
+- Orden desconocido: 0.
+
+Los elementos anteriores se registraron como
+`operator_baseline_older_than_latest_window`; no se marcaron como publicaciones
+externas sin ID/URL.
+
+Snapshot al iniciar el ciclo #8:
+
+- Web: 20 pendientes de la ventana más reciente.
+- Meta: 20 entradas de las mismas identidades.
+- Social activa: 0.
+- Rewrite: 0 pending, 0 processing, 0 failed, 0 dead-letter.
+- Backlog histórico de Facebook: 0 pendientes sin clasificar, 0 ambiguos.
+
+No se borró ni sobrescribió el historial para “limpiar” las colas.
+`ARTICLE_NOT_BEFORE_DATE` queda desactivado en el perfil operativo porque una noticia
+válida puede no traer fecha.
+
+## Integraciones reales
+
+Preflight externo del 2026-07-27:
+
+| Integración | Estado | Evidencia |
+|---|---|---|
+| Fuentes | `success` | 10/10 secciones vivas reconocidas |
+| OpenAI | `success` | autenticación, modelo y respuesta controlada |
+| R2 | `success` | create/head/read/delete bajo `healthchecks/`, cleanup confirmado |
+| Facebook | `success` | identidad, permisos y capacidad de publicación |
+| Instagram | `success` | cuenta, relación con página y permiso de publicación |
+| Filesystem | `success` | lock, dos writers, replace, fsync, backup/restore y cuarentena |
+| Supervisor | `success` | configuración, PID, heartbeat y logs escribibles |
+| CMS read-only | `blocked` | falta `WEBAPP_PREFLIGHT_PATH` seguro |
+
+El bloqueo del preflight CMS no se convirtió en éxito. La ruta de escritura quedó
+verificada por tres publicaciones Web reales con ID/URL y HTTP público 200; la más
+reciente fue:
+
+`https://lavozriojana.com/noticias/alerta-amarilla-por-viento-zonda-en-la-rioja`
+
+Facebook quedó verificado con publicaciones reales y consulta posterior read-only.
+La última evidencia del primer ciclo es el ID
+`1243054632214236_122109834009372360`.
+
+Instagram tuvo un canary controlado, verificable e idempotente:
+
+- ID: `18207194662361611`.
+- Permalink verificado antes del cleanup.
+- Cleanup confirmado; la consulta posterior devolvió objeto inexistente.
+
+Durante el primer ciclo 24/7, Instagram deduplicó de forma segura la nota seleccionada
+contra su historial y no creó una copia.
+
+El ciclo #5 publicó Web y Facebook, pero Instagram recibió `request_rejected` para una
+nota de abigeato. La entrada quedó en dead-letter y no se reintentó automáticamente.
+El proveedor no dejó código/subcódigo en el evento histórico, por lo que la causa
+externa exacta quedó desconocida. El ciclo #6 publicó correctamente en las tres
+integraciones; Instagram devolvió ID `18177266845418088`. Desde el ajuste
+`LVR-069`, los rechazos futuros conservan HTTP/código/subcódigo/tipo sanitizados en el
+journal y en el log rotativo.
+
+El gate local también se validó desde Windows PowerShell 5.1. `LVR-070` permite que
+el verificador lea el BOM que esa consola agrega con `Out-File -Encoding utf8`, sin
+relajar ninguna comprobación del contenido.
+
+El ciclo #7 terminó `degraded` porque Web rechazó una nota de `policiales` tras seis
+intentos editoriales y bloqueó el fallback mediante `strict_category_policiales`.
+No hubo publicación externa ni falso éxito: el elemento pasó a dead-letter con título,
+motivo y política; Facebook e Instagram reportaron `no_work` porque no apareció una
+URL Web nueva. Es el comportamiento conservador configurado para una categoría
+sensible, no una caída de CMS/Meta.
+
+## Estado operativo
+
+- Supervisor: activo, PID registrado `52088` al iniciar el ciclo #8.
+- Modo: `all`.
+- Canales solicitados/habilitados: Web, Facebook e Instagram.
+- Límite efectivo: Web sin límite; Facebook 8 e Instagram 8 por ciclo.
+- Intervalo: 3.600 segundos.
+- Heartbeat: fresco y persistente.
+- Último ciclo: #11 `success`, 4/4 etapas aceptables.
+- Ciclo #11: scraping/reescritura `no_work`, Web `no_work`, Facebook `success` 8/8 e
+  Instagram `no_work`.
+- Ciclo #10: Web `success` 6/6, Instagram `success` 1/1 y Facebook `degraded` 5/8
+  porque tres páginas todavía no devolvían HTTP válido durante el prewarm. No se
+  llamó a Graph para esas tres; permanecieron en cola.
+- Ciclo #8: Web `degraded` 24/26, siete publicaciones degradadas, dos terminales
+  sensibles y cola final 0; Facebook e Instagram `success` 8/8.
+- El feedback produjo revisiones materiales y el sexto resultado seguro se publicó
+  como `degraded`. Los falsos positivos observados con comienzos de oración y
+  equivalencias número-palabra quedaron corregidos en `LVR-075`/`LVR-076`.
+- Ciclo #7 Web: `failed` 0/1 por `strict_category_policiales`, terminal trazable y
+  sin publicación; Facebook/Instagram `no_work`.
+- Ciclo #5: `degraded`, 3/4; rechazo Instagram aislado y no reintentado.
+- Alertas: detección y outbox durable habilitados; webhook externo no configurado.
+- UI manual: `http://127.0.0.1:8765/`, HTTP 200, sólo loopback.
+- Watchdog: tareas `LaVozRiojana-24x7` y `LaVozRiojana-ManualUI` cada cinco minutos;
+  ambas devolvieron resultado `0` y no duplicaron procesos.
+
+El arranque se hizo por autorización explícita del operador. No equivale a aprobación
+del PR, merge, tag ni declaración de release listo para producción.
+
+## Gates
+
+| Gate | Estado | Evidencia o bloqueo |
+|---|---|---|
+| A Código | parcial | suite/compile/E2E verdes; falta CI del commit final, review y merge |
+| B Entorno | completo para este host | backup, restore temporal, filesystem y heartbeat |
+| C Read-only | parcial | todo verde salvo endpoint CMS seguro |
+| D Canary | parcial | Instagram completo; Web/FB se validaron con publicaciones reales autorizadas |
+| E Observe | ejecutado | ciclos previos sanos, sin publicación |
+| F Web | ejecutado | publicaciones verificables y rechazo editorial seguro en ciclo #7 |
+| G Facebook | ejecutado | backlog conciliado, token/página y publicaciones verificadas |
+| H Instagram | ejecutado con incidente aislado | preflight/canary y ciclo #6 reales; un rechazo previo quedó en dead-letter |
+| I Release 24/7 | bloqueado | PR no aprobado/mergeado, tag ausente y CMS read-only bloqueado |
+
+Por estos bloqueos el repositorio no se declara “release listo para 24/7”, aunque el
+servicio solicitado por el operador está activo con límites y watchdog.
+
+## Riesgo residual y próximo paso
+
+- El CMS no expone un preflight GET autenticado con versión/capacidades.
+- No hay webhook aprobado; las alertas quedan en outbox local.
+- Las tareas programadas deben volver a verificarse después de un reinicio real del
+  host.
+- Las tareas usan la sesión interactiva de `pc10`; no cubren el intervalo anterior al
+  inicio de sesión de Windows.
+- El commit activo tiene cambios de trabajo todavía no integrados en `main`.
+- La causa exacta del rechazo Instagram del ciclo #5 no puede reconstruirse porque
+  ocurrió antes de persistir metadatos sanitizados; no se reprodujo en el ciclo #6.
+- El backlog Web creció 24→26→29→33 bajo el límite anterior. Con Web ilimitada quedó
+  en cero y se mantuvo en cero al finalizar el ciclo #11.
+- Facebook conserva 3 pendientes e Instagram 0. El ciclo #11 confirmó recuperación
+  posterior al prewarm transitorio de ciclo #10; no hubo pérdida ni reintento ciego.
+- El contenido y selectores de terceros pueden cambiar sin aviso.
+
+Próximo gate: obtener review/aprobación, agregar un endpoint CMS read-only y ensayar
+reboot/rollback antes de mergear o crear el tag oficial.

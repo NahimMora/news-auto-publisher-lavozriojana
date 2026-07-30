@@ -9,7 +9,10 @@ def canonical_url(url: str) -> str:
     netloc = parsed.netloc.lower()
     # Eliminar fragmento, ordenar query params
     params_sorted = urlencode(sorted(parse_qsl(parsed.query)))
-    normalized = urlunparse((scheme, netloc, parsed.path, "", params_sorted, ""))
+    path = parsed.path
+    if path != "/":
+        path = path.rstrip("/")
+    normalized = urlunparse((scheme, netloc, path, "", params_sorted, ""))
     return normalized.rstrip("/")
 
 
