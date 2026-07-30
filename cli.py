@@ -40,6 +40,7 @@ from utils.queue_cutover import (
 )
 from utils.stage_result import StageResult, StageStatus, aggregate_results
 from utils.editorial_router import report_routing
+from utils.media_library import cleanup_expired_assets, search_library
 
 
 BASE_DIR = str(ROOT_DIR)
@@ -592,6 +593,30 @@ def cmd_editorial_route(args) -> int:
     return 0
 
 
+def cmd_media_library(args) -> int:
+    if args.action == "search":
+        rows = search_library(
+            query=args.query,
+            seccion=args.seccion,
+            fuente=args.fuente,
+            topic_key=args.topic_key,
+            estado=args.estado,
+            only_candidatas=args.candidatas,
+            only_publicadas=args.publicadas,
+            only_premium=args.premium,
+            only_automaticas=args.automaticas,
+            window_days=None if args.all_time else 10,
+        )
+        payload = {"status": "success", "count": len(rows), "rows": rows}
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    # action == "cleanup"
+    report = cleanup_expired_assets(dry_run=not args.apply)
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if report.get("status") in {"success", None} else 1
+
+
 def _safe_data_filename(value: str) -> Path:
     name = Path(str(value or "")).name
     if name != value or not name.endswith(".json"):
@@ -754,6 +779,31 @@ def main(argv: list[str] | None = None) -> int:
     editorial_route_parser.add_argument("--output", help="Ruta opcional para volcar el reporte JSON")
     editorial_route_parser.add_argument("--json", action="store_true")
 
+    media_library_parser = sub.add_parser(
+        "media-library",
+        help="Busca en la biblioteca multimedia de diez días o limpia assets vencidos",
+    )
+    media_library_sub = media_library_parser.add_subparsers(dest="action", required=True)
+
+    search_parser = media_library_sub.add_parser("search", help="Búsqueda local unificada")
+    search_parser.add_argument("--query", help="Texto libre: título, topic_key, sección o fuente")
+    search_parser.add_argument("--seccion")
+    search_parser.add_argument("--fuente")
+    search_parser.add_argument("--topic-key", dest="topic_key")
+    search_parser.add_argument("--estado")
+    search_parser.add_argument("--candidatas", action="store_true")
+    search_parser.add_argument("--publicadas", action="store_true")
+    search_parser.add_argument("--premium", action="store_true")
+    search_parser.add_argument("--automaticas", action="store_true")
+    search_parser.add_argument(
+        "--all-time",
+        action="store_true",
+        help="Ignora la ventana visual de 10 días (por defecto se aplica)",
+    )
+
+    cleanup_parser = media_library_sub.add_parser("cleanup", help="Purga assets vencidos y no referenciados")
+    cleanup_parser.add_argument("--apply", action="store_true", help="Sin esta bandera es dry-run (default)")
+
     video_parser = sub.add_parser("videos", help="Abre la UI local de Reels")
     video_parser.add_argument("--host", default="127.0.0.1")
     video_parser.add_argument("--port", type=int, default=8765)
@@ -786,6 +836,7 @@ def main(argv: list[str] | None = None) -> int:
         "alert-test": cmd_alert_test,
         "alert-check": cmd_alert_check,
         "editorial-route": cmd_editorial_route,
+        "media-library": cmd_media_library,
         "videos": cmd_videos,
         "logs": cmd_logs,
         "backup": cmd_backup,
