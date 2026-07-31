@@ -84,6 +84,37 @@ class ImageIngestionTests(MediaLibraryTestCase):
         with self.assertRaises(ValueError):
             self.lib.ingest_image_bytes(b"not-an-image", origin="upload")
 
+    def test_asset_lookup_returns_copy_and_controlled_thumbnail_path(self):
+        record = self.lib.ingest_image_bytes(_png_bytes(), origin="premium_upload")
+
+        recovered = self.lib.get_asset(record["asset_id"])
+        self.assertIsNotNone(recovered)
+        recovered["titulo"] = "mutado sólo en memoria"
+        self.assertNotEqual(
+            "mutado sólo en memoria",
+            self.lib.get_asset(record["asset_id"]).get("titulo"),
+        )
+        self.assertEqual(
+            os.path.realpath(record["thumb_path"]),
+            self.lib.get_asset_thumbnail_path(record["asset_id"]),
+        )
+
+    def test_thumbnail_path_outside_controlled_directory_is_rejected(self):
+        record = self.lib.ingest_image_bytes(_png_bytes(), origin="premium_upload")
+
+        def tamper(assets):
+            for asset in assets:
+                if asset["asset_id"] == record["asset_id"]:
+                    asset["thumb_path"] = str(self.root / "outside.jpg")
+            return assets
+
+        from utils.file_manager import update_json
+
+        (self.root / "outside.jpg").write_bytes(b"not served")
+        update_json(str(self.data / "media_library.json"), tamper, [], expected_type=list)
+
+        self.assertIsNone(self.lib.get_asset_thumbnail_path(record["asset_id"]))
+
 
 class CleanupTests(MediaLibraryTestCase):
     def test_active_publication_refuses_to_run(self):
@@ -272,6 +303,22 @@ class SearchLibraryTests(MediaLibraryTestCase):
         rows_all = self.lib.search_library(query="vieja", window_days=None)
         self.assertEqual(0, len(rows_default))
         self.assertEqual(1, len(rows_all))
+
+    def test_asset_rows_expose_http_thumbnail_url_not_filesystem_path(self):
+        record = self.lib.ingest_image_bytes(
+            _png_bytes(),
+            origin="premium_upload",
+            titulo="Imagen de biblioteca",
+        )
+
+        rows = self.lib.search_library(query="biblioteca")
+
+        self.assertEqual(1, len(rows))
+        self.assertEqual(
+            f"/api/media-library/thumb/{record['asset_id']}",
+            rows[0]["thumbnail"],
+        )
+        self.assertNotIn(str(self.root), rows[0]["thumbnail"])
 
 
 if __name__ == "__main__":
