@@ -1,6 +1,6 @@
 # Runbook de operación e incidentes
 
-Última actualización: 2026-07-26.
+Última actualización: 2026-07-30.
 
 ## Principios
 
@@ -488,9 +488,27 @@ No ejecutar `cleanup --apply` durante una publicación premium activa.
 
 ## Estudio Premium (publicaciones sociales sin artículo web)
 
-Pestaña "Estudio Premium" en la UI manual (`http://127.0.0.1:8765/`): pegar el
-paquete de ChatGPT, editar slides, generar preview y publicar. Nunca crea artículo
-web ni depende del CMS; Facebook nunca incluye link.
+Pestaña "Estudio Premium" en la UI manual (`http://127.0.0.1:8765/`). El flujo
+visible tiene cuatro pasos:
+
+1. Pegar el texto actualizado de la noticia y tocar **Generar estructura con IA**.
+   OpenAI sólo estructura ese texto; no investiga ni completa datos. Si falta
+   credencial, falla el proveedor o devuelve JSON inválido, se muestra el error y no
+   se crea un fallback silencioso. El import JSON manual sigue disponible como
+   alternativa secundaria.
+2. Revisar título, caption, sección, plantilla y cada slide. Se pueden editar título,
+   texto, ítems, highlights, tipo y orden.
+3. Asignar una imagen a cada slide: link público directo, archivo propio desde
+   **mi galería**, o biblioteca. Los links se validan contra SSRF, redirects,
+   Content-Type y límite de 20 MB; las subidas se validan por firma/contenido. Ambos
+   caminos terminan en `utils.media_library.ingest_image_bytes`, con deduplicación
+   por hash. Las miniaturas de biblioteca se sirven sólo por
+   `/api/media-library/thumb/{asset_id}`, nunca como rutas locales.
+4. Guardar borrador, previsualizar y recién entonces publicar. Preview y publicación
+   siguen usando `utils.premium_renderer.render_package_with_engine`.
+
+El flujo nunca crea artículo web ni depende del CMS; Facebook nunca incluye link.
+Guardar/generar un borrador tampoco publica nada.
 
 Antes de un canary real:
 

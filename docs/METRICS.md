@@ -1,6 +1,6 @@
 # Métricas operativas
 
-Última actualización: 2026-07-26. Este documento define métricas calculables; no
+Última actualización: 2026-07-30. Este documento define métricas calculables; no
 inventa valores ni implica que exista un dashboard.
 
 ## Fuentes de verdad
@@ -170,6 +170,78 @@ Notas de exactitud:
   ambos archivos juntos).
 - El total de 336 fue confirmado corriendo la suite completa dos veces
   consecutivas con resultado idéntico.
+
+## Auditoría de tests del rediseño Premium Studio UX (2026-07-30)
+
+Baseline de esta rama: `4b8a1c7` con **336 casos**. El rediseño agrega **18** casos
+sin retirar ninguno, para un total descubierto de **354**:
+
+| Medición | Comando | Resultado |
+|---|---|---:|
+| Baseline de la rama | suite de `4b8a1c7` extraída con `git archive`, `python -W error::DeprecationWarning -m unittest discover tests` | **336** |
+| Total descubierto actual | `python -c "import unittest; print(unittest.defaultTestLoader.discover('tests').countTestCases())"` | **354** |
+| Neto agregado | 354 − 336 | **18** |
+| Ejecución local actual | `python -W error::DeprecationWarning -m unittest discover tests` con `PYTHON_DOTENV_DISABLED=1` y todos los directorios `LVR_*` temporales | **350 OK, 1 skip de clase** |
+
+El `Ran 350 tests (skipped=1)` local no contradice los 354 casos descubiertos:
+`RemotionLiveRenderTests.setUpClass` detectó `remotion/node_modules`, intentó el CLI
+y, como no respondió en este host, elevó un único `SkipTest` de clase que agrupó sus
+cuatro métodos de render real. Una auditoría del `TestResult` confirmó que ésos son
+exactamente los cuatro IDs no iniciados. En CI no se instala Node y los cuatro quedan
+saltados individualmente. Ninguno de los 18 casos de esta rama fue omitido.
+
+Desglose del neto:
+
+| Archivo | Antes | Ahora | Neto | Cobertura |
+|---|---:|---:|---:|---|
+| `tests/test_premium_package_generator.py` | 0 | 4 | +4 | éxito OpenAI, contrato, reintentos/fallo final, texto vacío, credencial ausente |
+| `tests/test_premium_studio_http.py` | 0 | 11 | +11 | descarga SSRF-safe, endpoints generate/link/upload/thumb y estructura UI |
+| `tests/test_media_library.py` | 13 | 16 | +3 | lookup inmutable, confinamiento del thumb y URL HTTP en `_asset_row()` |
+| **Total** | **13** | **31** | **+18** | todos ejecutados y verdes |
+
+Comandos focalizados:
+
+```powershell
+python -m unittest tests.test_premium_package_generator -v  # 4/4
+python -m unittest tests.test_premium_studio_http -v         # 11/11
+python -m unittest tests.test_media_library -v               # 16/16
+```
+
+Las pruebas HTTP levantan `ThreadingHTTPServer` en un puerto loopback efímero, usan
+directorios temporales y mocks para OpenAI/descarga remota. No leen secretos, no
+llaman publicadores y no tocan estado productivo.
+
+Smoke visual adicional con navegador real: servidor en `127.0.0.1:8766`,
+directorios `LVR_*` temporales, `PREMIUM_STATIC_RENDER_ENGINE=pillow` y
+`PREMIUM_PUBLISH_DRY_RUN=true`. Resultado: 3 slides editables, 3 tarjetas de assets,
+2 uploads promovidos con miniatura HTTP, 3 imágenes de preview y publicación dry-run
+`instagram: OK · facebook: OK`; consola del navegador sin errores. Se usó el import
+JSON manual para no realizar una llamada OpenAI externa durante QA; la rama de
+generación está cubierta con mock tanto en módulo como contra el endpoint HTTP real.
+
+Gates de cierre ejecutados en el mismo workspace:
+
+| Gate | Resultado |
+|---|---|
+| `python cli.py run-once --dry-run` | **17/17 OK**, `production_calls=false` |
+| `python cli.py doctor --scope core --json` | **success 8/8** con modo `observe` y los tres canales apagados sólo para ese proceso |
+| `python cli.py doctor --scope all --json` | **success 8/8** con los mismos overrides seguros |
+| `python -m compileall -q .` | **OK** |
+| chequeo sintáctico del `<script>` embebido con Node | **OK** |
+| `git diff --check` | **OK** |
+
+La configuración persistente del host no se modificó: el primer `doctor core` sin
+overrides detectó correctamente que `PIPELINE_DEPLOYMENT_MODE=observe` no coincide
+con el canal Web habilitado. El gate aislado se repitió con
+`WEB_PUBLISH_TARGET=off`, `FB_PUBLISH_ENABLED=false` e
+`IG_PUBLISH_ENABLED=false`; no se cambió `.env` ni se presentó el bloqueo original
+como éxito.
+
+`python -m pip check` no está verde en el Python global del host por tres
+incompatibilidades preexistentes entre paquetes instalados
+(`pydantic-settings/pydantic`, `pillow-heif/Pillow` y `fastapi/starlette`). Esta rama
+no cambia `requirements.txt`, no instala dependencias y toda la suite del repositorio
+pasó con el entorno actual.
 
 ## Benchmark Remotion vs Pillow (Fase 4, medido 2026-07-30)
 

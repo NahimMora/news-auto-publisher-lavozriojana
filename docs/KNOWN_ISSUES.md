@@ -1,6 +1,6 @@
 # Problemas conocidos
 
-Última actualización: 2026-07-26. Los problemas resueltos no se borran.
+Última actualización: 2026-07-30. Los problemas resueltos no se borran.
 
 ## 1. Fallos de Facebook sin detalle
 
@@ -764,3 +764,23 @@
 - Estado actual: **documentado, no resuelto**.
 - Riesgo residual: un operador podría publicar un slide con texto cortado si no lo
   nota en el preview visual y el motor efectivo fue Remotion.
+
+## 71. La biblioteca premium exponía una ruta de filesystem como miniatura
+
+- ID: rediseño Estudio Premium (`feature/premium-studio-ux`); severidad media.
+- Reproducción 2026-07-30: `utils.media_library._asset_row()` devolvía
+  `thumb_path` (ruta absoluta local) en el campo `thumbnail`. El navegador no puede
+  servir esa ruta y los resultados del buscador eran sólo texto, por lo que el
+  operador no podía reconocer visualmente qué imagen estaba eligiendo.
+- Corrección: `_asset_row()` devuelve
+  `/api/media-library/thumb/{asset_id}`; el GET nuevo valida el ID, resuelve sólo
+  archivos dentro de `output/media_library/thumbs/`, rechaza assets purgados o paths
+  fuera del directorio controlado y responde JPEG. La UI crea cada `<img>` mediante
+  DOM seguro y oculta sólo la miniatura que falla, sin romper el resto de resultados.
+- Evidencia: `tests.test_media_library` cubre URL HTTP y path confinado;
+  `tests.test_premium_studio_http` cubre JPEG válido, ID inválido y asset purgado
+  contra el servidor HTTP real.
+- Estado actual: **resuelto en la rama**, pendiente de review/merge.
+- Riesgo residual: las filas agregadas de noticias pueden referir una imagen remota
+  que ya no exista; ese fallo se muestra como miniatura ausente y la ingesta por link
+  se niega si la descarga o el contenido no son válidos.

@@ -1,6 +1,6 @@
 # Arquitectura
 
-Última actualización: 2026-07-26.
+Última actualización: 2026-07-30.
 
 ## Stack y límites
 
@@ -32,7 +32,8 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `utils/social_caption.py` | caption único compartido por Instagram y Facebook |
 | `utils/social_queue.py` | estados independientes de Facebook/Instagram |
 | `utils/editorial_router.py` | router determinístico automatic/candidate/suppressed por canal; gate y cap de tema para Instagram (opt-in vía `EDITORIAL_ROUTER_ENABLED`) |
-| `utils/media_library.py` | biblioteca multimedia de diez días: ingesta de imágenes (hash, master, thumb), búsqueda unificada local (candidatas + publicadas + premium + assets) y cleanup seguro |
+| `utils/media_library.py` | biblioteca multimedia de diez días: ingesta de imágenes (hash, master, thumb), búsqueda unificada local (candidatas + publicadas + premium + assets), resolución confinada de miniaturas HTTP y cleanup seguro |
+| `openIA/premium_package_generator.py` | estructura con OpenAI el texto aportado por el operador en el contrato del importador premium; no investiga, no completa datos y falla de forma visible sin fallback silencioso |
 | `utils/premium_contract.py` | contrato versionado de publicaciones premium: validación, edición de slides (mover/duplicar/eliminar/cambiar tipo), validación de highlight_terms |
 | `utils/premium_importer.py` | importa el paquete pegado de ChatGPT; nunca pierde el contenido pegado ni asigna imágenes en firme (sólo sugerencias) |
 | `utils/premium_post_queue.py` | store único de paquetes premium (`data/premium_packages.json`); borradores recuperables aunque tengan errores de validación |
@@ -63,7 +64,7 @@ explícito. Ver `docs/DECISIONS.md`.
 | `utils/canary.py` | una publicación aislada, gated e idempotente |
 | `utils/facebook_reconcile.py` | reporte conservador y decisiones explícitas |
 | `utils/alerts.py` | detección, dedupe, outbox y entrega opcional |
-| `video_reel_manager.py` | UI manual local y uploads controlados |
+| `video_reel_manager.py` | UI manual local y uploads controlados; Estudio Premium genera/importa paquetes y unifica imágenes por link SSRF-safe, subida propia o biblioteca |
 | `utils/video_renderer.py` | Descarga de video fuente (MP4 directo o yt-dlp: YouTube, Instagram, TikTok, X, Facebook, Vimeo y otros sitios vía extractor genérico) y composición ffmpeg del reel |
 
 ## Contrato de resultados
