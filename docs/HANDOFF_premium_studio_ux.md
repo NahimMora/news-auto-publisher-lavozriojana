@@ -5,6 +5,28 @@ Rama activa: `feature/premium-studio-ux`, creada desde `main` en `4b8a1c7`
 (el merge del PR #2 ya está en producción y funcionando — no tocar `main`
 directamente, todo este trabajo es nuevo y va en PR aparte).
 
+## Estado de ejecución al cierre
+
+El plan de este documento quedó **implementado de punta a punta** y está en el
+[PR draft #3](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/3),
+abierto contra `main`; no fue mergeado ni publicado en cuentas reales.
+
+Commits lógicos:
+
+- `0712834` — generador de paquetes premium desde texto + tests;
+- `3b7f470` — miniaturas HTTP confinadas + tests de biblioteca;
+- `3cfd6f9` — endpoints seguros, rediseño en cuatro pasos y tests HTTP/E2E;
+- `ad8b753` — documentación completa del comportamiento y QA.
+
+Validación: 350 tests ejecutados OK (1 skip de clase que agrupa cuatro renders
+Remotion live), 31 tests focalizados OK, 17/17 E2E local dry-run,
+`doctor core/all` 8/8 con overrides seguros, `compileall`, sintaxis JS,
+`git diff --check` y CI `reliability-windows` verdes. El detalle y las excepciones
+del host están en `docs/METRICS.md`.
+
+Las secciones “Ya hecho” y “Falta hacer” de abajo conservan el plan original como
+trazabilidad; todos sus puntos quedaron resueltos en el PR.
+
 ## Pedido original del usuario (verbatim, traducido a tareas)
 
 > "quiero modificarlo: quiero mas claridad, quiero poner yo un texto de la

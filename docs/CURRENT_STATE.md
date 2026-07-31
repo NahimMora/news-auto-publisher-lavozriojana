@@ -9,6 +9,9 @@ Construido sobre `main` en `4b8a1c7`, después del merge del PR #2 de la capa
 editorial premium. No se modificó `main`, `.env`, `data/`, `logs/`, `output/` ni
 `FotosLVR/`, y no se ejecutó ninguna publicación real.
 
+PR draft: [#3](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/3),
+abierto contra `main`, sin merge. CI autoritativo `reliability-windows`: verde.
+
 - El operador puede pegar el texto actualizado de una noticia y generar con OpenAI
   el JSON del paquete. La salida reutiliza `import_chatgpt_package`; no hay un segundo
   contrato ni fallback silencioso. El prompt prohíbe investigar o inventar datos,
