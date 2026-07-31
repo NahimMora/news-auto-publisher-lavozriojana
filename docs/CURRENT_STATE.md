@@ -3,6 +3,46 @@
 Última actualización: 2026-07-30 (agrega la capa editorial premium; el resto del
 documento describe el estado previo de la rama de confiabilidad y sigue vigente).
 
+## Rediseño del Estudio Premium (rama `feature/premium-studio-ux`, no mergeada)
+
+Construido sobre `main` en `4b8a1c7`, después del merge del PR #2 de la capa
+editorial premium. No se modificó `main`, `.env`, `data/`, `logs/`, `output/` ni
+`FotosLVR/`, y no se ejecutó ninguna publicación real.
+
+PR draft: [#3](https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/3),
+abierto contra `main`, sin merge. CI autoritativo `reliability-windows`: verde.
+
+- El operador puede pegar el texto actualizado de una noticia y generar con OpenAI
+  el JSON del paquete. La salida reutiliza `import_chatgpt_package`; no hay un segundo
+  contrato ni fallback silencioso. El prompt prohíbe investigar o inventar datos,
+  personas, armas y hechos ajenos al texto.
+- La UI quedó ordenada en cuatro pasos: generar/importar, revisar slides, asignar
+  imágenes y guardar/previsualizar/publicar. El import JSON manual sigue disponible.
+- Cada slide acepta imagen por link público SSRF-safe, subida propia validada o
+  biblioteca local. Los dos primeros caminos convergen en `ingest_image_bytes` y no
+  crean un store paralelo.
+- La biblioteca ya no expone `thumb_path` de filesystem: devuelve una URL relativa y
+  `/api/media-library/thumb/{asset_id}` sirve únicamente JPEGs confinados al
+  directorio de miniaturas. Assets purgados, IDs inválidos y paths fuera del
+  directorio se rechazan.
+- Validación al cierre: 354 casos descubiertos (baseline `4b8a1c7`: 336; neto
+  agregado: 18). En este host se ejecutaron 350 y cuatro casos de render real
+  Remotion quedaron agrupados bajo un `SkipTest` de clase porque el CLI no respondió;
+  los 18 casos nuevos sí se ejecutaron y pasaron. Ver `docs/METRICS.md` para el
+  desglose y los comandos exactos.
+- Smoke visual E2E en `127.0.0.1:8766`, con directorios temporales,
+  `PREMIUM_STATIC_RENDER_ENGINE=pillow` y `PREMIUM_PUBLISH_DRY_RUN=true`: importó
+  tres slides, promovió dos uploads propios, sirvió sus miniaturas, guardó el
+  borrador, renderizó tres previews y devolvió Instagram/Facebook `OK` de dry-run.
+  La consola del navegador terminó sin errores y no hubo llamadas externas.
+- Gates finales: 17/17 E2E local dry-run, `doctor core` y `doctor all` 8/8 con
+  overrides `observe`/canales apagados sólo para QA, `compileall`, sintaxis JS y
+  `git diff --check` OK. El `doctor` sin overrides conserva visible una contradicción
+  preexistente del host (`observe` con Web habilitada); no se tocó `.env`.
+
+Requiere review y merge explícitamente aprobados. No autoriza desactivar
+`PREMIUM_PUBLISH_DRY_RUN` ni publicar en Meta.
+
 ## Capa editorial premium (rama `feature/premium-editorial-layer`, no mergeada)
 
 Construida sobre `main` (`dd9b7fe`) en cinco fases, cada una con pruebas propias.

@@ -672,3 +672,37 @@ aparte. Cada resolución de motor queda en el log rotativo de
 
 **Revisar nuevamente cuando**: se decida wireear Remotion al flujo automático o al
 OG de verdad (requiere su propia decisión y benchmark, dado el costo medido).
+
+### 2026-07-30 — Generación asistida del paquete premium sin investigación externa
+
+**Decisión**: el Estudio Premium puede transformar con OpenAI el texto completo que
+pega el operador en el mismo JSON que acepta el importador manual. La llamada vive en
+`openIA/premium_package_generator.py`, exige no inventar datos, personas, armas,
+cifras ni hechos ajenos al original, y no hace búsquedas ni recibe URLs como fuente de
+investigación. El endpoint `/api/premium/generate` pasa siempre la respuesta por
+`utils.premium_importer.import_chatgpt_package` antes de guardar el borrador. Si
+OpenAI o el JSON fallan, la acción manual muestra un error y no fabrica una plantilla
+degradada ni un fallback silencioso.
+
+**Motivo**: el operador ya aporta la noticia actualizada y necesita reducir el trabajo
+mecánico de dividirla en título, caption y slides. Estructurar esa entrada no viola la
+restricción vigente contra investigar noticias con IA: la fuente factual es el texto
+pegado por el operador y el modelo sólo organiza ese material.
+
+**Alternativas rechazadas**: generar una plantilla mecánica sin IA (el operador eligió
+explícitamente OpenAI); permitir que el modelo complete contexto desde conocimiento
+propio o búsquedas (podría inventar o mezclar hechos); construir el paquete directo
+en el endpoint (duplicaría el contrato del importador); devolver un fallback
+silencioso ante un error del proveedor (ocultaría al operador que la estructura no
+fue generada por el modelo solicitado).
+
+**Consecuencias**: el import JSON manual se conserva como camino secundario. La
+generación usa las credenciales, timeout y reintentos OpenAI ya configurados, pero no
+publica nada: crea un borrador que todavía debe revisarse, recibir imágenes, guardarse
+y pasar por preview/publicación. Los links de imagen son un flujo aparte, con
+validación SSRF-safe, límite de 20 MB e ingesta por contenido; las subidas propias
+también terminan en la misma biblioteca deduplicada.
+
+**Revisar nuevamente cuando**: se quiera incorporar investigación, fuentes externas o
+verificación factual automática; cualquiera de esos cambios requiere una decisión
+editorial y de seguridad nueva.

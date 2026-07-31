@@ -174,6 +174,34 @@ def _find_by_hash(digest: str) -> dict | None:
     return None
 
 
+def get_asset(asset_id: str) -> dict | None:
+    """Devuelve una copia del asset por ID, sin exponer el estado mutable."""
+    assets = load_json(_library_path(), [], expected_type=list)
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("asset_id") == asset_id:
+            return copy.deepcopy(asset)
+    return None
+
+
+def get_asset_thumbnail_path(asset_id: str) -> str | None:
+    """Resuelve una miniatura vigente dentro del directorio controlado."""
+    asset = get_asset(asset_id)
+    if not asset or asset.get("files_purged"):
+        return None
+    raw_path = str(asset.get("thumb_path") or "").strip()
+    if not raw_path:
+        return None
+    root = os.path.realpath(_thumbs_dir())
+    candidate = os.path.realpath(raw_path)
+    try:
+        inside_root = os.path.commonpath((root, candidate)) == root
+    except ValueError:
+        inside_root = False
+    if not inside_root or not os.path.isfile(candidate):
+        return None
+    return candidate
+
+
 def _touch_asset(asset_id: str) -> None:
     def mutate(assets):
         for asset in assets:
@@ -400,8 +428,12 @@ def _premium_row(item: dict, *, status: str) -> dict:
 
 
 def _asset_row(asset: dict) -> dict:
+    asset_id = str(asset.get("asset_id") or "")
+    thumbnail = None
+    if asset_id and not asset.get("files_purged") and asset.get("thumb_path"):
+        thumbnail = f"/api/media-library/thumb/{asset_id}"
     return {
-        "resource_id": f"asset:{asset.get('asset_id')}",
+        "resource_id": f"asset:{asset_id}",
         "resource_type": "image",
         "titulo": asset.get("titulo"),
         "seccion": asset.get("seccion"),
@@ -409,14 +441,14 @@ def _asset_row(asset: dict) -> dict:
         "fecha": asset.get("created_at_ts"),
         "estado": "purgado" if asset.get("files_purged") else asset.get("origin"),
         "topic_key": asset.get("topic_key"),
-        "thumbnail": None if asset.get("files_purged") else asset.get("thumb_path"),
+        "thumbnail": thumbnail,
         "is_published": False,
         "is_candidate": False,
         "is_premium": asset.get("origin") == "draft",
         "is_automatic": False,
         "used_count": int(asset.get("used_count") or 0),
         "created_at_ts": asset.get("created_at_ts") or 0,
-        "asset_id": asset.get("asset_id"),
+        "asset_id": asset_id,
         "referenced_by": list(asset.get("referenced_by") or []),
     }
 
