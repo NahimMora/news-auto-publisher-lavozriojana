@@ -51,6 +51,45 @@ comandos usados.
 No mergeado a `main`. No autoriza publicaciones reales ni canary; requiere
 autorización explícita posterior por fase.
 
+## En progreso — Editorial Cinemática Riojana (rama `feature/editorial-cinematica-riojana`)
+
+Rediseño visual de las dos piezas estáticas (carrusel premium y card automática de
+Instagram) partiendo de `feature/premium-studio-ux`. No mergeado, no toca `.env`,
+`data/` ni `output/` productivo, no ejecuta ninguna publicación real. Ver
+`docs/DECISIONS.md` 2026-07-31 para la decisión completa.
+
+- [x] Sistema de diseño compartido (`remotion/src/shared/designSystem.ts`): 3 modos
+  (Crónica/Editorial/Datos), escala tipográfica, spacing/safe areas, gradientes por
+  capas, textura de grano (`Grain.tsx`), badges/numeración reutilizables.
+- [x] Tipografía Archivo + Source Serif 4 (variables, SIL OFL) cargadas localmente sin
+  red (`remotion/src/shared/fonts.ts`, hook `useFontsReady`); Arial eliminado de las
+  composiciones nuevas y despriorizado en el fallback Pillow.
+- [x] Auto-fit de texto medido con Canvas 2D real + hard-break de palabras sin espacios
+  más anchas que el lienzo (`fitText.ts`) — cierra Known Issue #70, ningún texto
+  observado se desborda en los fixtures probados.
+- [x] `PremiumSlide.tsx` (7 tipos de slide) y `AutomaticInstagramCard.tsx`
+  reescritos con tratamiento distinto por modo; `FacebookOgCard.tsx` aislado en
+  `LegacyStillLayout.tsx` para quedar pixel-idéntico (fuera de alcance).
+- [x] Servidor de render persistente (`remotion/render_server.mjs`) — cierra Known
+  Issue #69. Benchmark re-medido: 19.119s → 2.881s promedio por paquete (~6.6x).
+  `utils/remotion_renderer.py::render_still()` lo usa primero, cae al subprocess
+  viejo sin cambiar su firma/contrato.
+- [x] Wiring real de Remotion al flujo automático:
+  `layout/image_generator.py::generate_instagram_with_engine` (aditiva, no toca
+  `generate_post`), actualizados `meta/ig_client.py::_prepare_image`,
+  `pipeline/custom_post.py::render_preview_image`, `preview_pipeline.py`.
+  `AUTOMATIC_STATIC_RENDER_ENGINE` default `pillow` → `auto`.
+- [x] Fixtures + contact sheet reales (`scripts/generate_visual_contact_sheet.py`,
+  fotografía real de `FotosLVR/`) en `docs/design/editorial-cinematica/`.
+- [x] Validación: 363/363 tests Python OK (27 nuevos: 2 dispatch de `automatic`
+  actualizados + 7 de `generate_instagram_with_engine`/`_materialize_image_for_remotion`
+  + 1 live render), `npx tsc --noEmit`/`npx eslint src`/`npx remotion bundle` sin
+  errores nuevos, `compileall`/`git diff --check` OK.
+
+Requiere revisión y aprobación explícita antes de mergear — en particular el cambio de
+default de `AUTOMATIC_STATIC_RENDER_ENGINE`, que toca el pipeline de publicación real
+(ver `docs/DECISIONS.md`).
+
 ## Cerrado por la línea de base del 2026-07-23
 
 - [x] Contrato estructurado y códigos de salida.

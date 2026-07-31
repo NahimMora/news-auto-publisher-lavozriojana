@@ -706,3 +706,111 @@ también terminan en la misma biblioteca deduplicada.
 **Revisar nuevamente cuando**: se quiera incorporar investigación, fuentes externas o
 verificación factual automática; cualquiera de esos cambios requiere una decisión
 editorial y de seguridad nueva.
+
+### 2026-07-31 — Editorial Cinemática Riojana: sistema visual compartido + servidor de render persistente
+
+**Decisión**: rediseñar el sistema visual de las dos piezas estáticas (carrusel premium y
+card automática de Instagram) bajo una dirección de arte única, "Editorial Cinemática
+Riojana", con tokens compartidos (`remotion/src/shared/designSystem.ts`): tres modos de
+composición (`cronica`/`editorial`/`datos`, derivados de `template` en premium y de
+`seccion` en automático), tipografía Archivo + Source Serif 4 (variables, SIL OFL,
+cargadas localmente sin red — `remotion/src/shared/fonts.ts`), gradientes por capas
+(scrim + wash de marca + luz radial + viñeta), textura de grano vía filtro SVG
+(`Grain.tsx`), y auto-fit de texto medido con Canvas 2D real (`fitText.ts`) que cierra
+`docs/KNOWN_ISSUES.md` #70 (el path Remotion no detectaba overflow de título).
+
+Para conectar Remotion de verdad al flujo automático (antes sólo Pillow, ver la entrada
+2026-07-30 "Corrección: política de renderers separada por workflow") sin pagar el costo
+medido de ~19s/paquete (Known Issue #69), se agregó un servidor de render persistente
+(`remotion/render_server.mjs`): bundlea el proyecto **una sola vez** por proceso con
+`@remotion/bundler` y abre un browser Chromium reusado entre renders vía
+`@remotion/renderer`, expuesto por HTTP en `127.0.0.1` (sólo loopback, sin auth — mismo
+criterio que la UI manual del proyecto). `utils/remotion_renderer.py::render_still()`
+mantiene firma y contrato de retorno idénticos: intenta el servidor primero
+(`ensure_render_server()`, lo levanta bajo demanda si no está corriendo) y cae al
+`subprocess` de `npx remotion still` si el servidor no puede levantar por cualquier
+motivo — ningún caller (tests incluidos) tuvo que cambiar.
+
+Benchmark real (`scripts/benchmark_static_render.py`, mismos 10 fixtures que el
+benchmark original, medido 2026-07-31): **19.119s → 2.881s promedio por paquete**
+(≈6.6x más rápido; ≈1.0-1.25s por slide individual, primer render de la corrida incluido
+con el costo de bundle+browser en frío). Ver `docs/METRICS.md` para la tabla completa.
+
+Con esa mejora de performance, `layout/image_generator.py` gana una función aditiva
+nueva, `generate_instagram_with_engine(article, preloaded_img=None)`, que resuelve
+`resolve_engine("automatic")` e intenta Remotion antes de caer a `generate_post`
+(Pillow, sin tocar esa función) — mismo patrón que
+`utils.premium_renderer.render_package_with_engine`. Se actualizaron los call sites
+reales (`meta/ig_client.py::_prepare_image`, `pipeline/custom_post.py::render_preview_image`,
+`preview_pipeline.py`) para usarla. El default de `AUTOMATIC_STATIC_RENDER_ENGINE` pasa
+de `pillow` a **`auto`** (intenta Remotion, cae a Pillow sin bloquear una publicación
+real si el servidor tiene un problema puntual) — deliberadamente no `remotion` estricto,
+que haría fallar la publicación completa ante cualquier hiccup de Node en el host 24/7.
+`OG_STATIC_RENDER_ENGINE` (Facebook/web) no se tocó — fuera de alcance de este rediseño,
+igual que `FacebookOgCard.tsx` (se aisló en `remotion/src/shared/LegacyStillLayout.tsx`
+para que no dependiera del contrato nuevo de `StillLayout.tsx`, pensado sólo para
+`PremiumSlide`/`AutomaticInstagramCard`).
+
+Cards automáticas sin foto ya no caen a un fondo negro liso: usan un fondo de marca con
+textura y gradiente (fallback profesional). El recorte también varía según orientación
+de la imagen (`assetOrientation`, prop opcional en ambos schemas — Python ya tenía el
+width/height barato disponible vía `media_library.py`/PIL, no hace falta reabrir el
+archivo). El fallback Pillow de emergencia (`layout/image_generator.py::_font`) también
+prioriza el `.ttf` de Archivo (con `set_variation_by_axes` para el peso, si el build de
+FreeType lo soporta) antes de Arial — cambio mínimo, no se rediseñó el resto del layout
+Pillow por instrucción explícita del pedido original.
+
+**Motivo**: el operador pidió explícitamente subir la calidad de edición, componentes y
+distribución de ambas piezas usando Remotion — no sólo el carrusel premium, también las
+cards automáticas scrapeadas, que hasta esta entrega no tenían wiring real
+(`AutomaticInstagramCard.tsx` existía sólo para tests). Eso exigía resolver primero el
+cuello de botella de re-bundling, documentado como riesgo residual en el propio Known
+Issue #69 ("si se decide usar Remotion para el flujo automático de alto volumen, hace
+falta un servidor de render persistente").
+
+**Alternativas rechazadas**: fijar `AUTOMATIC_STATIC_RENDER_ENGINE=remotion` estricto en
+vez de `auto` (se rechaza: un fallo puntual de Node bloquearía publicaciones reales de
+Instagram sin necesidad, cuando Pillow sigue siendo un fallback perfectamente
+funcional); rediseñar también `layout/image_generator.py` (Pillow) a fondo para que
+compita visualmente con Remotion (se rechaza: el brief pide explícitamente mantenerlo
+como fallback de emergencia simple, no una segunda implementación completa del sistema
+de diseño); tocar `FacebookOgCard.tsx`/workflow `og` en esta entrega (fuera del alcance
+explícito pedido); usar `@remotion/fonts` para cargar las tipografías locales (se
+rechaza: la documentación oficial no confirma soporte de rango de peso variable
+`font-weight: 100 900` sobre un único archivo de fuente variable, que es justamente lo
+que permite pedir 400/700/900 desde el mismo `.ttf` de Archivo — se usa la API
+`FontFace` nativa del navegador en su lugar, con `delayRender`/`continueRender`
+integrado a un hook de React (`useFontsReady`) para forzar un re-render real después de
+que la fuente cargue, no sólo bloquear la captura — un bug real detectado en pruebas
+manuales mostró que medir con Canvas 2D *antes* de que la fuente terminara de cargar
+producía wraps de texto incorrectos con la métrica de la fuente de fallback).
+
+**Consecuencias**: `remotion/render_server.mjs` es un proceso Node adicional que puede
+quedar corriendo en el host (se apaga solo por inactividad, default 20 minutos —
+`RENDER_SERVER_IDLE_MS`) — no es un servicio nuevo que haya que registrar en el
+supervisor ni en las tareas programadas, se levanta bajo demanda la primera vez que se
+necesita. `.render-cache/` (bundle) y `.render-server.json` (metadata del proceso) son
+artefactos locales, gitignorados, nunca se commitean. En Windows, `SIGTERM`/`SIGINT` no
+garantizan que el proceso corra su handler de apagado prolijo (limitación conocida del
+sistema operativo, no de esta implementación) — el archivo de metadata puede quedar
+obsoleto tras un `taskkill` externo, por eso `ensure_render_server()` siempre valida
+con un healthcheck HTTP real antes de confiar en él, nunca sólo en el archivo. El
+resaltado de términos en las composiciones nuevas (`FittedTitle.tsx`) resalta la
+**palabra completa** (con puntuación pegada, p.ej. "end-to-end:") si el término aparece
+en cualquier parte de ella, no sólo la subcadena exacta — necesario para que el mismo
+tokenizado por espacios sirva tanto para el wrap como para el resaltado sin desincronizarse
+(bug real encontrado y corregido durante esta entrega: un término que hacía match en
+medio de una palabra con puntuación pegada generaba un token de más y desplazaba el
+resto de las palabras a la línea equivocada). Un título con una palabra sin espacios más
+ancha que el lienzo (identificador técnico, URL) se corta a nivel de carácter
+(`breakLongWord` en `fitText.ts`) para garantizar que nunca se desborde — en ese caso
+puntual se pierde el color de resaltado como degradación segura, no la legibilidad.
+
+**Revisar nuevamente cuando**: se acumule evidencia real de producción sobre el
+comportamiento de `auto` para el flujo automático (tasa de fallback a Pillow, tiempos
+reales bajo carga de 8/ciclo) que justifique subir a `remotion` estricto o bajar de
+nuevo a `pillow`; se decida extender el sistema visual nuevo a `FacebookOgCard.tsx` o a
+los Reels (`Main.tsx`/`Outro.tsx`); o se agregue algún mecanismo de invalidación
+automática del bundle cacheado si el código de `remotion/src/` cambia mientras el
+servidor sigue corriendo (hoy requiere reiniciar el proceso manualmente, documentado en
+`remotion/README.md`).

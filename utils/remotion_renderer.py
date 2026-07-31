@@ -1,9 +1,18 @@
-"""Wrapper Python para renders estáticos de Remotion (Fase 4).
+"""Wrapper Python para renders estáticos de Remotion (Fase 4 + rediseño
+"Editorial Cinemática Riojana").
 
-Centraliza la invocación de ``npx remotion still`` para las composiciones
+Centraliza la invocación de Remotion para las composiciones
 ``PremiumSlide``/``AutomaticInstagramCard``/``FacebookOgCard``, con
 detección de disponibilidad cacheada y el fallback explícito controlado
 por ``STATIC_RENDER_ENGINE`` (ver docs/DECISIONS.md).
+
+``render_still()`` intenta primero el servidor de render persistente
+(``render_server.mjs``, bundlea una vez por proceso y reusa un browser
+Chromium — resuelve docs/KNOWN_ISSUES.md #69, donde cada
+``npx remotion still`` re-bundleaba desde cero, ~19s/render) y cae al
+``subprocess`` viejo si el servidor no puede levantar por cualquier motivo.
+Firma y contrato de retorno sin cambios: cualquier caller existente (tests,
+``utils/premium_renderer.py``) sigue funcionando igual.
 """
 from __future__ import annotations
 
@@ -12,8 +21,11 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
+
+import requests
 
 from utils.logging_setup import setup_logger
 
@@ -24,6 +36,89 @@ REMOTION_DIR = os.path.join(BASE_DIR, "remotion")
 AVAILABILITY_CACHE_SECONDS = int(os.getenv("REMOTION_AVAILABILITY_CACHE_SECONDS", "300"))
 
 _availability_cache: dict[str, tuple[bool, float]] = {}
+
+# ── Servidor de render persistente ──────────────────────────────────────
+RENDER_SERVER_SCRIPT = os.path.join(REMOTION_DIR, "render_server.mjs")
+RENDER_SERVER_INFO_PATH = os.path.join(REMOTION_DIR, ".render-server.json")
+RENDER_SERVER_HEALTH_TIMEOUT = float(os.getenv("REMOTION_RENDER_SERVER_HEALTH_TIMEOUT", "1.5"))
+RENDER_SERVER_STARTUP_TIMEOUT = float(os.getenv("REMOTION_RENDER_SERVER_STARTUP_TIMEOUT", "90"))
+RENDER_SERVER_DISABLED = os.getenv("REMOTION_RENDER_SERVER_DISABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+_server_lock = threading.Lock()
+
+
+def _read_server_info() -> dict | None:
+    try:
+        with open(RENDER_SERVER_INFO_PATH, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def _server_health_check(port: int) -> bool:
+    try:
+        response = requests.get(f"http://127.0.0.1:{port}/health", timeout=RENDER_SERVER_HEALTH_TIMEOUT)
+        return response.status_code == 200 and response.json().get("ok") is True
+    except (requests.RequestException, ValueError):
+        return False
+
+
+def _spawn_render_server() -> bool:
+    popen_kwargs: dict = {
+        "cwd": REMOTION_DIR,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+    else:
+        popen_kwargs["start_new_session"] = True
+    try:
+        # 'node' es un ejecutable real en PATH (a diferencia de 'npx', que en
+        # Windows es un .cmd y necesita el wrapper _npx_args) — no hace falta
+        # invocarlo vía cmd /c.
+        subprocess.Popen(["node", RENDER_SERVER_SCRIPT, "--port=0"], **popen_kwargs)
+        return True
+    except OSError as exc:
+        logger.warning("No se pudo lanzar render_server.mjs: %s", exc)
+        return False
+
+
+def ensure_render_server() -> int | None:
+    """Puerto de un servidor de render persistente saludable, o ``None`` si
+    no se pudo levantar (el llamador debe caer al ``subprocess`` viejo).
+    Idempotente y seguro entre hilos: si ya hay uno saludable, lo reusa sin
+    lanzar un segundo proceso.
+    """
+    if RENDER_SERVER_DISABLED or not os.path.isfile(RENDER_SERVER_SCRIPT):
+        return None
+
+    info = _read_server_info()
+    if info and _server_health_check(info.get("port", -1)):
+        return info["port"]
+
+    with _server_lock:
+        info = _read_server_info()
+        if info and _server_health_check(info.get("port", -1)):
+            return info["port"]
+
+        if not _spawn_render_server():
+            return None
+
+        started = time.monotonic()
+        while time.monotonic() - started < RENDER_SERVER_STARTUP_TIMEOUT:
+            info = _read_server_info()
+            if info and _server_health_check(info.get("port", -1)):
+                logger.info("servidor de render persistente listo en el puerto %s", info["port"])
+                return info["port"]
+            time.sleep(0.4)
+
+        logger.warning(
+            "render_server.mjs no respondió /health dentro de %ss, se usa el subprocess viejo",
+            RENDER_SERVER_STARTUP_TIMEOUT,
+        )
+        return None
 
 
 class RemotionRenderError(RuntimeError):
@@ -66,15 +161,23 @@ def remotion_available(*, force_recheck: bool = False) -> bool:
     return available
 
 
-# Cada workflow tiene su propia variable y su propio default seguro. El
-# flujo automático y el OG de Facebook/web deben conservar Pillow salvo
-# habilitación explícita; el estudio premium (manual, bajo volumen) usa
-# Remotion por defecto. ``STATIC_RENDER_ENGINE`` (legacy) sólo aplica si el
-# workflow no tiene su propia variable definida explícitamente — nunca debe
-# cambiar en silencio el motor del flujo automático productivo.
-# Ver docs/DECISIONS.md "Política de renderers por workflow".
+# Cada workflow tiene su propia variable y su propio default seguro.
+# ``STATIC_RENDER_ENGINE`` (legacy) sólo aplica si el workflow no tiene su
+# propia variable definida explícitamente — nunca debe cambiar en silencio
+# el motor del flujo automático productivo.
+# Ver docs/DECISIONS.md "Política de renderers por workflow" y "Editorial
+# Cinemática Riojana" (corrección del default de "automatic").
+#
+# "automatic" pasó de "pillow" a "auto" (2026-07-31): con el servidor de
+# render persistente (render_server.mjs, ver docs/KNOWN_ISSUES.md #69) un
+# render Remotion pasó de ~19s a ~1s, viable para el volumen del flujo
+# automático (hasta 8/ciclo). "auto" intenta Remotion primero para subir la
+# calidad visual y cae a Pillow sin bloquear una publicación real si el
+# servidor Node tiene un problema puntual — nunca "remotion" estricto acá,
+# que haría fallar la publicación entera ante cualquier hiccup de Node.
+# "og" (Facebook/web) no se tocó en esta entrega — fuera de alcance.
 WORKFLOW_DEFAULT_ENGINE = {
-    "automatic": "pillow",
+    "automatic": "auto",
     "premium": "remotion",
     "og": "pillow",
 }
@@ -164,14 +267,86 @@ def render_still(
     """Renderiza una composición still y devuelve ``(png_bytes, metadata)``.
 
     ``asset_paths`` mapea el nombre del prop de asset (p.ej. ``"assetFile"``)
-    a una ruta local real. Remotion sólo puede leer archivos dentro de
-    ``public/``, así que se copian ahí bajo ``public/tmp/`` con un nombre
-    único y se borran al terminar — no queda contenido de terceros dando
-    vueltas en el repo.
+    a una ruta local real. Intenta primero el servidor de render persistente
+    (``ensure_render_server``/``_render_still_via_server`` — bundlea una vez
+    por proceso, ver docs/KNOWN_ISSUES.md #69) y cae al ``subprocess`` de
+    ``npx remotion still`` si el servidor no está disponible por cualquier
+    motivo. Firma y contrato de retorno idénticos en ambos caminos — ningún
+    caller existente necesita saber cuál se usó.
     """
     if not os.path.isdir(REMOTION_DIR):
         raise RemotionRenderError("carpeta remotion/ no encontrada")
 
+    server_result = _render_still_via_server(composition_id, props, asset_paths=asset_paths, timeout=timeout)
+    if server_result is not None:
+        return server_result
+
+    return _render_still_via_subprocess(composition_id, props, asset_paths=asset_paths, timeout=timeout)
+
+
+def _render_still_via_server(
+    composition_id: str,
+    props: dict,
+    *,
+    asset_paths: dict[str, str] | None,
+    timeout: int,
+) -> tuple[bytes, dict] | None:
+    """Devuelve ``(png_bytes, metadata)`` vía el servidor persistente, o
+    ``None`` si el servidor no está disponible (el llamador debe caer al
+    subprocess viejo). Un render que sí llegó al servidor pero falló de
+    verdad (composición inválida, etc.) levanta ``RemotionRenderError`` en
+    vez de degradar en silencio — sólo la *disponibilidad* del servidor
+    dispara el fallback, no un error de render legítimo."""
+    port = ensure_render_server()
+    if port is None:
+        return None
+
+    started = time.monotonic()
+    payload = {
+        "compositionId": composition_id,
+        "inputProps": props,
+        "assetPaths": asset_paths or {},
+    }
+    try:
+        response = requests.post(
+            f"http://127.0.0.1:{port}/render",
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        logger.warning(
+            "servidor de render persistente no respondió para %s, cae al subprocess viejo: %s",
+            composition_id,
+            exc,
+        )
+        return None
+
+    duration = time.monotonic() - started
+    if response.status_code != 200:
+        detail = ""
+        try:
+            detail = str(response.json().get("error", ""))
+        except ValueError:
+            detail = response.text[:500]
+        raise RemotionRenderError(f"servidor de render persistente falló para {composition_id}: {detail}")
+
+    return response.content, {
+        "engine": "remotion",
+        "duration_seconds": round(duration, 3),
+        "render_path": "persistent_server",
+    }
+
+
+def _render_still_via_subprocess(
+    composition_id: str,
+    props: dict,
+    *,
+    asset_paths: dict[str, str] | None = None,
+    timeout: int = 180,
+) -> tuple[bytes, dict]:
+    """Camino histórico (Fase 4): ``npx remotion still`` por render, re-bundlea
+    cada vez. Se conserva como red de seguridad interna cuando el servidor
+    persistente no puede levantar (ver ``render_still``)."""
     render_id = uuid.uuid4().hex
     working_props = dict(props)
     copied_assets: list[str] = []
@@ -214,7 +389,7 @@ def render_still(
 
         with open(output_path, "rb") as handle:
             data = handle.read()
-        return data, {"engine": "remotion", "duration_seconds": round(duration, 3)}
+        return data, {"engine": "remotion", "duration_seconds": round(duration, 3), "render_path": "subprocess"}
     finally:
         for path in copied_assets:
             try:

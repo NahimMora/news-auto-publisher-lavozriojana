@@ -264,6 +264,38 @@ persistente en esta implementación. Ver `remotion/README.md` para el
 detalle y la mitigación propuesta (servidor de render persistente antes de
 usar Remotion en un flujo de alto volumen).
 
+## Benchmark Remotion vs Pillow — servidor de render persistente (medido 2026-07-31)
+
+Mismo script, mismos 10 fixtures, mismo host (Node v22.20.0, Windows) — la única
+diferencia es que `utils/remotion_renderer.py::render_still` ahora intenta primero
+`remotion/render_server.mjs` (bundle una sola vez por proceso + browser Chromium
+reusado, ver `docs/DECISIONS.md` "Editorial Cinemática Riojana") antes de caer al
+`subprocess` viejo. Corrida limpia (servidor recién levantado, sin caché previa):
+
+| Métrica | Pillow | Remotion (servidor persistente) | Remotion (subprocess, 2026-07-30) |
+|---|---:|---:|---:|
+| Éxito | 10/10 | 10/10 | 10/10 |
+| Tiempo promedio por paquete | 0.045s | **2.373s** | 19.119s |
+| Tiempo total (10 paquetes) | 0.453s | 23.734s | 191.188s |
+| Tamaño promedio por paquete (bytes) | 111.286 | 140.500 | 125.983 |
+| Dimensiones | 1080×1350 en todos los casos | 1080×1350 en todos los casos | 1080×1350 en todos los casos |
+
+**~8.1x más rápido por paquete** que el subprocess viejo (19.119s → 2.373s), con las
+mismas 10/10 fixtures exitosas y las mismas dimensiones. Los tiempos por paquete
+individuales de esta corrida fueron `[2.063, 2.093, 3.125, 2.047, 3.016, 2.125, 2.109,
+2.031, 2.031, 3.094]` segundos — la variación entre paquetes de 2-3 slides viene de la
+cantidad de slides por paquete, no de re-bundling (que ahora sólo ocurre una vez al
+iniciar el proceso del servidor, no por request). El tamaño promedio subió ~12% frente
+al Remotion anterior (más capas de gradiente/textura del sistema visual nuevo) — sigue
+muy por debajo de cualquier límite de Meta.
+
+No se inventaron valores: esta tabla refleja exactamente la salida de
+`python scripts/benchmark_static_render.py` en esta corrida — el número de la columna
+"subprocess" es el de la corrida original del 2026-07-30, conservado para la
+comparación directa. Reproducir: matar cualquier servidor persistente corriendo
+(`Get-Content remotion\.render-server.json | ConvertFrom-Json | % pid | Stop-Process
+-Force`; borrar `remotion\.render-cache`) y volver a correr el script.
+
 Diferencia funcional detectada: el renderer Pillow detecta y reporta
 `titulo_desborda` (overflow) para el único fixture con título largo (~190
 caracteres); el path Remotion no genera esa advertencia todavía (no mide la

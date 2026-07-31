@@ -534,15 +534,15 @@ Un resultado con `requires_reconciliation=true` (outcome ambiguo, típicamente
 `network_error`) no se reintenta automáticamente; conciliar en la plataforma antes de
 usar `force=True` en `retry_channel`.
 
-## Sistema visual Remotion (Fase 4)
+## Sistema visual Remotion (Fase 4 + rediseño "Editorial Cinemática Riojana")
 
-Política **por workflow** (corrección 2026-07-30, ver `docs/DECISIONS.md`): cada
-flujo tiene su propia variable y su propio default seguro. Sin ninguna variable
+Política **por workflow** (corrección 2026-07-30 y 2026-07-31, ver `docs/DECISIONS.md`):
+cada flujo tiene su propia variable y su propio default seguro. Sin ninguna variable
 definida:
 
 | Workflow | Variable | Default |
 |---|---|---:|
-| Automático (Instagram, alto volumen) | `AUTOMATIC_STATIC_RENDER_ENGINE` | `pillow` |
+| Automático (Instagram, alto volumen) | `AUTOMATIC_STATIC_RENDER_ENGINE` | `auto` |
 | Estudio Premium (manual, bajo volumen) | `PREMIUM_STATIC_RENDER_ENGINE` | `remotion` |
 | OG Facebook/web | `OG_STATIC_RENDER_ENGINE` | `pillow` |
 
@@ -552,16 +552,26 @@ está definida explícitamente) > default seguro del workflow. **No activar
 `STATIC_RENDER_ENGINE` sin necesidad**: cambia el motor de cualquier workflow que no
 tenga su propia variable definida, incluido el automático.
 
-Sólo el Estudio Premium tiene wiring real a Remotion en esta entrega
-(`utils/premium_renderer.py::render_package_with_engine`, `workflow="premium"` por
-defecto). El flujo automático de Instagram y el OG de Facebook/web **no llaman a
-Remotion todavía** — sus variables existen para cuando se decida integrarlos, con el
-default correcto ya fijado.
+Ambos flujos con wiring real (Estudio Premium y, desde 2026-07-31, el automático de
+Instagram) pasan por `utils/remotion_renderer.py::render_still()`, que ahora intenta
+primero un **servidor de render persistente** (`remotion/render_server.mjs`) antes de
+caer al `subprocess` histórico de `npx remotion still` — ver "Servidor de render
+persistente" más abajo. El OG de Facebook/web **sigue sin wiring real a Remotion** — su
+variable existe para cuando se decida integrarlo.
+
+- `utils/premium_renderer.py::render_package_with_engine` — Estudio Premium,
+  `workflow="premium"` por defecto.
+- `layout/image_generator.py::generate_instagram_with_engine` — card automática de
+  Instagram (`workflow="automatic"`), llamada desde `meta/ig_client.py::_prepare_image`,
+  `pipeline/custom_post.py::render_preview_image` y `preview_pipeline.py`. Nunca toca
+  `generate_post`/`generate_instagram`/`generate_facebook` (Pillow) — quedan intactas
+  como fallback, llamadas internamente si Remotion falla o no está disponible.
 
 ```powershell
 # Ejemplos
-$env:PREMIUM_STATIC_RENDER_ENGINE="pillow"    # fuerza Pillow sólo en premium
-$env:AUTOMATIC_STATIC_RENDER_ENGINE="remotion" # habilita Remotion en automático para pruebas controladas (no hay wiring real todavía)
+$env:PREMIUM_STATIC_RENDER_ENGINE="pillow"     # fuerza Pillow sólo en premium
+$env:AUTOMATIC_STATIC_RENDER_ENGINE="pillow"   # vuelve el automático al comportamiento previo a 2026-07-31
+$env:AUTOMATIC_STATIC_RENDER_ENGINE="remotion" # exige Remotion en automático; falla en vez de degradar si no está disponible
 
 # Validación manual del proyecto Remotion (no está en CI: CI es Python-only)
 cd remotion
@@ -570,13 +580,42 @@ npx tsc --noEmit
 npx eslint src
 npx remotion bundle
 python ..\scripts\benchmark_static_render.py
+python ..\scripts\generate_visual_contact_sheet.py   # fixtures + contact sheet en docs/design/editorial-cinematica/
 ```
 
 Un fallback de `auto` a Pillow, o un modo `remotion` explícito sin Remotion
 disponible, queda registrado en `logs/remotion_renderer.log`
 (`workflow=... engine_requested=... engine_used=... fallback_reason=...`) y en
 `logs/premium_renderer.log`, además del resultado estructurado
-(`engine_used`/`render_engine`). Los 4 tests de render real en
-`tests/test_remotion_visual.py::RemotionLiveRenderTests` se saltean automáticamente
-si `remotion/node_modules` no existe (por ejemplo, en CI, que no instala Node) — no
-es un fallo, es el comportamiento esperado sin Node disponible.
+(`engine_used`/`render_engine`). Los tests de render real en
+`tests/test_remotion_visual.py::RemotionLiveRenderTests` y
+`tests/test_image_pipeline.py::AutomaticInstagramLiveRenderTests` se saltean
+automáticamente si `remotion/node_modules` no existe (por ejemplo, en CI, que no
+instala Node) — no es un fallo, es el comportamiento esperado sin Node disponible.
+
+### Servidor de render persistente
+
+`remotion/render_server.mjs` bundlea el proyecto **una sola vez por proceso** y reusa
+un browser Chromium entre renders (resuelve `docs/KNOWN_ISSUES.md` #69 — cada
+`npx remotion still` re-bundleaba desde cero, ~19s/paquete medido; el servidor
+persistente midió ~2.9s/paquete, ~1s/slide individual, ver `docs/METRICS.md`).
+
+- Se levanta bajo demanda: la primera llamada a `render_still()` que no encuentra un
+  servidor saludable en `remotion/.render-server.json` lo lanza como proceso
+  `detached`/background y espera su `/health` (hasta 90s por defecto,
+  `REMOTION_RENDER_SERVER_STARTUP_TIMEOUT`).
+- Se apaga solo por inactividad (default 20 minutos, `RENDER_SERVER_IDLE_MS`) — no
+  requiere registrarse en el supervisor 24/7 ni en las tareas programadas.
+- `REMOTION_RENDER_SERVER_DISABLED=true` fuerza a `render_still()` a usar sólo el
+  `subprocess` histórico (útil para reproducir el comportamiento anterior o diagnosticar
+  un problema puntual del servidor).
+- **Si se edita código en `remotion/src/` con el servidor corriendo, hay que
+  reiniciarlo manualmente** para que sirva el bundle actualizado — no hay
+  invalidación automática todavía (ver Known Issue #69, sección "Riesgo residual").
+  En PowerShell:
+  ```powershell
+  $info = Get-Content remotion\.render-server.json | ConvertFrom-Json
+  Stop-Process -Id $info.pid -Force
+  Remove-Item remotion\.render-server.json, remotion\.render-cache -Recurse -Force
+  ```
+  El siguiente render lo vuelve a levantar automáticamente con el bundle nuevo.

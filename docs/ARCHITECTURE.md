@@ -41,18 +41,20 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `utils/premium_publisher.py` | orquestador social-only: nunca crea artículo web ni llama al CMS; degraded/retry por canal; ambiguos no se reintentan solos |
 | `meta/ig_client.py::post_premium_carousel_to_instagram` | carrusel premium (2-10 slides), dedup y estado propios (`data/premium_ig_posted.json`), mismo backoff de cuenta que el flujo automático |
 | `meta/fb_client.py::post_premium_direct_media_to_facebook` | foto única o álbum multi-foto sin link, activado sólo con `publish_mode=direct_media` + `workflow=manual_premium` explícitos; backoff compartido con `fb_posted.json`, dedup propio (`data/premium_fb_posted.json`) |
-| `utils/remotion_renderer.py` | wrapper de `npx remotion still`; detección de disponibilidad cacheada, copia de assets a `remotion/public/tmp/` y limpieza |
-| `remotion/src/{PremiumSlide,AutomaticInstagramCard,FacebookOgCard}.tsx` | composiciones still de Remotion (Fase 4); paleta compartida sin dorado (`constants.ts`), highlight terms compartidos (`shared/HighlightedTitle.tsx`) |
+| `utils/remotion_renderer.py` | `render_still()` intenta primero el servidor de render persistente (`remotion/render_server.mjs`, bundle único por proceso) y cae al `subprocess` de `npx remotion still` si no puede levantar; detección de disponibilidad cacheada, copia de assets a `remotion/public/tmp/` y limpieza |
+| `remotion/src/{PremiumSlide,AutomaticInstagramCard,FacebookOgCard}.tsx` | composiciones still de Remotion; `PremiumSlide`/`AutomaticInstagramCard` bajo el sistema de diseño "Editorial Cinemática Riojana" (`shared/designSystem.ts`, 3 modos, tipografía Archivo/Source Serif 4 local); `FacebookOgCard` sin tocar (`shared/LegacyStillLayout.tsx`) |
+| `layout/image_generator.py::generate_instagram_with_engine` | punto de entrada real de la card automática de Instagram: intenta Remotion (`workflow="automatic"`) y cae a `generate_post`/Pillow (sin modificar esa función) si falla o no está disponible |
 
 `utils/premium_renderer.py::render_package_with_engine` es el punto de entrada real
 para preview/publicación del Estudio Premium: resuelve el motor vía
 `utils/remotion_renderer.py::resolve_engine("premium")`, intenta Remotion primero
 (default de ese workflow), y cae a Pillow (`render_package_bytes`, sin cambios) si
 Remotion no está disponible en modo `auto`. La política de motor es **por
-workflow** (`AUTOMATIC_STATIC_RENDER_ENGINE`, `PREMIUM_STATIC_RENDER_ENGINE`,
-`OG_STATIC_RENDER_ENGINE`, cada una con su propio default seguro) — no una única
-variable global; `STATIC_RENDER_ENGINE` sigue existiendo sólo como override legacy
-explícito. Ver `docs/DECISIONS.md`.
+workflow** (`AUTOMATIC_STATIC_RENDER_ENGINE` default `auto` desde 2026-07-31,
+`PREMIUM_STATIC_RENDER_ENGINE` default `remotion`, `OG_STATIC_RENDER_ENGINE` default
+`pillow` — cada una con su propio default seguro) — no una única variable global;
+`STATIC_RENDER_ENGINE` sigue existiendo sólo como override legacy explícito. Ver
+`docs/DECISIONS.md`.
 | `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff |
 | `utils/file_manager.py` | locks, lectura estricta, atomicidad, backups, cuarentena y restore |
 | `utils/stage_result.py` | contrato `success/no_work/degraded/failed/blocked` |

@@ -3,7 +3,7 @@ import { AbsoluteFill } from "remotion";
 import { z } from "zod";
 import { AZUL, WHITE } from "./constants";
 import { HighlightedTitle } from "./shared/HighlightedTitle";
-import { StillLayout } from "./shared/StillLayout";
+import { LegacyStillLayout as StillLayout } from "./shared/LegacyStillLayout";
 import { section_color_token } from "./shared/sectionColors";
 
 export const FB_OG_W = 1200;

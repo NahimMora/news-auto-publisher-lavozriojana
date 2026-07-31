@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 
 import requests
 
-from layout.image_generator import generate_instagram as _gen_ig_img
 from utils import r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
@@ -348,23 +347,21 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
 
     tmp_path = ""
     try:
+        from layout.image_generator import generate_instagram_with_engine
+
         local_image = str(noticia.get("imagen") or noticia.get("imagen_optimizada") or "")
         if local_image and os.path.isfile(local_image):
             from PIL import Image
-            from layout.image_generator import IG_H, IG_W, generate_post
 
             with Image.open(local_image) as source:
-                image = generate_post(
-                    noticia,
-                    IG_W,
-                    IG_H,
-                    preloaded_img=source.convert("RGBA"),
+                jpeg_bytes, _engine_used = generate_instagram_with_engine(
+                    noticia, preloaded_img=source.convert("RGBA"),
                 )
         else:
-            image = _gen_ig_img(noticia)
+            jpeg_bytes, _engine_used = generate_instagram_with_engine(noticia)
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
             tmp_path = handle.name
-            image.save(tmp_path, "JPEG", quality=90)
+            handle.write(jpeg_bytes)
         public_url, key = r2_storage.upload_temp(tmp_path, ttl_hint="ig")
         return (
             OperationResult(

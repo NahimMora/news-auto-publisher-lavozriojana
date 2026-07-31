@@ -141,13 +141,19 @@ def main():
             fb_path = os.path.join(OUT_DIR, f"{slug}_fb.jpg")
 
             try:
-                ig_mod.generate_instagram(article).save(ig_path, "JPEG", quality=92)
+                # IG usa el motor real (Remotion "Editorial Cinemática Riojana" con
+                # fallback Pillow) vía generate_instagram_with_engine, igual que el
+                # pipeline en vivo — ver docs/DECISIONS.md. FB/OG sigue en Pillow
+                # puro (workflow "og", fuera de alcance de este rediseño).
+                ig_bytes, ig_engine = ig_mod.generate_instagram_with_engine(article)
+                with open(ig_path, "wb") as handle:
+                    handle.write(ig_bytes)
                 ig_mod.generate_facebook(article).save(fb_path,  "JPEG", quality=92)
                 items.append({
                     "seccion": sec, "color": color,
                     "titulo": titulo, "ig_path": ig_path, "fb_path": fb_path,
                 })
-                print(f"  OK {slug}_ig.jpg  {slug}_fb.jpg")
+                print(f"  OK {slug}_ig.jpg (motor={ig_engine})  {slug}_fb.jpg")
             except Exception as e:
                 print(f"  ERROR: {e}")
 

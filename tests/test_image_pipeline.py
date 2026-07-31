@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,6 +88,117 @@ class LayoutTests(unittest.TestCase):
                 {"titulo": "Nota sin imagen", "seccion": "sociedad"}
             )
         self.assertEqual(result.size, (1080, 1350))
+
+
+class AutomaticInstagramEngineDispatchTests(unittest.TestCase):
+    """generate_instagram_with_engine (Editorial Cinemática Riojana, ver
+    docs/DECISIONS.md) — dispatch mockeado, sin depender de Node/Remotion
+    real. Mismo patrón que RemotionEngineDispatchTests en
+    tests/test_remotion_visual.py."""
+
+    ARTICLE = {"titulo": "Detuvieron a un hombre en un control policial", "seccion": "policiales"}
+
+    def test_pillow_engine_uses_generate_post_and_returns_pillow(self):
+        with patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "pillow")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.IG_W, image_generator.IG_H))
+
+    def test_remotion_engine_success_returns_remotion(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (1080, 1350), (10, 10, 10)).save(fake_png, "PNG")
+        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still", return_value=(fake_png.getvalue(), {"engine": "remotion"})
+        ) as render_still_mock:
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        render_still_mock.assert_called_once()
+        self.assertEqual(render_still_mock.call_args.args[0], "AutomaticInstagramCard")
+
+    def test_remotion_engine_failure_falls_back_to_pillow(self):
+        from utils.remotion_renderer import RemotionRenderError
+
+        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still", side_effect=RemotionRenderError("boom")
+        ):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "pillow")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+
+    def test_remotion_unavailable_raises_instead_of_silent_fallback(self):
+        from utils.remotion_renderer import RemotionRenderError
+
+        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion_unavailable"):
+            with self.assertRaises(RemotionRenderError):
+                image_generator.generate_instagram_with_engine(self.ARTICLE)
+
+    def test_local_image_orientation_detected_without_reopening_after_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "landscape.jpg"
+            Image.new("RGB", (900, 500), (10, 20, 30)).save(path, "JPEG")
+            article = {**self.ARTICLE, "imagen": str(path)}
+            local_path, orientation, cleanup = image_generator._materialize_image_for_remotion(article)
+            try:
+                self.assertEqual(local_path, str(path))
+                self.assertEqual(orientation, "landscape")
+            finally:
+                cleanup()
+            self.assertTrue(path.is_file())  # nunca borra un archivo que no creó
+
+    def test_preloaded_image_materializes_to_temp_file_and_cleans_up(self):
+        preloaded = Image.new("RGBA", (600, 900), (5, 5, 5, 255))
+        local_path, orientation, cleanup = image_generator._materialize_image_for_remotion(
+            self.ARTICLE, preloaded_img=preloaded,
+        )
+        self.assertTrue(os.path.isfile(local_path))
+        self.assertEqual(orientation, "portrait")
+        cleanup()
+        self.assertFalse(os.path.isfile(local_path))
+
+    def test_no_image_available_returns_none_without_error(self):
+        with patch.object(image_generator, "_download", return_value=None):
+            local_path, orientation, cleanup = image_generator._materialize_image_for_remotion(self.ARTICLE)
+        self.assertIsNone(local_path)
+        self.assertIsNone(orientation)
+        cleanup()  # no-op, no debe lanzar
+
+
+REMOTION_NODE_MODULES = Path(__file__).resolve().parents[1] / "remotion" / "node_modules"
+
+
+@unittest.skipUnless(
+    str(os.getenv("REMOTION_LIVE_TESTS", "auto")).strip().lower() != "skip" and REMOTION_NODE_MODULES.is_dir(),
+    "remotion/node_modules no está instalado en este entorno; se omite el render real "
+    "(set REMOTION_LIVE_TESTS=skip para omitir explícitamente aunque esté instalado)",
+)
+class AutomaticInstagramLiveRenderTests(unittest.TestCase):
+    """Render real de punta a punta de generate_instagram_with_engine contra
+    Remotion (servidor persistente o subprocess de red, ver
+    utils/remotion_renderer.py). Mismo criterio de skip que
+    tests/test_remotion_visual.py::RemotionLiveRenderTests."""
+
+    @classmethod
+    def setUpClass(cls):
+        from utils.remotion_renderer import remotion_available
+
+        if not remotion_available(force_recheck=True):
+            raise unittest.SkipTest("Remotion CLI no respondió (Node/npx no operativo en este entorno)")
+
+    def test_generates_via_remotion_end_to_end(self):
+        article = {
+            "titulo": "La Legislatura debate el presupuesto 2026 en sesión extraordinaria",
+            "seccion": "politica",
+            "highlight_terms": ["presupuesto 2026"],
+        }
+        with patch.dict(os.environ, {"AUTOMATIC_STATIC_RENDER_ENGINE": "remotion"}, clear=False):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.IG_W, image_generator.IG_H))
 
 
 class WebMediaFallbackTests(unittest.TestCase):

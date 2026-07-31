@@ -1,7 +1,52 @@
 # Estado actual
 
-Última actualización: 2026-07-30 (agrega la capa editorial premium; el resto del
-documento describe el estado previo de la rama de confiabilidad y sigue vigente).
+Última actualización: 2026-07-31 (agrega el rediseño "Editorial Cinemática Riojana";
+el resto del documento describe el estado previo y sigue vigente).
+
+## Editorial Cinemática Riojana (rama `feature/editorial-cinematica-riojana`, no mergeada)
+
+Construida sobre `feature/premium-studio-ux` (limpia al momento de partir). No se
+modificó `main`, `.env`, `data/`, `logs/`, `output/` ni `FotosLVR/` (sólo lectura de
+fotos existentes para fixtures), y no se ejecutó ninguna publicación real.
+
+Rediseño visual completo de las dos piezas estáticas del proyecto (carrusel premium y
+card automática de Instagram) bajo un sistema compartido, "Editorial Cinemática
+Riojana": 3 modos de composición (Crónica/Editorial/Datos), tipografía Archivo + Source
+Serif 4 cargada localmente (sin Arial), gradientes por capas, textura sutil y auto-fit
+de texto que nunca desborda. Ver `docs/DECISIONS.md` 2026-07-31 para el detalle
+completo de la decisión.
+
+- Se agregó un servidor de render persistente (`remotion/render_server.mjs`) que
+  bundlea una sola vez por proceso en vez de re-bundlear en cada render — cierra
+  `docs/KNOWN_ISSUES.md` #69. Benchmark re-medido con los mismos 10 fixtures que la
+  corrida original: **19.119s → 2.373s promedio por paquete (~8.1x más rápido)**, ver
+  `docs/METRICS.md`. `utils/remotion_renderer.py::render_still()` lo usa primero y cae
+  al `subprocess` histórico si no está disponible — mismo contrato de retorno, ningún
+  caller (tests incluidos) cambió.
+- Con esa mejora de performance, el flujo automático de Instagram —que hasta esta
+  entrega renderizaba 100% en Pillow, sin wiring real a Remotion— ahora intenta
+  Remotion primero vía la función nueva `layout/image_generator.py::generate_instagram_with_engine`
+  (aditiva; `generate_post`/`generate_instagram`/`generate_facebook` quedan intactas
+  como fallback). `AUTOMATIC_STATIC_RENDER_ENGINE` cambia su default de `pillow` a
+  `auto` — intenta Remotion, cae a Pillow sin bloquear una publicación real. Este es el
+  único cambio de comportamiento de producción de esta rama y requiere revisión
+  explícita antes de mergear.
+- Auto-fit de texto medido con Canvas 2D real (`remotion/src/shared/fitText.ts`) cierra
+  `docs/KNOWN_ISSUES.md` #70 — ningún título observado se desborda del lienzo en los
+  fixtures probados, incluidos casos pathológicos (palabras sin espacios más anchas que
+  el lienzo, términos resaltados con puntuación pegada).
+- Fixtures reales (fotografía de `FotosLVR/`, títulos corto/largo, horizontal/vertical/
+  clara/oscura, sin foto, policiales/política/deportes, carrusel de 5 slides en los 3
+  modos) y contact sheets comparando diseño actual vs nuevo en
+  `docs/design/editorial-cinematica/` (`scripts/generate_visual_contact_sheet.py`).
+- Validación: 363/363 tests Python OK (27 nuevos frente a la línea de base de 336),
+  `npx tsc --noEmit`/`npx eslint src`/`npx remotion bundle` sin errores nuevos,
+  `compileall`/`git diff --check` OK. No se tocó scraping, colas, límites ni contratos
+  de publicación de Meta — sólo generación/render visual y el punto donde
+  `meta/ig_client.py::_prepare_image` elige qué función de imagen llamar.
+
+Requiere revisión y aprobación explícita antes de mergear, en particular el cambio de
+default de `AUTOMATIC_STATIC_RENDER_ENGINE` descrito arriba.
 
 ## Rediseño del Estudio Premium (rama `feature/premium-studio-ux`, no mergeada)
 

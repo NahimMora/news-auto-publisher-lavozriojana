@@ -9,7 +9,6 @@ meta/fb_client.py, layout/image_generator.py).
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 from uuid import uuid4
@@ -143,14 +142,12 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
 def render_preview_image(item: dict) -> bytes:
     """Renderiza el post con el mismo layout real que se usa al publicar (no un mockup)."""
     from PIL import Image
-    from layout.image_generator import IG_H, IG_W, generate_post
+    from layout.image_generator import generate_instagram_with_engine
 
     local = str(item.get("imagen") or "")
     preloaded = Image.open(local).convert("RGBA") if local else None
-    img = generate_post(item, IG_W, IG_H, preloaded_img=preloaded)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, "JPEG", quality=90)
-    return buf.getvalue()
+    jpeg_bytes, _engine_used = generate_instagram_with_engine(item, preloaded_img=preloaded)
+    return jpeg_bytes
 
 
 def _dry_run_enabled() -> bool:

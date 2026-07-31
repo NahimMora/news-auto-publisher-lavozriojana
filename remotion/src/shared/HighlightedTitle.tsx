@@ -7,6 +7,12 @@ import React from "react";
 //
 // Contrato: { title, highlight_terms }. Si highlightTerms está vacío,
 // renderiza el título normal sin romper el wrapping existente.
+//
+// Usado hoy por Main.tsx (Reels) con wrapping implícito del navegador. Las
+// composiciones still nuevas (PremiumSlide, AutomaticInstagramCard) usan
+// `FittedTitle.tsx`, que agrega auto-fit/overflow medido con Canvas 2D sin
+// tocar este contrato ni arriesgar el video ya estable — ver
+// docs/DECISIONS.md "Editorial Cinemática Riojana".
 
 export type HighlightedTitleProps = {
   text: string;
@@ -65,3 +71,5 @@ export const HighlightedTitle: React.FC<HighlightedTitleProps> = ({
     </div>
   );
 };
+
+export { escapeRegExp, splitWithHighlights };

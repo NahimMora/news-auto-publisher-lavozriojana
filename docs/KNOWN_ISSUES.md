@@ -728,7 +728,7 @@
   sobre el mismo hecho si sus títulos no comparten entidades — el gate de vínculo
   riojano y el resto de límites operativos existentes siguen vigentes de todos modos.
 
-## 69. Cada render estático de Remotion re-bundlea desde cero (medido)
+## 69. Cada render estático de Remotion re-bundlea desde cero (medido) — RESUELTO 2026-07-31
 
 - ID: Fase 4 sistema visual Remotion; severidad media, aceptada para el volumen actual.
 - Descripción: `utils/remotion_renderer.py::render_still` invoca
@@ -738,16 +738,24 @@
   por paquete premium con Remotion vs ~0.03s con el fallback Pillow.
 - Causa raíz: decisión de implementación simple para la primera entrega (reutiliza
   el mismo patrón de subprocess que ya usaba `utils/video_renderer.py` para Reels).
-- Mitigación actual: ninguna — es aceptable para publicación premium manual (2-10
-  slides, pocas veces al día), no para reemplazar Pillow en el flujo automático de
-  alto volumen. `STATIC_RENDER_ENGINE=auto` (default) cae a Pillow si Remotion no
-  está disponible, pero no evalúa el costo de tiempo — sólo la disponibilidad.
-- Estado actual: **documentado, no resuelto**.
-- Riesgo residual: si se decide usar Remotion para el flujo automático de alto
-  volumen, hace falta un servidor de render persistente (`@remotion/renderer`
-  embebido o Remotion Studio en modo server) antes de ese cambio.
+- Mitigación aplicada (rediseño "Editorial Cinemática Riojana", ver
+  `docs/DECISIONS.md`): `remotion/render_server.mjs` bundlea una sola vez por proceso
+  y reusa un browser Chromium entre renders vía `@remotion/bundler`/`@remotion/renderer`
+  embebidos, expuesto por HTTP local. `render_still()` lo intenta primero y cae al
+  `subprocess` viejo si no puede levantar — mismo contrato de retorno, ningún caller
+  cambió. Benchmark re-medido con los mismos 10 fixtures: **19.119s → 2.881s promedio
+  por paquete (~6.6x)**, ~1.0-1.25s por slide individual.
+- Estado actual: **resuelto** para el mecanismo de render en sí. Con esa mejora,
+  `AUTOMATIC_STATIC_RENDER_ENGINE` pasó de `pillow` a `auto` por defecto (intenta
+  Remotion, cae a Pillow sin bloquear una publicación real) — ver `docs/RUNBOOK.md`.
+- Riesgo residual (nuevo, menor): el servidor persistente cachea el bundle en
+  memoria/disco (`remotion/.render-cache/`) mientras el proceso vive — si el código de
+  `remotion/src/` cambia con el servidor corriendo, hay que reiniciarlo manualmente
+  para que sirva la versión nueva (se detectó exactamente este comportamiento durante
+  el desarrollo: un render devolvió bytes idénticos a un fix recién aplicado hasta
+  matar el proceso viejo). No hay invalidación automática todavía.
 
-## 70. El render Remotion de slides premium no detecta overflow de título
+## 70. El render Remotion de slides premium no detecta overflow de título — RESUELTO 2026-07-31
 
 - ID: Fase 4 sistema visual Remotion; severidad baja.
 - Descripción: el renderer Pillow (`utils/premium_renderer.py::render_slide`)
@@ -759,11 +767,21 @@
 - Causa raíz: medir overflow de texto renderizado por React requiere una técnica
   distinta (por ejemplo, `useLayoutEffect` + `getBoundingClientRect` dentro de la
   composición, o post-procesar el PNG) que no se implementó en esta entrega.
-- Mitigación actual: ninguna; el preview visual sigue mostrando el desborde aunque
-  no se reporte como advertencia estructurada cuando se usa Remotion.
-- Estado actual: **documentado, no resuelto**.
-- Riesgo residual: un operador podría publicar un slide con texto cortado si no lo
-  nota en el preview visual y el motor efectivo fue Remotion.
+- Mitigación aplicada (rediseño "Editorial Cinemática Riojana"):
+  `remotion/src/shared/fitText.ts` mide con Canvas 2D real (Remotion renderiza en
+  Chromium headless de verdad) y hace auto-fit + wrap por palabra completa con
+  búsqueda binaria de tamaño de fuente, devolviendo `overflow: true` cuando ni el
+  tamaño mínimo evita que el bloque exceda el alto disponible — mismo contrato
+  conceptual que `_fit_title`/`_wrap_text` en Python. Un título con una palabra sin
+  espacios más ancha que el lienzo (identificador, URL) se corta a nivel de carácter
+  como último recurso, para que nunca se desborde visualmente pase lo que pase con el
+  contenido.
+- Estado actual: **resuelto visualmente** — ningún texto se corta o sale del área
+  segura en las composiciones nuevas (`PremiumSlide`, `AutomaticInstagramCard`),
+  verificado con fixtures de título muy largo. La propagación de `overflow` como
+  warning estructurado hacia Python (equivalente a `titulo_desborda`) **no** se
+  implementó — requeriría un canal de metadata fuera del PNG que no se justificaba
+  para esta entrega; queda como mejora futura.
 
 ## 71. La biblioteca premium exponía una ruta de filesystem como miniatura
 

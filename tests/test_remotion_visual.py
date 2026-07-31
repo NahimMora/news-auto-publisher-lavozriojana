@@ -95,11 +95,20 @@ class RemotionEngineDispatchTests(unittest.TestCase):
             clear=False,
         )
 
-    def test_automatic_uses_pillow_by_default_without_any_variable(self):
+    def test_automatic_uses_auto_by_default_and_prefers_remotion_when_available(self):
         from utils.remotion_renderer import resolve_engine
 
+        # Corrección 2026-07-31 (ver docs/DECISIONS.md "Editorial Cinemática
+        # Riojana"): con el servidor de render persistente, "automatic" pasó
+        # de "pillow" a "auto" — intenta Remotion primero y nunca bloquea la
+        # publicación real si Remotion no está disponible.
         with self._clear_all_engine_vars(), patch("utils.remotion_renderer.remotion_available", return_value=True):
-            # Aunque Remotion esté disponible en el host, "automatic" no lo usa por default.
+            self.assertEqual("remotion", resolve_engine("automatic"))
+
+    def test_automatic_falls_back_to_pillow_when_remotion_unavailable(self):
+        from utils.remotion_renderer import resolve_engine
+
+        with self._clear_all_engine_vars(), patch("utils.remotion_renderer.remotion_available", return_value=False):
             self.assertEqual("pillow", resolve_engine("automatic"))
 
     def test_og_uses_pillow_by_default_without_any_variable(self):
