@@ -413,12 +413,12 @@ el resultado. Una publicación del sexto intento queda `degraded` y genera event
 Antes de Graph, Facebook arma:
 
 ```text
-título
-
 caption exacto de Instagram
 
 URL pública de la noticia
 ```
+
+(sin el título de la noticia antepuesto).
 
 Con `FB_LINK_PREWARM_ENABLED=true`, el cliente descarga la nota con user-agent del
 crawler de Facebook, exige HTML, extrae un `og:image` público, lo descarga con límite
@@ -426,6 +426,13 @@ de tamaño y recién entonces publica. Un timeout, HTTP inválido, Content-Type
 incorrecto o imagen ausente deja la noticia pendiente como `degraded`; no se llama a
 Graph. Revisar `logs/fb_client.log` y la disponibilidad pública de CMS/R2 antes de
 reintentar.
+
+Ese prewarm sólo valida desde la red de la propia app (nunca llama a Facebook), así
+que puede pasar aunque el crawler real de Facebook no pueda scrapear la URL todavía.
+Por eso, justo antes de publicar un post de tipo link, `force_facebook_rescrape`
+llama a Graph (`POST /?id=<url>&scrape=true`) para forzar el mismo refresh que el
+botón "Scrape Again" del Sharing Debugger. Es best-effort: si falla, sólo queda un
+warning en `logs/fb_client.log` y la publicación sigue igual.
 
 ## UI manual de videos
 

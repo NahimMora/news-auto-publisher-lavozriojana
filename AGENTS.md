@@ -174,8 +174,11 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
   crear backup y aplicar únicamente con decisión operativa.
 - Web no tiene límite por ciclo; Facebook e Instagram tienen máximo 8 por plataforma
   y ciclo. El deployment mode sigue subordinado a los kill switches individuales.
-- Facebook publica título + el mismo caption de Instagram + URL Web. Con
-  `FB_LINK_PREWARM_ENABLED=true` debe validar primero la nota y su `og:image`.
+- Facebook publica el mismo caption de Instagram + URL Web (sin el título por
+  delante). Con `FB_LINK_PREWARM_ENABLED=true` debe validar primero la nota y su
+  `og:image`. Antes de publicar, siempre fuerza un re-scrape real del `og:image`
+  contra Graph (`force_facebook_rescrape`, equivalente a "Scrape Again" del
+  Sharing Debugger) — best-effort, no bloquea la publicación si falla.
 - Cada revisión editorial recibe el intento anterior. El sexto intento sólo se usa
   si no conserva warnings factuales, judiciales o de HTML y siempre queda marcado
   como degradado; nunca relajar esa barrera para hacer pasar una publicación.

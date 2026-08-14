@@ -186,6 +186,17 @@ def validate_post_payload(payload: dict, *, now: datetime | None = None) -> list
     if og_image_url and (not _is_http_url(og_image_url) or len(str(og_image_url)) > 500):
         warnings.append("ogImageUrl_invalid")
 
+    video = payload.get("video")
+    if video is not None:
+        if not isinstance(video, dict):
+            warnings.append("video_must_be_object")
+        else:
+            if not _is_http_url(video.get("url")) or len(str(video.get("url") or "")) > 500:
+                warnings.append("video_url_invalid")
+            poster = video.get("poster")
+            if poster and (not _is_http_url(poster) or len(str(poster)) > 500):
+                warnings.append("video_poster_invalid")
+
     source_url = payload.get("sourceUrl")
     if source_url and (not _is_http_url(source_url) or len(str(source_url)) > 500):
         warnings.append("sourceUrl_invalid")
@@ -266,6 +277,7 @@ def build_post_payload(
         "sourceName": source_name,
         "sourceUrl": source_url,
         "mainImage": media.main_image,
+        "video": {"url": media.video_url} if media.video_url else None,
         "ogImageUrl": media.og_image_url or media.main_image["url"],
         "seoTitle": editorial.seo_title,
         "seoDescription": editorial.meta_description,

@@ -80,10 +80,9 @@ def _set_backoff() -> int:
 
 
 def _build_message(noticia: dict, link: str = "") -> str:
-    title = str(noticia.get("titulo") or noticia.get("titulo_original") or "").strip()
     parts = [
         part
-        for part in (title, build_instagram_caption(noticia), link.strip())
+        for part in (build_instagram_caption(noticia), link.strip())
         if part
     ]
     return "\n\n".join(parts)
@@ -211,6 +210,38 @@ def prewarm_link_preview(link: str) -> OperationResult:
             retryable=True,
             details={"publication_outcome": "not_published"},
         )
+
+
+def force_facebook_rescrape(link: str, token: str) -> OperationResult:
+    """Fuerza a Facebook a re-scrapear la URL (equivalente a "Scrape Again" del
+    Sharing Debugger). Best-effort: nunca debe bloquear la publicación, porque
+    `prewarm_link_preview` sólo valida desde la red de la app, no desde la de
+    Facebook, y el post igual puede publicarse aunque este llamado falle."""
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/",
+            data={"id": link, "scrape": "true", "access_token": token},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+        )
+    data = _safe_json(response)
+    if response.status_code == 200 and not data.get("error"):
+        logger.info("Facebook re-scrape forzado ok para %s", link)
+        return OperationResult(StageStatus.SUCCESS, response=data)
+    return OperationResult(
+        StageStatus.DEGRADED,
+        error_type="scrape_rejected",
+        error_code=response.status_code,
+        response=data or None,
+        retryable=True,
+    )
 
 
 def _is_http_url(value: object) -> bool:
@@ -341,6 +372,7 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
     endpoint = "feed"
     payload = {"message": _build_message(noticia)}
     timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    token: str | None = None
     if _is_video_item(noticia):
         video_url = _video_url(noticia)
         if not video_url:
@@ -364,14 +396,27 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
                     prewarm.error_type,
                 )
                 return prewarm
+        try:
+            token = get_page_token()
+        except ValueError as exc:
+            logger.error("No se obtuvo token de página: %s", exc)
+            return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+        rescrape = force_facebook_rescrape(link, token)
+        if not rescrape.ok:
+            logger.warning(
+                "No se pudo forzar el re-scrape de Facebook para %s (se publica igual): %s",
+                link,
+                rescrape.error_type,
+            )
         payload["message"] = _build_message(noticia, link)
         payload["link"] = link
 
-    try:
-        token = get_page_token()
-    except ValueError as exc:
-        logger.error("No se obtuvo token de página: %s", exc)
-        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    if token is None:
+        try:
+            token = get_page_token()
+        except ValueError as exc:
+            logger.error("No se obtuvo token de página: %s", exc)
+            return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
     payload["access_token"] = token
 
     try:

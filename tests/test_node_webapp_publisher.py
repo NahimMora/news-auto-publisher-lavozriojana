@@ -507,6 +507,92 @@ class PayloadAndApiTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["sourceName"], "Tiempo Popular")
         self.assertIn("externalId", payload["metadata"])
 
+    def test_build_post_payload_includes_video_field_when_present(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+                "caption": "Caption",
+                "credit": "Tiempo Popular",
+            },
+            og_image_url="https://media.lavozriojana.com/og/a.jpg",
+            video_url="https://media.lavozriojana.com/noticias/videos/nota-abc123.mp4",
+        )
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+        )
+
+        self.assertEqual(
+            payload["video"],
+            {"url": "https://media.lavozriojana.com/noticias/videos/nota-abc123.mp4"},
+        )
+
+    def test_build_post_payload_omits_video_field_when_absent(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+                "caption": "Caption",
+                "credit": "Tiempo Popular",
+            },
+            og_image_url="https://media.lavozriojana.com/og/a.jpg",
+        )
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+        )
+
+        self.assertNotIn("video", payload)
+
+    def test_validate_post_payload_rejects_invalid_video(self):
+        payload = {
+            "title": "Vialidad Provincial intensifica mejoras viales",
+            "excerpt": "x" * 30,
+            "contentHtml": "<p>contenido</p>",
+            "categorySlug": "interior",
+            "status": "draft",
+            "mainImage": {"url": "https://media.lavozriojana.com/a.webp", "width": 10, "height": 10, "alt": "a"},
+            "video": {"url": "not-a-url", "poster": "also-not-a-url"},
+        }
+
+        warnings = publisher.validate_post_payload(payload)
+
+        self.assertIn("video_url_invalid", warnings)
+        self.assertIn("video_poster_invalid", warnings)
+
+    def test_validate_post_payload_accepts_valid_video(self):
+        payload = {
+            "title": "Vialidad Provincial intensifica mejoras viales",
+            "excerpt": "x" * 30,
+            "contentHtml": "<p>contenido</p>",
+            "categorySlug": "interior",
+            "status": "draft",
+            "mainImage": {"url": "https://media.lavozriojana.com/a.webp", "width": 10, "height": 10, "alt": "a"},
+            "video": {"url": "https://media.lavozriojana.com/noticias/videos/a.mp4"},
+        }
+
+        warnings = publisher.validate_post_payload(payload)
+
+        self.assertNotIn("video_url_invalid", warnings)
+        self.assertNotIn("video_must_be_object", warnings)
+
     def test_validate_post_payload_rejects_invalid_contract_fields(self):
         payload = {
             "title": "Corto",
@@ -695,6 +781,108 @@ class MediaTests(unittest.TestCase):
             self.assertTrue(media.verify_public_image_url("https://media.lavozriojana.com/a.webp"))
             head.assert_not_called()
 
+    def test_upload_video_uses_local_file_and_uploads_to_r2(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = Path(tmpdir) / "source.mp4"
+            video_path.write_bytes(b"fake-mp4-bytes")
+            noticia = sample_news(video_local_path=str(video_path))
+            upload_calls = []
+
+            def fake_upload(path, key, content_type, *, cache_control=None):
+                upload_calls.append((key, content_type, cache_control))
+                return f"https://media.lavozriojana.com/{key}", key
+
+            with patch(
+                "pipeline.node_webapp.media.r2_storage.upload_file",
+                side_effect=fake_upload,
+            ), patch(
+                "pipeline.node_webapp.media.verify_public_video_url",
+                return_value=True,
+            ):
+                url = media.upload_video(noticia)
+
+        self.assertEqual(len(upload_calls), 1)
+        key, content_type, cache_control = upload_calls[0]
+        self.assertTrue(key.startswith("noticias/videos/"))
+        self.assertTrue(key.endswith(".mp4"))
+        self.assertEqual(content_type, "video/mp4")
+        self.assertEqual(cache_control, "public, max-age=31536000, immutable")
+        self.assertEqual(url, f"https://media.lavozriojana.com/{key}")
+
+    def test_upload_video_downloads_remote_source_before_uploading(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_dir = Path(tmpdir) / "web_media"
+            work_dir.mkdir()
+            noticia = sample_news(video_url="https://fuente-original.com/nota/video.mp4")
+
+            remote_response = Mock()
+            remote_response.status_code = 200
+            remote_response.headers = {"Content-Type": "video/mp4"}
+            remote_response.raise_for_status = Mock()
+            remote_response.iter_content = Mock(return_value=[b"chunk-1", b"chunk-2"])
+            remote_response.close = Mock()
+
+            upload_calls = []
+
+            def fake_upload(path, key, content_type, *, cache_control=None):
+                upload_calls.append((path, key, content_type))
+                self.assertTrue(Path(path).is_file())
+                self.assertEqual(Path(path).read_bytes(), b"chunk-1chunk-2")
+                return f"https://media.lavozriojana.com/{key}", key
+
+            with patch("pipeline.node_webapp.media.MEDIA_WORK_DIR", work_dir), patch(
+                "pipeline.node_webapp.media.safe_get",
+                return_value=remote_response,
+            ), patch(
+                "pipeline.node_webapp.media.r2_storage.upload_file",
+                side_effect=fake_upload,
+            ), patch(
+                "pipeline.node_webapp.media.verify_public_video_url",
+                return_value=True,
+            ):
+                url = media.upload_video(noticia)
+
+        self.assertEqual(len(upload_calls), 1)
+        self.assertTrue(upload_calls[0][1].startswith("noticias/videos/"))
+        self.assertEqual(url, f"https://media.lavozriojana.com/{upload_calls[0][1]}")
+
+    def test_upload_video_returns_none_without_source(self):
+        noticia = sample_news()
+
+        with patch("pipeline.node_webapp.media.r2_storage.upload_file") as upload:
+            self.assertIsNone(media.upload_video(noticia))
+            upload.assert_not_called()
+
+    def test_prepare_media_still_ok_when_video_upload_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "source.jpg"
+            video_path = Path(tmpdir) / "source.mp4"
+            work_dir = Path(tmpdir) / "web_media"
+            work_dir.mkdir()
+            Image.new("RGB", (900, 700), color=(20, 80, 140)).save(image_path, "JPEG")
+            video_path.write_bytes(b"fake-mp4-bytes")
+            noticia = sample_news(
+                imagen_optimizada=str(image_path),
+                video_local_path=str(video_path),
+            )
+
+            def fake_upload(path, key, content_type, *, cache_control=None):
+                if content_type == "video/mp4":
+                    raise RuntimeError("r2_upload_error")
+                return f"https://media.lavozriojana.com/{key}", key
+
+            with patch("pipeline.node_webapp.media.MEDIA_WORK_DIR", work_dir), patch(
+                "pipeline.node_webapp.media.r2_storage.upload_file",
+                side_effect=fake_upload,
+            ), patch(
+                "pipeline.node_webapp.media.verify_public_image_url",
+                return_value=True,
+            ):
+                result = media.prepare_media(noticia, noticia["titulo"])
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.video_url)
+
 
 class ImageGeneratorTests(unittest.TestCase):
     def test_facebook_generator_size_is_og_ratio(self):
@@ -773,12 +961,87 @@ class FacebookClientTests(unittest.TestCase):
         args, kwargs = post.call_args
         self.assertEqual(args[0], f"{fb_client.GRAPH_API}/page123/feed")
         self.assertEqual(kwargs["data"]["link"], noticia["web_url"])
-        self.assertTrue(kwargs["data"]["message"].startswith(noticia["titulo"]))
+        self.assertFalse(kwargs["data"]["message"].startswith(noticia["titulo"]))
+        self.assertTrue(kwargs["data"]["message"].startswith(ig_client._build_caption(noticia)))
         self.assertIn(ig_client._build_caption(noticia), kwargs["data"]["message"])
         self.assertIn(noticia["web_url"], kwargs["data"]["message"])
         self.assertNotIn("files", kwargs)
         self.assertIn("link:test", saved_state["posted"])
         prewarm.assert_called_once_with(noticia["web_url"])
+
+    def test_facebook_link_post_forces_og_rescrape_before_publishing(self):
+        noticia = sample_news(
+            texto_instagram="Texto corto para Meta",
+            web_url="https://lavozriojana.com.ar/noticias/vialidad-aimogasta",
+            dedup_key="link:rescrape-test",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "fb_posted.json"
+            calls = []
+
+            def fake_post(url, data=None, timeout=None):
+                calls.append((url, dict(data or {})))
+                if url == f"{fb_client.GRAPH_API}/":
+                    return FakeResponse(200, {"id": noticia["web_url"], "type": "article"})
+                return FakeResponse(200, {"id": "page123_1"})
+
+            with patch("meta.fb_client.PAGE_ID", "page123"), patch(
+                "meta.fb_client.FB_STATE_PATH",
+                str(state_path),
+            ), patch("meta.fb_client.DISABLED_PAGE_IDS", set()), patch(
+                "meta.fb_client.get_page_token",
+                return_value="token",
+            ), patch(
+                "meta.fb_client._prewarm_enabled",
+                return_value=False,
+            ), patch(
+                "meta.fb_client.requests.post",
+                side_effect=fake_post,
+            ):
+                ok = fb_client.post_to_facebook(noticia)
+
+        self.assertTrue(ok)
+        rescrape_calls = [c for c in calls if c[0] == f"{fb_client.GRAPH_API}/"]
+        self.assertEqual(1, len(rescrape_calls))
+        self.assertEqual(rescrape_calls[0][1]["id"], noticia["web_url"])
+        self.assertEqual(rescrape_calls[0][1]["scrape"], "true")
+        feed_calls = [c for c in calls if c[0].endswith("/feed")]
+        self.assertEqual(1, len(feed_calls))
+        # el rescrape debe ocurrir ANTES del post final del feed
+        self.assertLess(calls.index(rescrape_calls[0]), calls.index(feed_calls[0]))
+
+    def test_facebook_link_post_survives_rescrape_failure(self):
+        noticia = sample_news(
+            texto_instagram="Texto corto para Meta",
+            web_url="https://lavozriojana.com.ar/noticias/vialidad-aimogasta",
+            dedup_key="link:rescrape-fail-test",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "fb_posted.json"
+
+            def fake_post(url, data=None, timeout=None):
+                if url == f"{fb_client.GRAPH_API}/":
+                    return FakeResponse(400, {"error": {"message": "unsupported"}})
+                return FakeResponse(200, {"id": "page123_1"})
+
+            with patch("meta.fb_client.PAGE_ID", "page123"), patch(
+                "meta.fb_client.FB_STATE_PATH",
+                str(state_path),
+            ), patch("meta.fb_client.DISABLED_PAGE_IDS", set()), patch(
+                "meta.fb_client.get_page_token",
+                return_value="token",
+            ), patch(
+                "meta.fb_client._prewarm_enabled",
+                return_value=False,
+            ), patch(
+                "meta.fb_client.requests.post",
+                side_effect=fake_post,
+            ):
+                ok = fb_client.post_to_facebook(noticia)
+
+        self.assertTrue(ok)
 
     def test_facebook_waits_when_web_link_is_missing(self):
         noticia = sample_news(texto_instagram="Texto corto para Meta")
