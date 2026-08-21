@@ -1045,17 +1045,16 @@ def _call_ai_enricher(
     feedback: str | None = None,
     previous_attempt: dict | None = None,
 ) -> dict:
-    from openai import OpenAI
+    from utils.ai_client import chat_completion
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key or api_key == "PENDIENTE":
-        raise RuntimeError("OPENAI_API_KEY no configurada")
+        raise RuntimeError("GEMINI_API_KEY no configurada")
 
-    model = os.getenv("EDITORIAL_ENRICHER_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
-    timeout = float(os.getenv("OPENAI_TIMEOUT", "60"))
-    retry_count = _env_int("OPENAI_RETRY_COUNT", 3)
-    retry_sleep = _env_float("OPENAI_RETRY_SLEEP", 2.0)
-    client = OpenAI(api_key=api_key, timeout=timeout)
+    model = os.getenv("EDITORIAL_ENRICHER_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"))
+    timeout = float(os.getenv("GEMINI_TIMEOUT", "60"))
+    retry_count = _env_int("GEMINI_RETRY_COUNT", 3)
+    retry_sleep = _env_float("GEMINI_RETRY_SLEEP", 2.0)
 
     user_payload = {
         "titulo": noticia.get("titulo") or noticia.get("titulo_original") or "",
@@ -1072,19 +1071,21 @@ def _call_ai_enricher(
     last_error: Exception | None = None
     for attempt in range(1, retry_count + 1):
         try:
-            response = client.chat.completions.create(
-                model=model,
+            content = chat_completion(
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
+                model=model,
+                api_key=api_key,
                 # Una revisión necesita variación estructural real. La validación
                 # factual posterior sigue siendo autoritativa.
                 temperature=0.55 if feedback else 0.35,
                 max_tokens=1800,
-                response_format={"type": "json_object"},
+                timeout=timeout,
+                json_mode=True,
             )
-            return json.loads(response.choices[0].message.content or "{}")
+            return json.loads(content or "{}")
         except Exception as exc:
             last_error = exc
             logger.warning("Editorial AI attempt %s/%s failed: %s", attempt, retry_count, exc)

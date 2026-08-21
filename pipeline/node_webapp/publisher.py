@@ -21,7 +21,7 @@ from pipeline.node_webapp.editorial import (
 from pipeline.node_webapp.media import MediaResult, prepare_media
 from utils.classifier import clasificar as _clasificar
 from utils.editorial_policy import evaluate_web_fallback
-from utils.editorial_priority import priority_interleave, split_priority_batch
+from utils.editorial_priority import priority_interleave
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
@@ -53,26 +53,6 @@ _CATEGORY_AUTHORS: dict[str, str] = {
     "cultura":      "Redacción Cultura",
     "espectaculos": "Redacción Espectáculos",
 }
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _web_max_per_run() -> int | None:
-    value = _env_int("WEB_PUBLISH_MAX_PER_RUN", 0)
-    return value if value > 0 else None
-
-
-def _web_category_caps() -> dict[str, int]:
-    max_deportes = _env_int(
-        "WEB_MAX_DEPORTES_PER_RUN",
-        _env_int("MAX_DEPORTES_PER_RUN", 1),
-    )
-    return {"deportes": max_deportes}
 
 
 class InvalidCredentialError(RuntimeError):
@@ -186,6 +166,17 @@ def validate_post_payload(payload: dict, *, now: datetime | None = None) -> list
     if og_image_url and (not _is_http_url(og_image_url) or len(str(og_image_url)) > 500):
         warnings.append("ogImageUrl_invalid")
 
+    video = payload.get("video")
+    if video is not None:
+        if not isinstance(video, dict):
+            warnings.append("video_must_be_object")
+        else:
+            if not _is_http_url(video.get("url")) or len(str(video.get("url") or "")) > 500:
+                warnings.append("video_url_invalid")
+            poster = video.get("poster")
+            if poster and (not _is_http_url(poster) or len(str(poster)) > 500):
+                warnings.append("video_poster_invalid")
+
     source_url = payload.get("sourceUrl")
     if source_url and (not _is_http_url(source_url) or len(str(source_url)) > 500):
         warnings.append("sourceUrl_invalid")
@@ -266,6 +257,7 @@ def build_post_payload(
         "sourceName": source_name,
         "sourceUrl": source_url,
         "mainImage": media.main_image,
+        "video": {"url": media.video_url} if media.video_url else None,
         "ogImageUrl": media.og_image_url or media.main_image["url"],
         "seoTitle": editorial.seo_title,
         "seoDescription": editorial.meta_description,
@@ -935,17 +927,15 @@ def publish_pending() -> StageResult:
             details={"duplicates": skipped_duplicates},
         )
 
-    noticias, diferidas = split_priority_batch(
-        noticias,
-        max_items=_web_max_per_run(),
-        category_caps=_web_category_caps(),
+    # Qué se publica ya lo decidió select_publish_batch.py (mismo lote que
+    # Facebook e Instagram, ver docs/DECISIONS.md) — lo no seleccionado queda
+    # en cola, elegible para un próximo lote.
+    diferidas = [item for item in noticias if not item.get("selected_for_publish")]
+    noticias = priority_interleave(
+        [item for item in noticias if item.get("selected_for_publish")]
     )
     if diferidas:
-        logger.info(
-            "WebApp: prioridad editorial dejo %s notas diferidas (cupo Deportes=%s)",
-            len(diferidas),
-            _web_category_caps().get("deportes"),
-        )
+        logger.info("WebApp: %s notas todavía sin seleccionar para un lote", len(diferidas))
 
     publicadas: list[dict] = []
     retenidas: list[dict] = []

@@ -9,7 +9,6 @@ meta/fb_client.py, layout/image_generator.py).
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 from uuid import uuid4
@@ -29,6 +28,8 @@ SECTIONS = [
     "politica", "policiales", "interior", "sociedad", "economia",
     "salud", "educacion", "deportes", "cultura", "espectaculos",
 ]
+
+CUSTOM_TITLE_MAX_CHARS = 120
 
 
 def _uploaded_local_path(value: str) -> str:
@@ -89,8 +90,10 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
     comporten igual que para cualquier otra nota.
     """
     titulo = " ".join(str(payload.get("titulo") or "").split())
-    if not (8 <= len(titulo) <= 240):
-        raise ValueError("El titulo debe tener entre 8 y 240 caracteres")
+    if not (8 <= len(titulo) <= CUSTOM_TITLE_MAX_CHARS):
+        raise ValueError(
+            f"El título debe tener entre 8 y {CUSTOM_TITLE_MAX_CHARS} caracteres"
+        )
 
     parrafos = _split_paragraphs(payload.get("cuerpo"))
     if not parrafos:
@@ -118,6 +121,20 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
     caption = "\n\n".join(parrafos)[:2200] or titulo
     dedup_key = str(payload.get("dedup_key") or f"custom:{uuid4().hex[:16]}")
 
+    # Completar localidad/bajada por IA para la card de Instagram (ver
+    # openIA/caption_generator.py::generate_locality_and_deck). Nunca
+    # bloquea la publicación manual: si OpenAI no está disponible o falla,
+    # quedan vacíos y la imagen se genera igual, sin chip ni bajada.
+    try:
+        from openIA.caption_generator import generate_locality_and_deck
+        locality_deck = generate_locality_and_deck(
+            {"titulo": titulo, "parrafos": parrafos},
+            include_highlight=True,
+        )
+    except Exception as exc:
+        logger.warning("generate_locality_and_deck fallo para publicacion manual: %s", exc)
+        locality_deck = {"locality": "", "deck": ""}
+
     noticia = {
         "media_type": "image",
         "titulo": titulo,
@@ -134,6 +151,11 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
         "titulo_instagram": titulo[:80],
         "texto_instagram": caption,
         "caption": caption,
+        "locality": locality_deck.get("locality", ""),
+        "deck": locality_deck.get("deck", ""),
+        "highlight_terms": [locality_deck["highlight_phrase"]]
+        if locality_deck.get("highlight_phrase")
+        else [],
         "dedup_key": dedup_key,
         "manual_status": "ready",
     }
@@ -143,14 +165,12 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
 def render_preview_image(item: dict) -> bytes:
     """Renderiza el post con el mismo layout real que se usa al publicar (no un mockup)."""
     from PIL import Image
-    from layout.image_generator import IG_H, IG_W, generate_post
+    from layout.image_generator import generate_instagram_with_engine
 
     local = str(item.get("imagen") or "")
     preloaded = Image.open(local).convert("RGBA") if local else None
-    img = generate_post(item, IG_W, IG_H, preloaded_img=preloaded)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, "JPEG", quality=90)
-    return buf.getvalue()
+    jpeg_bytes, _engine_used = generate_instagram_with_engine(item, preloaded_img=preloaded)
+    return jpeg_bytes
 
 
 def _dry_run_enabled() -> bool:

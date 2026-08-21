@@ -35,6 +35,8 @@ class ConfigValidationTests(unittest.TestCase):
             PIPELINE_24X7_STALE_SECONDS="5",
             SCRAPER_MAX_LINKS="many",
             JSON_BACKUP_ENABLED="perhaps",
+            AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED="perhaps",
+            REEL_CINEMATIC_VISUAL_STYLE_ENABLED="perhaps",
             WEB_PUBLISH_TARGET="wordpress",
         )
         report = validate_config(env, scope="core")
@@ -90,16 +92,18 @@ class ConfigValidationTests(unittest.TestCase):
 
         env = self._base()
         env.update(
-            WEB_MAX_DEPORTES_PER_RUN="-2",
+            PUBLISH_LOCAL_MAX_PER_RUN="-2",
             IG_IMAGE_CONTAINER_WAIT_SECONDS="-1",
+            PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS="0",
             WEB_QUEUE_PATH="not-a-json-file.txt",
         )
 
         report = validate_config(env, scope="core")
         fields = {issue.field for issue in report.errors}
 
-        self.assertIn("WEB_MAX_DEPORTES_PER_RUN", fields)
+        self.assertIn("PUBLISH_LOCAL_MAX_PER_RUN", fields)
         self.assertIn("IG_IMAGE_CONTAINER_WAIT_SECONDS", fields)
+        self.assertIn("PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS", fields)
         self.assertIn("WEB_QUEUE_PATH", fields)
 
     def test_article_not_before_date_must_use_iso_format(self):
@@ -127,8 +131,10 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("CUSTOM_POST_DRY_RUN", inventory["development"])
         self.assertIn("PIPELINE_24X7_STALE_SECONDS", inventory["optional"])
         self.assertIn("ARTICLE_NOT_BEFORE_DATE", inventory["optional"])
+        self.assertIn("AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED", inventory["optional"])
+        self.assertIn("REEL_CINEMATIC_VISUAL_STYLE_ENABLED", inventory["optional"])
         self.assertIn("WEB_QUEUE_PATH", inventory["development"])
-        self.assertIn("OPENAI_API_KEY", inventory["conditional_required"])
+        self.assertIn("GEMINI_API_KEY", inventory["conditional_required"])
 
     def test_safe_snapshot_never_exposes_secrets(self):
         from utils.config import safe_config_snapshot

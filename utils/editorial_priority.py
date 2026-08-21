@@ -66,6 +66,10 @@ def item_category(item: dict) -> str:
     return "desconocido"
 
 
+def item_source(item: dict) -> str:
+    return str(item.get("source") or "").strip().lower()
+
+
 def priority_value(category: object) -> int:
     if category == _BREAKING_GROUP:
         return -1

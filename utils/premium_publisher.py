@@ -36,16 +36,25 @@ def _dry_run_enabled() -> bool:
 def _channel_result_from_operation(operation) -> dict:
     outcome = operation.details.get("publication_outcome")
     ambiguous = operation.error_type in {"network_error", "server_error"} and outcome in {None, "unknown"}
-    return {
+    failure_metadata = operation.failure_metadata() if not operation.ok else {}
+    for key in ("stage", "container_index", "container_status"):
+        value = operation.details.get(key)
+        if value is not None:
+            failure_metadata[key] = value
+    result = {
         "ok": operation.ok,
         "external_id": operation.external_id,
         "deduplicated": operation.deduplicated,
         "error_type": operation.error_type,
+        "error_code": operation.error_code,
         "retryable": operation.retryable,
         "requires_reconciliation": ambiguous,
         "next_retry_at": operation.next_retry_at,
         "updated_at_ts": int(time.time()),
     }
+    if failure_metadata:
+        result["failure_metadata"] = failure_metadata
+    return result
 
 
 def _publish_instagram(package: dict, slide_images: list[bytes]) -> dict:

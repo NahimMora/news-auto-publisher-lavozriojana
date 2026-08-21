@@ -22,7 +22,7 @@ _PLACEHOLDERS = {"", "PENDIENTE", "CHANGE_ME", "CHANGEME", "TODO"}
 SECRET_FIELDS = {
     "PRIVATE_API_KEY",
     "WEBAPP_API_KEY",
-    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
     "FB_PAGE_ACCESS_TOKEN",
     "FB_APP_SECRET",
     "IG_ACCESS_TOKEN",
@@ -266,7 +266,7 @@ def validate_config(
     _positive_int(report, env, "SCRAPER_MAX_LINKS", 8, maximum=100)
     _positive_int(report, env, "ARTICLE_MAX_AGE_DAYS", 1, maximum=365)
     _optional_iso_date(report, env, "ARTICLE_NOT_BEFORE_DATE")
-    _positive_int(report, env, "OPENAI_RETRY_COUNT", 4, maximum=20)
+    _positive_int(report, env, "GEMINI_RETRY_COUNT", 4, maximum=20)
     _positive_int(report, env, "REWRITE_MAX_ATTEMPTS", 3, maximum=20)
     _positive_int(report, env, "WEBAPP_REQUEST_TIMEOUT", 30, maximum=600)
     _positive_int(report, env, "WEBAPP_REQUEST_RETRIES", 3, maximum=20)
@@ -302,11 +302,27 @@ def validate_config(
     _positive_int(report, env, "IG_RATE_LIMIT_BACKOFF_SECONDS", 10800, maximum=86400 * 7)
     _positive_int(report, env, "IG_VIDEO_PROCESSING_TIMEOUT_SECONDS", 300, maximum=3600)
     _positive_int(report, env, "IG_VIDEO_PROCESSING_POLL_SECONDS", 10, maximum=300)
+    _positive_int(
+        report,
+        env,
+        "PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS",
+        90,
+        maximum=1800,
+    )
+    _positive_int(
+        report,
+        env,
+        "PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS",
+        2,
+        maximum=60,
+    )
     _positive_int(report, env, "PUBLISH_MAX_PER_RUN", 10, maximum=1000)
-    _positive_int(report, env, "IG_MAX_PER_RUN", 1, maximum=100)
+    _positive_int(report, env, "IG_MAX_PER_RUN", 10, maximum=100)
+    _positive_int(report, env, "IG_MANUAL_OVERRIDE_MAX_PER_RUN", 3, minimum=0, maximum=100)
     _positive_int(report, env, "IG_IMAGE_CONTAINER_WAIT_SECONDS", 5, minimum=0, maximum=600)
-    _positive_int(report, env, "WEB_PUBLISH_MAX_PER_RUN", 0, minimum=0, maximum=1000)
-    _positive_int(report, env, "WEB_MAX_DEPORTES_PER_RUN", 1, minimum=-1, maximum=1000)
+    _positive_int(report, env, "PUBLISH_LOCAL_MAX_PER_RUN", 6, minimum=0, maximum=1000)
+    _positive_int(report, env, "PUBLISH_PAPARAZZI_MAX_PER_RUN", 2, minimum=0, maximum=1000)
+    _positive_int(report, env, "PUBLISH_INFOBAE_MAX_PER_RUN", 2, minimum=0, maximum=1000)
     _positive_int(report, env, "WEB_DEDUP_HISTORY_DAYS", 7, maximum=3650)
     _positive_int(report, env, "WEBAPP_RETRY_SLEEP_SECONDS", 5, minimum=0, maximum=3600)
     _positive_int(report, env, "WEB_PUBLIC_MEDIA_CHECK_ATTEMPTS", 5, maximum=100)
@@ -337,8 +353,6 @@ def validate_config(
         minimum=0,
         maximum=86400,
     )
-    _positive_int(report, env, "MAX_DEPORTES_PER_RUN", 1, minimum=0, maximum=1000)
-    _positive_int(report, env, "SOCIAL_MAX_DEPORTES_PER_RUN", 1, minimum=0, maximum=1000)
     image_min_width = _positive_int(report, env, "IMAGE_MIN_WIDTH", 700, maximum=10000)
     image_max_width = _positive_int(report, env, "IMAGE_MAX_WIDTH", 1400, maximum=20000)
     if image_max_width < image_min_width:
@@ -373,6 +387,8 @@ def validate_config(
         ("IG_ALLOW_ORIGINAL_IMAGE_FALLBACK", "false"),
         ("PUBLISH_THROTTLE_ENABLED", "true"),
         ("ENABLE_R2_OG_IMAGE", "true"),
+        ("AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED", "false"),
+        ("REEL_CINEMATIC_VISUAL_STYLE_ENABLED", "false"),
         ("SCRAPER_LOCALES_ENABLED", "true"),
         ("SCRAPER_POLICIALES_ENABLED", "true"),
         ("SCRAPER_INTERIOR_ENABLED", "true"),
@@ -463,7 +479,7 @@ def validate_config(
     validate_ig = scope in {"all", "instagram", "supervisor"} and _value(
         env, "IG_PUBLISH_ENABLED", "false"
     ).lower() in _TRUE
-    validate_openai = scope in {"rewrite", "all", "supervisor"} and fallback_mode == "block"
+    validate_gemini = scope in {"rewrite", "all", "supervisor"} and fallback_mode == "block"
 
     if validate_web:
         _url(report, env, "WEBAPP_BASE_URL", required=True)
@@ -499,8 +515,8 @@ def validate_config(
                 _required(report, env, name)
             _url(report, env, "R2_PUBLIC_URL", required=True)
 
-    if validate_openai:
-        _required(report, env, "OPENAI_API_KEY")
+    if validate_gemini:
+        _required(report, env, "GEMINI_API_KEY")
 
     if scope in {"core", "all", "supervisor"}:
         plan = deployment_plan(env)
@@ -541,7 +557,7 @@ def config_inventory() -> dict[str, list[str]]:
         "required": [],
         "conditional_required": sorted(
             {
-                "OPENAI_API_KEY",
+                "GEMINI_API_KEY",
                 "PRIVATE_API_KEY",
                 "WEBAPP_API_KEY",
                 "WEBAPP_BASE_URL",
@@ -572,14 +588,17 @@ def config_inventory() -> dict[str, list[str]]:
                 "EDITORIAL_ENRICHER_MIN_SCORE",
                 "EDITORIAL_ENRICHER_MODEL",
                 "EDITORIAL_FINAL_ATTEMPT_ACTION",
-                "EDITORIAL_ROUTER_ENABLED",
                 "ENABLE_EDITORIAL_NEWS_ENRICHER",
                 "STATIC_RENDER_ENGINE",
                 "AUTOMATIC_STATIC_RENDER_ENGINE",
+                "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED",
+                "REEL_CINEMATIC_VISUAL_STYLE_ENABLED",
                 "PREMIUM_STATIC_RENDER_ENGINE",
                 "OG_STATIC_RENDER_ENGINE",
                 "REMOTION_AVAILABILITY_CACHE_SECONDS",
                 "PREMIUM_PUBLISH_DRY_RUN",
+                "PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS",
+                "PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS",
                 "ENABLE_R2_OG_IMAGE",
                 "FB_ALLOW_DIRECT_TOKEN_FALLBACK",
                 "FB_DISABLED_PAGE_IDS",
@@ -591,10 +610,10 @@ def config_inventory() -> dict[str, list[str]]:
                 "FB_TEMP_BLOCK_BACKOFF_SECONDS",
                 "FB_VIDEO_REQUEST_TIMEOUT_SECONDS",
                 "FEATURED_MIN_QUALITY_SCORE",
-                "IG_ALLOWED_CATEGORIES",
                 "IG_ALLOW_ORIGINAL_IMAGE_FALLBACK",
                 "IG_IMAGE_CONTAINER_WAIT_SECONDS",
                 "IG_MAX_PER_RUN",
+                "IG_MANUAL_OVERRIDE_MAX_PER_RUN",
                 "IG_POSTED_DEDUP_THRESHOLD",
                 "IG_PUBLISH_ENABLED",
                 "IG_RATE_LIMIT_BACKOFF_SECONDS",
@@ -620,13 +639,12 @@ def config_inventory() -> dict[str, list[str]]:
                 "LVR_DEPLOYED_AT",
                 "LVR_DEPLOYMENT_OPERATOR",
                 "LVR_RELEASE_TAG",
-                "MAX_DEPORTES_PER_RUN",
                 "META_GRAPH_API",
                 "OPENAI_FALLBACK_MODE",
-                "OPENAI_MODEL",
-                "OPENAI_RETRY_COUNT",
-                "OPENAI_RETRY_SLEEP",
-                "OPENAI_TIMEOUT",
+                "GEMINI_MODEL",
+                "GEMINI_RETRY_COUNT",
+                "GEMINI_RETRY_SLEEP",
+                "GEMINI_TIMEOUT",
                 "PIPELINE_24X7_INTERVAL_SECONDS",
                 "PIPELINE_24X7_HEARTBEAT_SECONDS",
                 "PIPELINE_24X7_STALE_SECONDS",
@@ -636,6 +654,10 @@ def config_inventory() -> dict[str, list[str]]:
                 "PUBLISH_DELAY_MAX_SECONDS",
                 "PUBLISH_DELAY_MIN_SECONDS",
                 "PUBLISH_MAX_PER_RUN",
+                "PUBLISH_LOCAL_MAX_PER_RUN",
+                "PUBLISH_PAPARAZZI_MAX_PER_RUN",
+                "PUBLISH_INFOBAE_MAX_PER_RUN",
+                "PUBLISH_LOCAL_EXCLUDED_CATEGORIES",
                 "PUBLISH_THROTTLE_ENABLED",
                 "QUEUE_EVENT_RETENTION_COUNT",
                 "R2_CONNECT_TIMEOUT_SECONDS",
@@ -655,7 +677,6 @@ def config_inventory() -> dict[str, list[str]]:
                 "SCRAPER_NR_POLITICA_ENABLED",
                 "SCRAPER_NR_SOCIEDAD_ENABLED",
                 "SCRAPER_POLICIALES_ENABLED",
-                "SOCIAL_MAX_DEPORTES_PER_RUN",
                 "SOCIAL_QUEUE_TTL_DAYS",
                 "SOCIAL_TTL_HOURS",
                 "VIDEO_DOWNLOAD_MAX_BYTES",
@@ -734,6 +755,7 @@ def safe_config_snapshot(values: Mapping[str, str] | None = None) -> dict[str, s
                 "IG_",
                 "R2_",
                 "OPENAI_",
+                "GEMINI_",
                 "EDITORIAL_",
                 "JSON_",
                 "LOG_",
@@ -769,7 +791,7 @@ def _ytdlp_version() -> str | None:
 def diagnose_environment(values: Mapping[str, str] | None = None, *, scope: str = "all") -> StageResult:
     report = validate_config(values, scope=scope)
     dependencies = {}
-    for import_name in ("requests", "bs4", "PIL", "dotenv", "openai", "boto3", "botocore", "psutil"):
+    for import_name in ("requests", "bs4", "PIL", "dotenv", "google.genai", "boto3", "botocore", "psutil"):
         dependencies[import_name] = importlib.util.find_spec(import_name) is not None
     ytdlp_path = shutil.which("yt-dlp")
     binaries = {

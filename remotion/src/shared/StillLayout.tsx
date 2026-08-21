@@ -1,67 +1,152 @@
 import React from "react";
-import { AbsoluteFill, Img, staticFile } from "remotion";
-import { NEGRO, WHITE } from "../constants";
+import { AbsoluteFill } from "remotion";
+import { useFontsReady } from "./fonts";
+import { Grain } from "./Grain";
+import { SlideCounter } from "./SlideCounter";
+import { EditorialMasthead } from "./editorial/EditorialMasthead";
+import { EditorialTexture } from "./editorial/EditorialTexture";
+import { SocialFooter } from "./editorial/SocialFooter";
+import { SourceCredit } from "./editorial/SourceCredit";
+import { SwipeCue } from "./editorial/SwipeCue";
+import { ModeTokens, hexToRgba } from "./designSystem";
 
-// Layout compartido entre PremiumSlide, AutomaticInstagramCard y
-// FacebookOgCard: barra de acento, footer con sección + numeración, logo.
-// Mantiene jerarquía visual consistente entre las tres piezas (Fase 4).
+// Marco compartido v2: masthead de marca real (no una barra lateral +
+// logo chico, queja explícita del brief), grano/textura, y un footer
+// liviano con crédito de fuente + señal de continuidad + numeración.
+//
+// A diferencia de v1 (donde el "fondo con foto" era SIEMPRE la imagen
+// blureada a 46px, incluso en cover/full_image — la foto nítida nunca se
+// mostraba realmente), acá `media` es responsabilidad de cada slide
+// (vía HeroMedia, ver shared/editorial/HeroMedia.tsx) y se pinta a pantalla
+// completa DEBAJO del masthead/footer, con foto nítida real cuando el
+// tratamiento es full_bleed/framed. StillLayout sólo agrega textura,
+// scrim superior de legibilidad y chrome de marca — nunca decide el
+// tratamiento fotográfico.
+//
+// FacebookOgCard sigue usando LegacyStillLayout (workflow "og" fuera de
+// alcance de este rediseño).
+export const MASTHEAD_H = 92;
+export const FOOTER_H = 78;
 
 export type StillLayoutProps = {
   width: number;
   height: number;
-  accent: string;
+  mode: ModeTokens;
   section?: string;
-  counter?: string; // p.ej. "2/5"; vacío si no aplica (OG/IG automático)
-  backgroundAssetFile?: string; // relativo a public/, "" si no hay imagen
+  locality?: string;
+  index?: number;
+  total?: number;
+  sourceCredit?: string;
+  showSwipeCue?: boolean;
+  // Piezas de una sola imagen (AutomaticInstagramCard/FacebookOgCard) no
+  // tienen fuente que citar ni carrusel que señalar — muestran en su lugar
+  // la firma social compacta (FB/IG + sitio). PremiumSlide nunca activa
+  // esto: su footer sigue siendo crédito de fuente + deslizamiento + numeración.
+  showSocialFooter?: boolean;
+  boxedSection?: boolean;
+  mastheadHeight?: number;
+  footerHeight?: number;
+  chromeScale?: number;
+  media?: React.ReactNode; // pintado a pantalla completa, debajo de masthead/footer
   children: React.ReactNode;
 };
 
 export const StillLayout: React.FC<StillLayoutProps> = ({
   width,
   height,
-  accent,
+  mode,
   section,
-  counter,
-  backgroundAssetFile,
+  locality,
+  index,
+  total,
+  sourceCredit,
+  showSwipeCue,
+  showSocialFooter,
+  boxedSection,
+  mastheadHeight = MASTHEAD_H,
+  footerHeight = FOOTER_H,
+  chromeScale = 1,
+  media,
   children,
 }) => {
-  const footerH = Math.round(height * 0.052);
+  // Bloquea la captura de Remotion (delayRender) hasta que Archivo/Source
+  // Serif 4 están registradas de verdad y el DOM volvió a pintar con ellas
+  // — ver docs/DECISIONS.md, bug de wrap incorrecto detectado en smoke test.
+  const fontsReady = useFontsReady();
+
   return (
-    <AbsoluteFill style={{ backgroundColor: NEGRO }}>
-      {backgroundAssetFile ? (
+    <AbsoluteFill style={{ backgroundColor: mode.ink }}>
+      {!media && (
         <>
-          <Img
-            src={staticFile(backgroundAssetFile)}
+          <div
             style={{
-              position: "absolute", top: 0, left: 0, width, height,
-              objectFit: "cover", filter: "blur(50px) brightness(0.55)",
-              transform: "scale(1.15)",
+              position: "absolute",
+              inset: 0,
+              background: `radial-gradient(ellipse 900px 700px at 78% -10%, ${hexToRgba(mode.accent, 0.16)} 0%, rgba(0,0,0,0) 60%)`,
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: `linear-gradient(200deg, ${hexToRgba(mode.accentSoft, 0.22)} 0%, rgba(0,0,0,0) 55%)`,
             }}
           />
         </>
-      ) : null}
+      )}
 
-      {/* Barra de acento (identidad compartida entre las 3 piezas) */}
-      <div style={{ position: "absolute", top: 0, left: 0, width: Math.max(10, width * 0.013), height, backgroundColor: accent }} />
+      {media}
 
-      <div style={{ position: "absolute", inset: 0 }}>{children}</div>
+      {media && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 190,
+            background: "linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0) 100%)",
+          }}
+        />
+      )}
 
-      {/* Footer: sección + numeración */}
+      <EditorialTexture mode={mode} zone="footer" width={width} height={height} />
+      <Grain opacity={0.03} />
+
+      <EditorialMasthead
+        mode={mode}
+        section={section || ""}
+        locality={locality}
+        pad={mode.pad}
+        scale={chromeScale}
+        boxedSection={boxedSection}
+      />
+
+      <div style={{ position: "absolute", top: mastheadHeight, left: 0, right: 0, bottom: footerHeight }}>
+        {fontsReady ? children : null}
+      </div>
+
+      {/* Footer: crédito de fuente (si hay) + señal de continuidad + numeración */}
       <div
         style={{
-          position: "absolute", left: 0, right: 0, bottom: 0, height: footerH,
-          backgroundColor: "#111111", display: "flex", alignItems: "center",
-          justifyContent: "space-between", paddingLeft: 40, paddingRight: 40,
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: footerHeight,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingLeft: mode.pad,
+          paddingRight: mode.pad,
         }}
       >
-        <div style={{ fontFamily: "Arial, sans-serif", fontWeight: 900, fontSize: footerH * 0.42, color: accent }}>
-          {(section || "").toUpperCase()}
+        <div style={{ position: "absolute", top: 0, left: mode.pad, right: mode.pad, height: 1, backgroundColor: hexToRgba(mode.accent, 0.3) }} />
+        {showSocialFooter ? <SocialFooter scale={chromeScale} /> : <SourceCredit text={sourceCredit} scale={chromeScale} />}
+        <div style={{ display: "flex", alignItems: "center", gap: Math.round(28 * chromeScale), marginLeft: "auto" }}>
+          {showSwipeCue ? <SwipeCue mode={mode} scale={chromeScale} /> : null}
+          {total ? <SlideCounter index={index || 1} total={total} accent={mode.accent} scale={chromeScale} /> : null}
         </div>
-        {counter ? (
-          <div style={{ fontFamily: "Arial, sans-serif", fontWeight: 700, fontSize: footerH * 0.42, color: WHITE }}>
-            {counter}
-          </div>
-        ) : null}
       </div>
     </AbsoluteFill>
   );

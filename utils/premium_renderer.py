@@ -18,8 +18,9 @@ import unicodedata
 
 from PIL import Image, ImageDraw
 
-from layout.image_generator import AZUL, ROJO, _font
+from layout.image_generator import AZUL, ROJO, _font, _image_orientation
 from utils.logging_setup import setup_logger
+from utils.premium_contract import IMAGE_REQUIRED_SLIDE_TYPES
 
 logger = setup_logger("premium_renderer", "premium_renderer.log")
 
@@ -173,11 +174,11 @@ def render_slide(
 
     image = None
     asset_id = str(slide.get("asset_id") or "").strip()
-    if asset_id and asset_resolver:
+    if slide_type in IMAGE_REQUIRED_SLIDE_TYPES and asset_id and asset_resolver:
         image = asset_resolver(asset_id)
         if image is None:
             warnings.append(f"slide_{slide.get('id')}_asset_no_resoluble:{asset_id}")
-    elif slide_type in {"cover", "image_text", "full_image"}:
+    elif slide_type in IMAGE_REQUIRED_SLIDE_TYPES:
         warnings.append(f"slide_{slide.get('id')}_sin_imagen")
 
     title = slide.get("title") or (package.get("title") if slide_type == "cover" else "")
@@ -241,6 +242,31 @@ def render_slide(
         _draw_wrapped_highlighted(
             draw, text, [], font=body_font, max_width=SLIDE_W - 2 * pad,
             x=pad, y=750, line_height=48, fill=BLANCO, highlight_fill=accent,
+        )
+
+    elif slide_type in {"context", "impact"}:
+        label = "IMPACTO LOCAL" if slide_type == "impact" else "CONTEXTO"
+        panel_top = 210
+        panel_bottom = SLIDE_H - 150
+        draw.rounded_rectangle(
+            [pad, panel_top, SLIDE_W - pad, panel_bottom],
+            radius=28,
+            outline=accent,
+            width=3,
+            fill="#0B0B0B",
+        )
+        draw.text((pad + 44, panel_top + 42), label, font=small_font, fill=accent)
+        used_h = _draw_wrapped_highlighted(
+            draw, title, highlights, font=_font(54, bold=True),
+            max_width=SLIDE_W - 2 * pad - 88, x=pad + 44,
+            y=panel_top + 120, line_height=66, fill=BLANCO,
+            highlight_fill=accent,
+        )
+        _draw_wrapped_highlighted(
+            draw, text, highlights, font=body_font,
+            max_width=SLIDE_W - 2 * pad - 88, x=pad + 44,
+            y=panel_top + 150 + used_h, line_height=50, fill=BLANCO,
+            highlight_fill=accent,
         )
 
     elif slide_type == "closing":
@@ -334,6 +360,7 @@ def _slide_props_for_remotion(slide: dict, package: dict, *, index: int, total: 
         "items": [str(item) for item in (slide.get("items") or [])],
         "highlightTerms": list(slide.get("highlights") or package.get("highlight_terms") or []),
         "assetFile": "",  # se completa vía asset_paths en render_still
+        "locality": slide.get("locality") or "",
         "section": package.get("section") or "",
         "index": index,
         "total": total,
@@ -356,15 +383,26 @@ def render_package_remotion(
     warnings: list[str] = []
     for index, slide in enumerate(slides):
         props = _slide_props_for_remotion(slide, package, index=index + 1, total=len(slides))
+        slide_type = slide.get("type")
         asset_id = str(slide.get("asset_id") or "").strip()
         asset_paths = {}
-        if asset_id and asset_path_resolver:
+        if slide_type in IMAGE_REQUIRED_SLIDE_TYPES and asset_id and asset_path_resolver:
             local_path = asset_path_resolver(asset_id)
             if local_path:
                 asset_paths["assetFile"] = local_path
+                # Señal barata (ya tenemos el archivo local acá) para que
+                # PremiumSlide (image_text, sobre todo en modo Editorial)
+                # adapte la composición según orientación real en vez de
+                # asumir siempre horizontal — ver
+                # shared/editorial/HeroMedia.tsx.
+                try:
+                    with Image.open(local_path) as opened:
+                        props["assetOrientation"] = _image_orientation(opened)
+                except (OSError, ValueError):
+                    pass
             else:
                 warnings.append(f"slide_{slide.get('id')}_asset_no_resoluble:{asset_id}")
-        elif slide.get("type") in {"cover", "image_text", "full_image"}:
+        elif slide_type in IMAGE_REQUIRED_SLIDE_TYPES:
             warnings.append(f"slide_{slide.get('id')}_sin_imagen")
 
         png_bytes, _metadata = render_still(PREMIUM_SLIDE_COMPOSITION, props, asset_paths=asset_paths)

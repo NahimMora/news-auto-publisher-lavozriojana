@@ -137,6 +137,84 @@ class EditorialRouterPureLogicTests(unittest.TestCase):
         self.assertEqual("automatic", decision.route_by_channel["web"])
         self.assertEqual("automatic", decision.route_by_channel["facebook"])
 
+    def test_strong_performing_category_promotes_without_riojan_link(self):
+        from utils.editorial_router import evaluate_routing
+
+        national = _noticia(
+            "El Gobierno nacional anunció una nueva medida económica",
+            seccion="politica",
+            hashtag_localidad="",
+        )
+        performance = {
+            "overall": {"engagement_rate": 0.02},
+            "categories": {"politica": {"engagement_rate": 0.05, "sample_size": 10}},
+        }
+        decision = evaluate_routing(
+            national, recent_topic_entries=[], now_ts=1000, category_performance=performance
+        )
+        self.assertEqual("automatic", decision.route_by_channel["instagram"])
+        self.assertIn("category_performance:politica", decision.route_reason)
+        self.assertNotIn("gate:no_riojan_link", decision.route_reason)
+
+    def test_weak_performing_category_still_needs_manual_review(self):
+        from utils.editorial_router import evaluate_routing
+
+        national = _noticia(
+            "El Gobierno nacional anunció una nueva medida económica",
+            seccion="politica",
+            hashtag_localidad="",
+        )
+        performance = {
+            "overall": {"engagement_rate": 0.05},
+            "categories": {"politica": {"engagement_rate": 0.01, "sample_size": 10}},
+        }
+        decision = evaluate_routing(
+            national, recent_topic_entries=[], now_ts=1000, category_performance=performance
+        )
+        self.assertEqual("candidate", decision.route_by_channel["instagram"])
+        self.assertIn("gate:no_riojan_link", decision.route_reason)
+
+    def test_insufficient_sample_size_does_not_promote_even_with_high_rate(self):
+        from utils.editorial_router import evaluate_routing
+
+        national = _noticia(
+            "El Gobierno nacional anunció una nueva medida económica",
+            seccion="politica",
+            hashtag_localidad="",
+        )
+        performance = {
+            "overall": {"engagement_rate": 0.02},
+            "categories": {"politica": {"engagement_rate": 0.9, "sample_size": 1}},
+        }
+        decision = evaluate_routing(
+            national, recent_topic_entries=[], now_ts=1000, category_performance=performance
+        )
+        self.assertEqual("candidate", decision.route_by_channel["instagram"])
+
+    def test_category_performance_never_bypasses_the_topic_cap(self):
+        from utils.editorial_router import evaluate_routing
+
+        performance = {
+            "overall": {"engagement_rate": 0.02},
+            "categories": {"politica": {"engagement_rate": 0.05, "sample_size": 10}},
+        }
+        prior_entries = [
+            {"posted_at_ts": 900, "titulo": "Primero"},
+            {"posted_at_ts": 950, "titulo": "Segundo"},
+        ]
+        third = _noticia(
+            "Tercer posteo del mismo tema nacional",
+            seccion="politica",
+            hashtag_localidad="",
+        )
+        decision = evaluate_routing(
+            third, recent_topic_entries=prior_entries, now_ts=1000, category_performance=performance
+        )
+        # el rendimiento fuerte deja pasar el gate de localidad, pero el tope
+        # por tema (TOPIC_AUTOMATIC_CAP=2) sigue aplicando igual.
+        self.assertEqual("candidate", decision.route_by_channel["instagram"])
+        self.assertIn("topic_cap_exceeded", decision.route_reason)
+
     def test_decision_reason_is_never_empty_and_is_auditable(self):
         from utils.editorial_router import evaluate_routing
 
@@ -319,14 +397,30 @@ class ManualOverrideTransitionTests(unittest.TestCase):
             handler.close()
             self.router.logger.removeHandler(handler)
 
-    def _seed_automatic_noticia(self, *, identity="link:auto-1", social_state="pending"):
+    @staticmethod
+    def _close_module_logger(module):
+        for handler in list(module.logger.handlers):
+            handler.close()
+            module.logger.removeHandler(handler)
+
+    def _seed_automatic_noticia(
+        self,
+        *,
+        identity="link:auto-1",
+        social_state="pending",
+        titulo="Un incendio afecta un comercio en Chilecito",
+        seccion="interior",
+        web_url=None,
+    ):
         from utils.file_manager import save_json
 
-        noticia = _noticia("Un incendio afecta un comercio en Chilecito", seccion="interior")
+        noticia = _noticia(titulo, seccion=seccion)
         noticia["meta_queue_key"] = identity
         noticia["dedup_key"] = identity
         noticia["route_by_channel"] = {"web": "automatic", "facebook": "automatic", "instagram": "automatic"}
         noticia["editorial_route"] = "automatic"
+        if web_url:
+            noticia["web_url"] = web_url
         save_json(str(self.data / "noticias_meta.json"), [noticia])
 
         social_item = dict(noticia)
@@ -485,6 +579,105 @@ class ManualOverrideTransitionTests(unittest.TestCase):
 
         meta_items = load_json(str(self.data / "noticias_meta.json"), [], expected_type=list)
         self.assertEqual("automatic", meta_items[0]["route_by_channel"]["instagram"])
+        self.assertEqual(
+            {identity},
+            self.router.manual_automatic_identities(channel="instagram"),
+        )
+        promoted = self.router.manual_automatic_candidates(channel="instagram")
+        self.assertEqual(1, len(promoted))
+        self.assertEqual(identity, promoted[0]["identity"])
+
+        self.router.update_candidate_status(candidate_id, "candidate", operator="qa")
+        self.assertEqual(set(), self.router.manual_automatic_identities(channel="instagram"))
+        self.assertEqual([], self.router.manual_automatic_candidates(channel="instagram"))
+
+    def test_published_reuse_is_never_an_automatic_publication_override(self):
+        from utils.file_manager import save_json
+
+        identity = "link:published-reuse-override"
+        noticia = _noticia("Una publicación ya confirmada", seccion="sociedad")
+        noticia["meta_queue_key"] = identity
+        noticia["route_by_channel"] = {"instagram": "automatic"}
+        save_json(str(self.data / "noticias_meta.json"), [noticia])
+        save_json(str(self.data / "ig_posted.json"), {"posted": {identity: {"external_id": "ig-1"}}})
+
+        added = self.router.add_published_to_candidates(identity, reason="reutilizar")
+        self.router.update_candidate_status(added["candidate_id"], "automatic", operator="qa")
+
+        self.assertEqual(set(), self.router.manual_automatic_identities(channel="instagram"))
+        self.assertEqual([], self.router.manual_automatic_candidates(channel="instagram"))
+
+    def test_manual_promotion_reactivates_an_excluded_social_item(self):
+        from meta import run_ig
+        from utils import social_queue
+        from utils.file_manager import load_json
+
+        self.addCleanup(self._close_module_logger, run_ig)
+        self.addCleanup(self._close_module_logger, social_queue)
+
+        identity = self._seed_automatic_noticia(
+            identity="link:manual-reactivation",
+            titulo="El club presentó su nueva camiseta para el torneo",
+            seccion="deportes",
+            web_url="https://lavozriojana.com/manual-reactivation",
+        )
+        demoted = self.router.demote_automatic_to_candidate(identity, reason="selección manual")
+        self.router.update_candidate_status(demoted["candidate_id"], "automatic", operator="qa")
+
+        with mock.patch.object(
+            run_ig, "META_INPUT", str(self.data / "noticias_meta.json")
+        ), mock.patch.object(
+            social_queue, "QUEUE_PATH", str(self.data / "noticias_sociales_pendientes.json")
+        ):
+            result = run_ig._bootstrap_queue()
+
+        self.assertEqual((1, 0, 0, 1, 0, 0), result)
+        social_items = load_json(
+            str(self.data / "noticias_sociales_pendientes.json"),
+            [],
+            expected_type=list,
+        )
+        self.assertEqual(1, len(social_items))
+        self.assertEqual("pending", social_items[0]["instagram_state"])
+
+    def test_manual_promotion_is_restored_when_meta_item_is_no_longer_active(self):
+        from meta import run_ig
+        from utils import social_queue
+        from utils.file_manager import load_json, save_json
+
+        self.addCleanup(self._close_module_logger, run_ig)
+        self.addCleanup(self._close_module_logger, social_queue)
+
+        identity = self._seed_automatic_noticia(
+            identity="link:manual-restored",
+            titulo="Una noticia elegida manualmente salió de la cola activa",
+            seccion="deportes",
+        )
+        demoted = self.router.demote_automatic_to_candidate(identity, reason="selección manual")
+        self.router.update_candidate_status(demoted["candidate_id"], "automatic", operator="qa")
+        save_json(str(self.data / "noticias_meta.json"), [])
+        save_json(str(self.data / "noticias_sociales_pendientes.json"), [])
+
+        with mock.patch.dict(os.environ, {"EDITORIAL_ROUTER_ENABLED": "true"}, clear=False), mock.patch.object(
+            run_ig, "META_INPUT", str(self.data / "noticias_meta.json")
+        ), mock.patch.object(
+            social_queue, "QUEUE_PATH", str(self.data / "noticias_sociales_pendientes.json")
+        ):
+            result = run_ig._bootstrap_queue()
+
+        self.assertEqual((1, 0, 0, 1, 1, 1), result)
+        social_items = load_json(
+            str(self.data / "noticias_sociales_pendientes.json"),
+            [],
+            expected_type=list,
+        )
+        self.assertEqual(1, len(social_items))
+        self.assertEqual(identity, social_items[0]["dedup_key"])
+        self.assertEqual("pending", social_items[0]["instagram_state"])
+        self.assertEqual(
+            "automatic",
+            social_items[0]["route_by_channel"]["instagram"],
+        )
 
     def test_candidate_to_discarded_and_back_to_candidate(self):
         identity = self._seed_automatic_noticia()
@@ -498,78 +691,118 @@ class ManualOverrideTransitionTests(unittest.TestCase):
         self.assertEqual("candidate", back["status"])
 
 
-class EditorialRouterInstagramGateTests(unittest.TestCase):
-    """El router sólo debe afectar meta/run_ig.py cuando está habilitado."""
+class InstagramBootstrapSelectionTests(unittest.TestCase):
+    """Qué se publica en Instagram ya lo decide select_publish_batch.py
+    (``selected_for_publish``, ver docs/DECISIONS.md) — el router deja de
+    gatear candidate/automatic acá. Lo único que sobrevive de
+    utils/editorial_router.py en meta/run_ig.py es "suppressed" (duplicado
+    técnico real) y las promociones manuales durables."""
 
-    def test_bootstrap_ignores_router_when_disabled_by_default(self):
+    def test_bootstrap_only_includes_selected_for_publish(self):
         from meta import run_ig
 
         items = [
             {
-                "dedup_key": "national",
-                "titulo": "Nota nacional",
+                "dedup_key": "selected",
+                "titulo": "Nota seleccionada por el lote",
                 "seccion": "politica",
                 "web_url": "https://lavozriojana.com/n",
-                "route_by_channel": {"web": "automatic", "facebook": "automatic", "instagram": "candidate"},
-            }
-        ]
-        with mock.patch.dict(os.environ, {"EDITORIAL_ROUTER_ENABLED": "false"}, clear=False), mock.patch.object(
-            run_ig, "load_json", return_value=items
-        ), mock.patch.object(run_ig, "enqueue") as enqueue:
-            included, omitted, missing = run_ig._bootstrap_queue()
-
-        self.assertEqual(1, included)
-        self.assertEqual(0, omitted)
-        enqueue.assert_called_once()
-
-    def test_bootstrap_excludes_router_candidates_when_enabled(self):
-        from meta import run_ig
-
-        items = [
-            {
-                "dedup_key": "national",
-                "titulo": "Nota nacional",
-                "seccion": "politica",
-                "web_url": "https://lavozriojana.com/n",
-                "route_by_channel": {"web": "automatic", "facebook": "automatic", "instagram": "candidate"},
+                "selected_for_publish": True,
             },
             {
-                "dedup_key": "local",
-                "titulo": "Nota riojana",
+                "dedup_key": "not-selected",
+                "titulo": "Nota todavía no seleccionada",
                 "seccion": "interior",
                 "web_url": "https://lavozriojana.com/l",
-                "route_by_channel": {"web": "automatic", "facebook": "automatic", "instagram": "automatic"},
             },
         ]
-        with mock.patch.dict(os.environ, {"EDITORIAL_ROUTER_ENABLED": "true"}, clear=False), mock.patch.object(
+        with mock.patch.object(
             run_ig, "load_json", return_value=items
+        ), mock.patch.object(
+            run_ig, "manual_automatic_candidates", return_value=[]
         ), mock.patch.object(run_ig, "enqueue") as enqueue:
-            included, omitted, missing = run_ig._bootstrap_queue()
+            (
+                included,
+                omitted,
+                missing,
+                manual,
+                manual_without_web,
+                restored,
+            ) = run_ig._bootstrap_queue()
 
         self.assertEqual(1, included)
         self.assertEqual(1, omitted)
-        enqueue.assert_called_once_with(items[1], platform="instagram")
+        self.assertEqual(0, manual)
+        self.assertEqual(0, manual_without_web)
+        self.assertEqual(0, restored)
+        enqueue.assert_called_once_with(items[0], platform="instagram")
 
-    def test_bootstrap_treats_missing_route_metadata_as_automatic(self):
-        """Ítems que nunca pasaron por el router (o donde el router falló) no
-        deben bloquearse silenciosamente aunque el flag esté encendido."""
+    def test_suppressed_technical_duplicate_is_excluded_even_if_selected(self):
         from meta import run_ig
 
         items = [
             {
-                "dedup_key": "legacy",
-                "titulo": "Nota vieja sin metadata de ruteo",
-                "seccion": "sociedad",
-                "web_url": "https://lavozriojana.com/legacy",
+                "dedup_key": "dup",
+                "titulo": "Duplicado técnico",
+                "web_url": "https://lavozriojana.com/d",
+                "selected_for_publish": True,
+                "route_by_channel": {"instagram": "suppressed"},
             }
         ]
-        with mock.patch.dict(os.environ, {"EDITORIAL_ROUTER_ENABLED": "true"}, clear=False), mock.patch.object(
+        with mock.patch.object(
             run_ig, "load_json", return_value=items
+        ), mock.patch.object(
+            run_ig, "manual_automatic_candidates", return_value=[]
         ), mock.patch.object(run_ig, "enqueue") as enqueue:
-            included, omitted, missing = run_ig._bootstrap_queue()
+            included, omitted, *_rest = run_ig._bootstrap_queue()
 
-        self.assertEqual(1, included)
-        enqueue.assert_called_once()
+        self.assertEqual(0, included)
+        self.assertEqual(1, omitted)
+        enqueue.assert_not_called()
+
+    def test_manual_promotion_bypasses_selection(self):
+        from meta import run_ig
+
+        item = {
+            "dedup_key": "link:manual-policial",
+            "titulo": "Dos personas fueron hospitalizadas tras derrapar",
+            "seccion": "policiales",
+            "web_url": "https://lavozriojana.com/manual-policial",
+        }
+        with mock.patch.object(
+            run_ig, "load_json", return_value=[item]
+        ), mock.patch.object(
+            run_ig,
+            "manual_automatic_candidates",
+            return_value=[{"identity": "link:manual-policial", "noticia": item}],
+        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+            result = run_ig._bootstrap_queue()
+
+        self.assertEqual((1, 0, 0, 1, 0, 0), result)
+        enqueue.assert_called_once_with(item, platform="instagram")
+
+    def test_manual_promotion_still_blocked_when_suppressed(self):
+        """La promoción manual sigue respetando un duplicado técnico real —
+        no es una forma de esquivar esa protección."""
+        from meta import run_ig
+
+        item = {
+            "dedup_key": "link:manual-suppressed",
+            "titulo": "Nota duplicada promovida a mano",
+            "web_url": "https://lavozriojana.com/manual-suppressed",
+            "route_by_channel": {"instagram": "suppressed"},
+        }
+        with mock.patch.object(
+            run_ig, "load_json", return_value=[item]
+        ), mock.patch.object(
+            run_ig,
+            "manual_automatic_candidates",
+            return_value=[{"identity": "link:manual-suppressed", "noticia": item}],
+        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+            included, omitted, *_rest = run_ig._bootstrap_queue()
+
+        self.assertEqual(0, included)
+        enqueue.assert_not_called()
 
 
 class TopicKeyHeuristicTests(unittest.TestCase):

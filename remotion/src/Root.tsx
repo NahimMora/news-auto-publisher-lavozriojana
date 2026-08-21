@@ -11,12 +11,28 @@ import {
   AUTOMATIC_IG_W,
 } from "./AutomaticInstagramCard";
 import { FacebookOgCard, FacebookOgCardSchema, FB_OG_H, FB_OG_W } from "./FacebookOgCard";
+import { EditorialReel, EDITORIAL_OUTRO_FRAMES } from "./EditorialReel";
+import {
+  PaparazziClip,
+  PaparazziClipProps,
+  PaparazziClipSchema,
+  PAPARAZZI_CLIP_H,
+  PAPARAZZI_CLIP_W,
+} from "./PaparazziClip";
 
 const calculateMainMetadata: CalculateMetadataFunction<MainProps> = ({
   props,
 }) => {
   return { durationInFrames: props.durationInFrames };
 };
+
+const calculateEditorialReelMetadata: CalculateMetadataFunction<MainProps> = ({ props }) => ({
+  durationInFrames: props.durationInFrames + EDITORIAL_OUTRO_FRAMES,
+});
+
+const calculatePaparazziClipMetadata: CalculateMetadataFunction<PaparazziClipProps> = ({
+  props,
+}) => ({ durationInFrames: props.durationInFrames });
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -48,6 +64,40 @@ export const RemotionRoot: React.FC = () => {
         }}
         calculateMetadata={calculateMainMetadata}
       />
+      <Composition
+        id="EditorialReel"
+        component={EditorialReel}
+        durationInFrames={210}
+        fps={FPS}
+        width={W}
+        height={H}
+        schema={MainSchema}
+        defaultProps={{
+          titulo: "La Legislatura aprobó el presupuesto 2026 tras un debate de diez horas",
+          seccion: "Política",
+          assetType: "none",
+          assetFile: "",
+          kenBurnsVariant: 0,
+          durationInFrames: 120,
+          highlightTerms: ["aprobó el presupuesto"],
+        }}
+        calculateMetadata={calculateEditorialReelMetadata}
+      />
+      <Composition
+        id="PaparazziClip"
+        component={PaparazziClip}
+        durationInFrames={90}
+        fps={FPS}
+        width={PAPARAZZI_CLIP_W}
+        height={PAPARAZZI_CLIP_H}
+        schema={PaparazziClipSchema}
+        defaultProps={{
+          seccion: "espectaculos",
+          assetFile: "",
+          durationInFrames: 90,
+        }}
+        calculateMetadata={calculatePaparazziClipMetadata}
+      />
       <Still
         id="PremiumSlide"
         component={PremiumSlide}
@@ -60,8 +110,9 @@ export const RemotionRoot: React.FC = () => {
           title: "Un incendio afecta un comercio en Chilecito",
           text: "",
           items: [],
-          highlightTerms: ["incendio", "Chilecito"],
+          highlightTerms: ["comercio en Chilecito"],
           assetFile: "",
+          locality: "",
           section: "interior",
           index: 1,
           total: 1,
@@ -78,6 +129,10 @@ export const RemotionRoot: React.FC = () => {
           seccion: "Política",
           assetFile: "",
           highlightTerms: [],
+          locality: "",
+          deck: "",
+          imageTreatment: "auto",
+          publicationStyle: "automatic",
         }}
       />
       <Still
@@ -91,6 +146,7 @@ export const RemotionRoot: React.FC = () => {
           seccion: "Política",
           assetFile: "",
           highlightTerms: [],
+          publicationStyle: "automatic",
         }}
       />
     </>

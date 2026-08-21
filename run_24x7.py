@@ -36,10 +36,16 @@ CYCLE_STEPS = [
     ("pipeline/publish_web.py", "web"),
     ("meta/run_fb.py", "facebook"),
     ("meta/run_ig.py", "instagram"),
+    ("meta/ig_insights.py", "instagram"),
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,
     "pipeline/publish_web.py": 3600,
+    # El default de 600s se quedaba corto: hasta 2 items paparazzi por ciclo,
+    # cada uno con video que puede tardar minutos en procesar en Meta, más el
+    # reel best-effort y los posts automáticos generales, podían superarlo y
+    # perder el ciclo completo (0 procesados) por timeout del subprocess.
+    "meta/run_ig.py": 1200,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

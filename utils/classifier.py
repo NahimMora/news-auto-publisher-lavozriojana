@@ -60,20 +60,19 @@ def clasificar_con_resultado(titulo: str, parrafos: list) -> ClassificationResul
     """
     Clasifica una noticia y retorna una categoría de CATEGORIAS.
     Usa temperature=0 y pocos tokens (barato y rápido).
-    Fallback: 'Sociedad' si OpenAI no está disponible o falla.
+    Fallback: 'Sociedad' si Gemini no está disponible o falla.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key or api_key == "PENDIENTE":
-        logger.warning("OPENAI_API_KEY no configurada, usando categoria por defecto")
+        logger.warning("GEMINI_API_KEY no configurada, usando categoria por defecto")
         return ClassificationResult("Sociedad", True, "credential_missing")
 
-    retry_count = int(os.getenv("OPENAI_RETRY_COUNT", "3"))
-    retry_sleep = float(os.getenv("OPENAI_RETRY_SLEEP", "2"))
-    timeout     = float(os.getenv("OPENAI_TIMEOUT", "30"))
-    model       = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    retry_count = int(os.getenv("GEMINI_RETRY_COUNT", "3"))
+    retry_sleep = float(os.getenv("GEMINI_RETRY_SLEEP", "2"))
+    timeout     = float(os.getenv("GEMINI_TIMEOUT", "30"))
+    model       = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key, timeout=timeout)
+    from utils.ai_client import chat_completion
 
     texto  = " ".join(parrafos[:3])[:1200]
     prompt = _PROMPT.format(
@@ -84,13 +83,14 @@ def clasificar_con_resultado(titulo: str, parrafos: list) -> ClassificationResul
 
     for attempt in range(1, retry_count + 1):
         try:
-            resp = client.chat.completions.create(
-                model=model,
+            raw = chat_completion(
                 messages=[{"role": "user", "content": prompt}],
+                model=model,
+                api_key=api_key,
                 temperature=0,
                 max_tokens=15,
-            )
-            raw = resp.choices[0].message.content.strip()
+                timeout=timeout,
+            ).strip()
             for cat in CATEGORIAS:
                 if cat.lower() in raw.lower():
                     logger.info(f"Clasificado como '{cat}': {titulo[:60]}")
@@ -103,7 +103,7 @@ def clasificar_con_resultado(titulo: str, parrafos: list) -> ClassificationResul
                 time.sleep(retry_sleep)
 
     logger.error(f"Clasificador falló para: {titulo[:60]}, usando Sociedad")
-    return ClassificationResult("Sociedad", True, "openai_failed")
+    return ClassificationResult("Sociedad", True, "gemini_failed")
 
 
 def clasificar(titulo: str, parrafos: list) -> str:

@@ -37,7 +37,7 @@ from utils.url_normalization import canonical_url
 
 PREFLIGHT_SCOPES = (
     "sources",
-    "openai",
+    "gemini",
     "r2",
     "cms",
     "facebook",
@@ -58,6 +58,7 @@ SOURCE_SECTIONS = {
     "nuevarioja_deportes": "https://nuevarioja.com.ar/deportes",
     "nuevarioja_interior": "https://nuevarioja.com.ar/interior",
     "nuevarioja_internacionales": "https://nuevarioja.com.ar/internacionales",
+    "paparazzi": "https://www.paparazzi.com.ar/",
 }
 
 _PLACEHOLDERS = {"", "PENDIENTE", "CHANGE_ME", "CHANGEME", "TODO"}
@@ -283,39 +284,35 @@ def check_sources(
     )
 
 
-def check_openai(
+def check_gemini(
     values: Mapping[str, str] | None = None,
     *,
     client_factory=None,
 ) -> StageResult:
     env = os.environ if values is None else values
-    key = _configured(env, "OPENAI_API_KEY")
+    key = _configured(env, "GEMINI_API_KEY")
     if not key:
-        return _blocked("preflight_openai", ["OPENAI_API_KEY"])
+        return _blocked("preflight_gemini", ["GEMINI_API_KEY"])
     started = time.monotonic()
     try:
         if client_factory is None:
-            from openai import OpenAI
+            from google import genai
 
-            client_factory = OpenAI
-        client = client_factory(
-            api_key=key,
-            timeout=float(env.get("OPENAI_TIMEOUT", "60")),
-        )
-        response = client.responses.create(
-            model=str(env.get("OPENAI_MODEL", "gpt-4o-mini")),
-            input=(
+            client_factory = genai.Client
+        client = client_factory(api_key=key)
+        response = client.models.generate_content(
+            model=str(env.get("GEMINI_MODEL", "gemini-3.1-flash-lite")),
+            contents=(
                 "Respondé únicamente este JSON, sin markdown ni texto adicional: "
                 '{"status":"ok","purpose":"lvr_preflight"}'
             ),
-            max_output_tokens=40,
         )
-        text = str(getattr(response, "output_text", "") or "").strip()
+        text = str(getattr(response, "text", "") or "").strip()
         payload = json.loads(text)
         if payload != {"status": "ok", "purpose": "lvr_preflight"}:
             raise ValueError("unexpected_structured_response")
         return StageResult(
-            "preflight_openai",
+            "preflight_gemini",
             StageStatus.SUCCESS,
             received=1,
             selected=1,
@@ -323,18 +320,18 @@ def check_openai(
             succeeded=1,
             duration_seconds=time.monotonic() - started,
             details={
-                "model": str(env.get("OPENAI_MODEL", "gpt-4o-mini")),
+                "model": str(env.get("GEMINI_MODEL", "gemini-3.1-flash-lite")),
                 "fallback_policy": str(env.get("OPENAI_FALLBACK_MODE", "allow_non_sensitive")),
             },
         )
     except Exception as exc:
-        status_code = int(getattr(exc, "status_code", 0) or 0)
+        status_code = int(getattr(exc, "code", 0) or getattr(exc, "status_code", 0) or 0)
         if status_code in {401, 403}:
-            return _http_status_result("preflight_openai", status_code)
+            return _http_status_result("preflight_gemini", status_code)
         if status_code == 429:
-            return _http_status_result("preflight_openai", 429)
+            return _http_status_result("preflight_gemini", 429)
         return StageResult(
-            "preflight_openai",
+            "preflight_gemini",
             StageStatus.FAILED,
             failed=1,
             duration_seconds=time.monotonic() - started,
@@ -949,7 +946,7 @@ def run_preflight(
     custom = dict(overrides or {})
     checks: dict[str, Callable[[], StageResult]] = {
         "sources": lambda: check_sources(),
-        "openai": lambda: check_openai(env),
+        "gemini": lambda: check_gemini(env),
         "r2": lambda: check_r2(env),
         "cms": lambda: check_cms(env),
         "facebook": lambda: check_facebook(env),

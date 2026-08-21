@@ -1,6 +1,6 @@
 # Métricas operativas
 
-Última actualización: 2026-07-26. Este documento define métricas calculables; no
+Última actualización: 2026-07-30. Este documento define métricas calculables; no
 inventa valores ni implica que exista un dashboard.
 
 ## Fuentes de verdad
@@ -171,6 +171,78 @@ Notas de exactitud:
 - El total de 336 fue confirmado corriendo la suite completa dos veces
   consecutivas con resultado idéntico.
 
+## Auditoría de tests del rediseño Premium Studio UX (2026-07-30)
+
+Baseline de esta rama: `4b8a1c7` con **336 casos**. El rediseño agrega **18** casos
+sin retirar ninguno, para un total descubierto de **354**:
+
+| Medición | Comando | Resultado |
+|---|---|---:|
+| Baseline de la rama | suite de `4b8a1c7` extraída con `git archive`, `python -W error::DeprecationWarning -m unittest discover tests` | **336** |
+| Total descubierto actual | `python -c "import unittest; print(unittest.defaultTestLoader.discover('tests').countTestCases())"` | **354** |
+| Neto agregado | 354 − 336 | **18** |
+| Ejecución local actual | `python -W error::DeprecationWarning -m unittest discover tests` con `PYTHON_DOTENV_DISABLED=1` y todos los directorios `LVR_*` temporales | **350 OK, 1 skip de clase** |
+
+El `Ran 350 tests (skipped=1)` local no contradice los 354 casos descubiertos:
+`RemotionLiveRenderTests.setUpClass` detectó `remotion/node_modules`, intentó el CLI
+y, como no respondió en este host, elevó un único `SkipTest` de clase que agrupó sus
+cuatro métodos de render real. Una auditoría del `TestResult` confirmó que ésos son
+exactamente los cuatro IDs no iniciados. En CI no se instala Node y los cuatro quedan
+saltados individualmente. Ninguno de los 18 casos de esta rama fue omitido.
+
+Desglose del neto:
+
+| Archivo | Antes | Ahora | Neto | Cobertura |
+|---|---:|---:|---:|---|
+| `tests/test_premium_package_generator.py` | 0 | 4 | +4 | éxito OpenAI, contrato, reintentos/fallo final, texto vacío, credencial ausente |
+| `tests/test_premium_studio_http.py` | 0 | 11 | +11 | descarga SSRF-safe, endpoints generate/link/upload/thumb y estructura UI |
+| `tests/test_media_library.py` | 13 | 16 | +3 | lookup inmutable, confinamiento del thumb y URL HTTP en `_asset_row()` |
+| **Total** | **13** | **31** | **+18** | todos ejecutados y verdes |
+
+Comandos focalizados:
+
+```powershell
+python -m unittest tests.test_premium_package_generator -v  # 4/4
+python -m unittest tests.test_premium_studio_http -v         # 11/11
+python -m unittest tests.test_media_library -v               # 16/16
+```
+
+Las pruebas HTTP levantan `ThreadingHTTPServer` en un puerto loopback efímero, usan
+directorios temporales y mocks para OpenAI/descarga remota. No leen secretos, no
+llaman publicadores y no tocan estado productivo.
+
+Smoke visual adicional con navegador real: servidor en `127.0.0.1:8766`,
+directorios `LVR_*` temporales, `PREMIUM_STATIC_RENDER_ENGINE=pillow` y
+`PREMIUM_PUBLISH_DRY_RUN=true`. Resultado: 3 slides editables, 3 tarjetas de assets,
+2 uploads promovidos con miniatura HTTP, 3 imágenes de preview y publicación dry-run
+`instagram: OK · facebook: OK`; consola del navegador sin errores. Se usó el import
+JSON manual para no realizar una llamada OpenAI externa durante QA; la rama de
+generación está cubierta con mock tanto en módulo como contra el endpoint HTTP real.
+
+Gates de cierre ejecutados en el mismo workspace:
+
+| Gate | Resultado |
+|---|---|
+| `python cli.py run-once --dry-run` | **17/17 OK**, `production_calls=false` |
+| `python cli.py doctor --scope core --json` | **success 8/8** con modo `observe` y los tres canales apagados sólo para ese proceso |
+| `python cli.py doctor --scope all --json` | **success 8/8** con los mismos overrides seguros |
+| `python -m compileall -q .` | **OK** |
+| chequeo sintáctico del `<script>` embebido con Node | **OK** |
+| `git diff --check` | **OK** |
+
+La configuración persistente del host no se modificó: el primer `doctor core` sin
+overrides detectó correctamente que `PIPELINE_DEPLOYMENT_MODE=observe` no coincide
+con el canal Web habilitado. El gate aislado se repitió con
+`WEB_PUBLISH_TARGET=off`, `FB_PUBLISH_ENABLED=false` e
+`IG_PUBLISH_ENABLED=false`; no se cambió `.env` ni se presentó el bloqueo original
+como éxito.
+
+`python -m pip check` no está verde en el Python global del host por tres
+incompatibilidades preexistentes entre paquetes instalados
+(`pydantic-settings/pydantic`, `pillow-heif/Pillow` y `fastapi/starlette`). Esta rama
+no cambia `requirements.txt`, no instala dependencias y toda la suite del repositorio
+pasó con el entorno actual.
+
 ## Benchmark Remotion vs Pillow (Fase 4, medido 2026-07-30)
 
 `scripts/benchmark_static_render.py` renderiza 10 paquetes premium de
@@ -191,6 +263,38 @@ re-bundlea el proyecto desde cero — no hay bundle cacheado ni servidor
 persistente en esta implementación. Ver `remotion/README.md` para el
 detalle y la mitigación propuesta (servidor de render persistente antes de
 usar Remotion en un flujo de alto volumen).
+
+## Benchmark Remotion vs Pillow — servidor de render persistente (medido 2026-07-31)
+
+Mismo script, mismos 10 fixtures, mismo host (Node v22.20.0, Windows) — la única
+diferencia es que `utils/remotion_renderer.py::render_still` ahora intenta primero
+`remotion/render_server.mjs` (bundle una sola vez por proceso + browser Chromium
+reusado, ver `docs/DECISIONS.md` "Editorial Cinemática Riojana") antes de caer al
+`subprocess` viejo. Corrida limpia (servidor recién levantado, sin caché previa):
+
+| Métrica | Pillow | Remotion (servidor persistente) | Remotion (subprocess, 2026-07-30) |
+|---|---:|---:|---:|
+| Éxito | 10/10 | 10/10 | 10/10 |
+| Tiempo promedio por paquete | 0.045s | **2.373s** | 19.119s |
+| Tiempo total (10 paquetes) | 0.453s | 23.734s | 191.188s |
+| Tamaño promedio por paquete (bytes) | 111.286 | 140.500 | 125.983 |
+| Dimensiones | 1080×1350 en todos los casos | 1080×1350 en todos los casos | 1080×1350 en todos los casos |
+
+**~8.1x más rápido por paquete** que el subprocess viejo (19.119s → 2.373s), con las
+mismas 10/10 fixtures exitosas y las mismas dimensiones. Los tiempos por paquete
+individuales de esta corrida fueron `[2.063, 2.093, 3.125, 2.047, 3.016, 2.125, 2.109,
+2.031, 2.031, 3.094]` segundos — la variación entre paquetes de 2-3 slides viene de la
+cantidad de slides por paquete, no de re-bundling (que ahora sólo ocurre una vez al
+iniciar el proceso del servidor, no por request). El tamaño promedio subió ~12% frente
+al Remotion anterior (más capas de gradiente/textura del sistema visual nuevo) — sigue
+muy por debajo de cualquier límite de Meta.
+
+No se inventaron valores: esta tabla refleja exactamente la salida de
+`python scripts/benchmark_static_render.py` en esta corrida — el número de la columna
+"subprocess" es el de la corrida original del 2026-07-30, conservado para la
+comparación directa. Reproducir: matar cualquier servidor persistente corriendo
+(`Get-Content remotion\.render-server.json | ConvertFrom-Json | % pid | Stop-Process
+-Force`; borrar `remotion\.render-cache`) y volver a correr el script.
 
 Diferencia funcional detectada: el renderer Pillow detecta y reporta
 `titulo_desborda` (overflow) para el único fixture con título largo (~190

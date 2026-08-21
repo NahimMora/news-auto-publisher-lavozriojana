@@ -71,13 +71,7 @@ class DeploymentModeTests(unittest.TestCase):
 
         plan = deployment_plan(self._env("all", web=True, facebook=True, instagram=True))
 
-        self.assertEqual(
-            {
-                "WEB_PUBLISH_MAX_PER_RUN": "0",
-                "WEB_MAX_DEPORTES_PER_RUN": "-1",
-            },
-            stage_environment("web", plan),
-        )
+        self.assertEqual({}, stage_environment("web", plan))
         self.assertEqual({"PUBLISH_MAX_PER_RUN": "8"}, stage_environment("facebook", plan))
         self.assertEqual({"IG_MAX_PER_RUN": "8"}, stage_environment("instagram", plan))
         self.assertEqual(
@@ -128,7 +122,7 @@ class DeploymentModeTests(unittest.TestCase):
         self.assertEqual(1, run_step.call_count)
         children = result.details["children"]
         self.assertEqual(
-            ["scraping_rewrite", "web", "facebook", "instagram"],
+            ["scraping_rewrite", "web", "facebook", "instagram", "instagram"],
             [item["stage"] for item in children],
         )
         self.assertTrue(all(item["status"] == "no_work" for item in children))

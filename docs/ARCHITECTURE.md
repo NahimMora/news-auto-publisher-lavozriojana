@@ -1,6 +1,6 @@
 # Arquitectura
 
-Última actualización: 2026-07-26.
+Última actualización: 2026-08-05.
 
 ## Stack y límites
 
@@ -26,33 +26,44 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `run_24x7.py` | loop, señales, modo progresivo, heartbeat, alertas y agregación |
 | `run_all.py` | scrapers y reescritura como subetapas estructuradas |
 | `scraping/base_*.py`, `scraping/runner.py` | contrato de fuente, parseo, persistencia cola-antes-historial |
-| `openIA/rewrite_news.py` | cola durable, reescritura, clasificación, captions y fan-out web/meta |
+| `scraping/base_paparazzi.py` | fuente farándula/espectáculos; resuelve el video JWPlayer embebido (si existe) contra el endpoint público `cdn.jwplayer.com/v2/media/{id}` sin headless browser; apagada por defecto (`SCRAPER_PAPARAZZI_ENABLED`) |
+| `openIA/rewrite_news.py` | cola durable, reescritura, clasificación, captions, contexto visual/highlight opt-in y fan-out web/meta |
+| `utils/visual_style.py` | flags seguros por workflow: paridad visual manual→automático y composición cinemática del generador manual de Reels |
 | `utils/editorial_policy.py` | política explícita de fallbacks y sensibilidad |
 | `pipeline/node_webapp/*` | validación editorial, medios R2, payload, contrato CMS y URL web |
 | `utils/social_caption.py` | caption único compartido por Instagram y Facebook |
-| `utils/social_queue.py` | estados independientes de Facebook/Instagram |
-| `utils/editorial_router.py` | router determinístico automatic/candidate/suppressed por canal; gate y cap de tema para Instagram (opt-in vía `EDITORIAL_ROUTER_ENABLED`) |
-| `utils/media_library.py` | biblioteca multimedia de diez días: ingesta de imágenes (hash, master, thumb), búsqueda unificada local (candidatas + publicadas + premium + assets) y cleanup seguro |
+| `utils/social_queue.py` | estados independientes de Facebook/Instagram; `get_pending(source_prefix=/exclude_source_prefix=)` permite cupo reservado por fuente (hoy: paparazzi, 8+2 en `meta/run_ig.py`) sin competir por el mismo `IG_MAX_PER_RUN` |
+| `utils/editorial_router.py` | router determinístico automatic/candidate/suppressed por canal; gate y cap de tema para Instagram (opt-in vía `EDITORIAL_ROUTER_ENABLED`); expone candidatas e identidades promovidas manualmente desde su historial durable; segundo camino de "automatic" por rendimiento histórico de categoría (opt-in vía `IG_STATS_PROMOTION_ENABLED`, nunca bypassa el tope por tema) |
+| `meta/ig_insights.py`, `utils/category_performance.py` | trae reach/interacciones de Instagram por publicación reciente, agrega tasa de interacción por categoría (`data/ig_category_performance.json`); solo lectura, opt-in vía `IG_STATS_ENABLED` |
+| `utils/media_library.py` | biblioteca multimedia de diez días: ingesta de imágenes (hash, master, thumb), búsqueda unificada local (candidatas + publicadas + premium + assets), resolución confinada de miniaturas HTTP y cleanup seguro |
+| `openIA/premium_package_generator.py` | estructura con OpenAI el texto aportado por el operador en el contrato del importador premium; no investiga, no completa datos y falla de forma visible sin fallback silencioso |
 | `utils/premium_contract.py` | contrato versionado de publicaciones premium: validación, edición de slides (mover/duplicar/eliminar/cambiar tipo), validación de highlight_terms |
 | `utils/premium_importer.py` | importa el paquete pegado de ChatGPT; nunca pierde el contenido pegado ni asigna imágenes en firme (sólo sugerencias) |
 | `utils/premium_post_queue.py` | store único de paquetes premium (`data/premium_packages.json`); borradores recuperables aunque tengan errores de validación |
 | `utils/premium_renderer.py` | renderer Pillow interino (mismo renderer para preview y publicación); la Fase 4 reemplaza el cuerpo por Remotion sin cambiar la firma pública |
 | `utils/premium_publisher.py` | orquestador social-only: nunca crea artículo web ni llama al CMS; degraded/retry por canal; ambiguos no se reintentan solos |
 | `meta/ig_client.py::post_premium_carousel_to_instagram` | carrusel premium (2-10 slides), dedup y estado propios (`data/premium_ig_posted.json`), mismo backoff de cuenta que el flujo automático |
+| `meta/ig_client.py::post_paparazzi_carousel_to_instagram` | carrusel automático de 2 slides (portada + clip de video recortado/editado) para la fuente paparazzi; mismo `ig_posted.json`/dedup que el flujo automático normal (no es social-only); cae a imagen sola sin video utilizable |
+| `utils/video_renderer.py::render_paparazzi_clips` | clip(s) cortos 1080×1350 (mismo aspect-ratio que la portada) desde el video fuente de paparazzi.com.ar: máximo `PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS` (120s) reales; con `split=True` (Instagram) divide en partes de a lo sumo `PAPARAZZI_CAROUSEL_VIDEO_PART_MAX_SECONDS` (60s, límite de Instagram por hijo de video en carrusel); con `split=False` (Facebook, sin ese límite) un único clip. Marcado con la composición Remotion `PaparazziClip` (mismo masthead/footer que `AutomaticInstagramCard`); cae a un overlay PIL/ffmpeg equivalente sin Remotion/Node disponible |
+| `remotion/src/PaparazziClip.tsx` | composición video 1080×1350: video fuente (blur-backdrop + copia nítida "contain", mismo truco que `EditorialReel`) + `StillLayout`/`EditorialMasthead`/`SocialFooter` — mismo chrome de marca que la portada del carrusel, sin título propio (vive en la portada) |
+| `meta/fb_client.py::post_paparazzi_video_to_facebook` | sube un único clip editado (`render_paparazzi_clips(split=False)`) en vez del `video_url` crudo del scraper; cae a post estándar (link/imagen) sin video utilizable |
 | `meta/fb_client.py::post_premium_direct_media_to_facebook` | foto única o álbum multi-foto sin link, activado sólo con `publish_mode=direct_media` + `workflow=manual_premium` explícitos; backoff compartido con `fb_posted.json`, dedup propio (`data/premium_fb_posted.json`) |
-| `utils/remotion_renderer.py` | wrapper de `npx remotion still`; detección de disponibilidad cacheada, copia de assets a `remotion/public/tmp/` y limpieza |
-| `remotion/src/{PremiumSlide,AutomaticInstagramCard,FacebookOgCard}.tsx` | composiciones still de Remotion (Fase 4); paleta compartida sin dorado (`constants.ts`), highlight terms compartidos (`shared/HighlightedTitle.tsx`) |
+| `utils/remotion_renderer.py` | `render_still()` intenta primero el servidor de render persistente (`remotion/render_server.mjs`, bundle único por proceso) y cae al `subprocess` de `npx remotion still` si no puede levantar; detección de disponibilidad cacheada, copia de assets a `remotion/public/tmp/` y limpieza |
+| `remotion/src/{PremiumSlide,AutomaticInstagramCard,FacebookOgCard}.tsx` | composiciones still bajo el sistema compartido "Editorial Cinemática Riojana" (`shared/designSystem.ts`, `StillLayout`, masthead/footer editorial); IG y OG aceptan `publicationStyle` para la paridad opt-in |
+| `remotion/src/EditorialReel.tsx` | Reel profesional 9:16 aditivo: medio animado, título auto-fit por renglones, color/destaque por sección, fase compacta y outro integrado; reusa el esquema de `Main` |
+| `layout/image_generator.py::generate_instagram_with_engine` | punto de entrada real de IG; con `AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED=true` el automático usa layout manual, highlight y JPEG 2160×2700/4:4:4; cae a Pillow si Remotion falla |
 
 `utils/premium_renderer.py::render_package_with_engine` es el punto de entrada real
 para preview/publicación del Estudio Premium: resuelve el motor vía
 `utils/remotion_renderer.py::resolve_engine("premium")`, intenta Remotion primero
 (default de ese workflow), y cae a Pillow (`render_package_bytes`, sin cambios) si
 Remotion no está disponible en modo `auto`. La política de motor es **por
-workflow** (`AUTOMATIC_STATIC_RENDER_ENGINE`, `PREMIUM_STATIC_RENDER_ENGINE`,
-`OG_STATIC_RENDER_ENGINE`, cada una con su propio default seguro) — no una única
-variable global; `STATIC_RENDER_ENGINE` sigue existiendo sólo como override legacy
-explícito. Ver `docs/DECISIONS.md`.
-| `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff |
+workflow** (`AUTOMATIC_STATIC_RENDER_ENGINE` default `auto` desde 2026-07-31,
+`PREMIUM_STATIC_RENDER_ENGINE` default `remotion`, `OG_STATIC_RENDER_ENGINE` default
+`auto` — cada una con su propio default seguro) — no una única variable global;
+`STATIC_RENDER_ENGINE` sigue existiendo sólo como override legacy explícito. Ver
+`docs/DECISIONS.md`.
+| `meta/run_*.py`, `meta/*_client.py` | claims, Graph API, evidencia y backoff; Instagram aplica la promoción manual `candidate→automatic` como override de categoría y de espera de URL Web, y puede recuperar su payload si ya rotó fuera de Meta; conserva imagen, dedup, claims, kill switch, backoff y estados terminales |
 | `utils/file_manager.py` | locks, lectura estricta, atomicidad, backups, cuarentena y restore |
 | `utils/stage_result.py` | contrato `success/no_work/degraded/failed/blocked` |
 | `utils/heartbeat.py` | estado del supervisor y métricas de colas |
@@ -63,8 +74,8 @@ explícito. Ver `docs/DECISIONS.md`.
 | `utils/canary.py` | una publicación aislada, gated e idempotente |
 | `utils/facebook_reconcile.py` | reporte conservador y decisiones explícitas |
 | `utils/alerts.py` | detección, dedupe, outbox y entrega opcional |
-| `video_reel_manager.py` | UI manual local y uploads controlados |
-| `utils/video_renderer.py` | Descarga de video fuente (MP4 directo o yt-dlp: YouTube, Instagram, TikTok, X, Facebook, Vimeo y otros sitios vía extractor genérico) y composición ffmpeg del reel |
+| `video_reel_manager.py` | UI manual local y uploads controlados; Estudio Premium genera/importa paquetes y unifica imágenes por link SSRF-safe, subida propia o biblioteca |
+| `utils/video_renderer.py` | Descarga de video fuente (MP4 directo o yt-dlp) y render del Reel; selecciona `EditorialReel` sólo con `REEL_CINEMATIC_VISUAL_STYLE_ENABLED=true`, conserva `Main` y ffmpeg como fallbacks |
 
 ## Contrato de resultados
 
@@ -205,8 +216,12 @@ dead-letter si estaban en `processing`. No usa `fecha` ni fabrica evidencia exte
 
 ## Despliegue y rollback
 
-Hay CI de validación, pero no despliegue automático ni staging externo. El
-procedimiento de backup, restore y rollback está en `docs/RUNBOOK.md`.
+Hay CI de validación, pero no despliegue automático ni staging externo. El servicio
+corre en un único host de producción dedicado (`C:\LVR`, accedido por SSH); ninguna
+máquina de desarrollo lo ejecuta — ver `docs/RUNBOOK.md` ("Entorno: desarrollo vs.
+producción") para el flujo de despliegue por `git pull` + reinicio remoto, y
+`docs/KNOWN_ISSUES.md` #84 para el incidente que motivó esa regla. El procedimiento
+de backup, restore y rollback está en `docs/RUNBOOK.md`.
 
 ### Control de canales
 

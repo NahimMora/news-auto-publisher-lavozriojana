@@ -5,7 +5,7 @@ import os
 import time
 from typing import Literal
 
-from utils.editorial_priority import priority_interleave, split_priority_batch
+from utils.editorial_priority import item_source, priority_interleave, split_priority_batch
 from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
@@ -25,13 +25,6 @@ _TERMINAL_STATES = {"completed", "expired", "dead_letter", "excluded"}
 
 def _load_queue() -> list[dict]:
     return load_json(QUEUE_PATH, [], expected_type=list)
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 def _priority_interleave(items: list[dict]) -> list[dict]:
@@ -87,14 +80,6 @@ def _set_platform_state(
         item[f"{platform}_done"] = False
     if reason:
         item[f"{platform}_reason"] = reason
-
-
-def _social_category_caps() -> dict[str, int]:
-    max_deportes = _env_int(
-        "SOCIAL_MAX_DEPORTES_PER_RUN",
-        _env_int("MAX_DEPORTES_PER_RUN", 1),
-    )
-    return {"deportes": max_deportes}
 
 
 def _is_similar_to_existing(titulo: str, queue: list[dict]) -> bool:
@@ -183,8 +168,20 @@ def _expire_pending(platform: Platform) -> tuple[list[dict], int]:
     return _load_queue(), len(expired_items)
 
 
-def get_pending(platform: Platform, *, max_items: int | None = None) -> list[dict]:
-    """Retorna pendientes; processing nunca se reintenta automáticamente."""
+def get_pending(
+    platform: Platform,
+    *,
+    max_items: int | None = None,
+    source_prefix: str | None = None,
+    exclude_source_prefix: str | None = None,
+) -> list[dict]:
+    """Retorna pendientes; processing nunca se reintenta automáticamente.
+
+    ``source_prefix``/``exclude_source_prefix`` permiten reservar cupo por
+    fuente (ej. paparazzi) sin que compita por el mismo ``max_items`` que el
+    resto — ver meta/run_ig.py, que llama esta función dos veces (pool
+    general + pool reservado) en vez de mezclar todo en una sola selección.
+    """
     queue, expired = _expire_pending(platform)
     if expired:
         logger.info(
@@ -201,13 +198,15 @@ def get_pending(platform: Platform, *, max_items: int | None = None) -> list[dic
         and not item.get("needs_direct_video_url")
         and platform_state(item, platform) == "pending"
     ]
+    if source_prefix is not None:
+        pending = [item for item in pending if item_source(item).startswith(source_prefix)]
+    if exclude_source_prefix is not None:
+        pending = [
+            item for item in pending if not item_source(item).startswith(exclude_source_prefix)
+        ]
     if max_items is None:
         return _priority_interleave(pending)
-    selected, deferred = split_priority_batch(
-        pending,
-        max_items=max_items,
-        category_caps=_social_category_caps(),
-    )
+    selected, deferred = split_priority_batch(pending, max_items=max_items)
     if deferred:
         logger.info(
             "Prioridad editorial %s: %s en lote, %s diferidas",

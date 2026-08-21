@@ -10,3 +10,8 @@ out
 # Assets temporales copiados por el pipeline Python para cada render (ver
 # utils/video_renderer.py: _render_remotion_main)
 public/tmp
+
+# Bundle persistente + metadata del servidor de render (ver render_server.mjs
+# y utils/remotion_renderer.py) — se regenera solo, nunca se commitea.
+.render-cache
+.render-server.json

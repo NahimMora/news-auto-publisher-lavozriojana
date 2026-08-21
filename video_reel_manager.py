@@ -31,7 +31,7 @@ load_dotenv()
 from utils.manual_video_queue import enqueue_video, load_video_state, save_video_draft
 from utils.manual_post_queue import save_post_draft, load_post_state
 from utils.logging_setup import setup_logger
-from utils.safe_http import UnsafeURLError, validate_public_http_url
+from utils.safe_http import UnsafeURLError, safe_get, validate_public_http_url
 from utils.upload_validation import InvalidUploadError, validate_upload_content
 from utils.paths import output_dir
 
@@ -60,6 +60,14 @@ _UPLOAD_CONTENT_TYPES = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
     ".webp": "image/webp", ".gif": "image/gif",
     ".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/x-m4v", ".webm": "video/webm",
+}
+_PREMIUM_IMAGE_MAX_BYTES = _UPLOAD_MAX_BYTES["image"]
+_PREMIUM_IMAGE_EXTENSIONS_BY_TYPE = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
 }
 
 # Jobs de publicación de Publicaciones: job_id → {done, web_ok, ig_ok, fb_ok, messages, error, public_url}
@@ -145,6 +153,11 @@ def _owned_upload_path(value: str, *, kind: str) -> str:
     if not parsed.path.startswith(prefix):
         return ""
     filename = parsed.path[len(prefix):]
+    return _owned_upload_name_path(filename, kind=kind)
+
+
+def _owned_upload_name_path(value: str, *, kind: str) -> str:
+    filename = str(value or "").strip()
     extensions = "|".join(
         re.escape(ext.lstrip("."))
         for ext in sorted(_UPLOAD_EXTENSIONS[kind])
@@ -166,6 +179,71 @@ def _validated_optional_url(value: object, *, kind: str | None = None) -> tuple[
     if local:
         return raw, local
     return validate_public_http_url(raw), ""
+
+
+def _download_premium_image(value: object) -> tuple[bytes, str, str]:
+    """Descarga una imagen pública con redirects SSRF-safe y límite de bytes."""
+    normalized_url = validate_public_http_url(value)
+    try:
+        response = safe_get(
+            normalized_url,
+            timeout=(5, 20),
+            stream=True,
+            headers={"User-Agent": "LaVozRiojana-PremiumStudio/1.0"},
+        )
+    except UnsafeURLError:
+        raise
+    except Exception as exc:
+        raise ValueError("No se pudo descargar la imagen") from exc
+
+    try:
+        try:
+            response.raise_for_status()
+        except Exception as exc:
+            raise ValueError("La URL de imagen respondió con error HTTP") from exc
+
+        content_type = str(response.headers.get("Content-Type") or "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        extension = _PREMIUM_IMAGE_EXTENSIONS_BY_TYPE.get(media_type)
+        if not extension:
+            raise ValueError("La URL no devolvió un formato de imagen permitido")
+
+        raw_length = str(response.headers.get("Content-Length") or "").strip()
+        if raw_length:
+            try:
+                declared_length = int(raw_length)
+            except ValueError as exc:
+                raise ValueError("Content-Length inválido en la imagen remota") from exc
+            if declared_length > _PREMIUM_IMAGE_MAX_BYTES:
+                raise ValueError("La imagen remota supera el máximo de 20 MB")
+
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _PREMIUM_IMAGE_MAX_BYTES:
+                raise ValueError("La imagen remota supera el máximo de 20 MB")
+            chunks.append(bytes(chunk))
+        data = b"".join(chunks)
+        if not data:
+            raise ValueError("La imagen remota está vacía")
+        return data, normalized_url, f"premium_link{extension}"
+    finally:
+        response.close()
+
+
+def _premium_asset_payload(asset: dict) -> dict:
+    asset_id = str(asset.get("asset_id") or "")
+    return {
+        "ok": True,
+        "asset_id": asset_id,
+        "resource_id": f"asset:{asset_id}",
+        "thumbnail": f"/api/media-library/thumb/{asset_id}",
+        "titulo": asset.get("titulo"),
+        "origin": asset.get("origin"),
+    }
 
 
 # ── HTML ─────────────────────────────────────────────────────
@@ -263,6 +341,93 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
 .dropzone{border:2px dashed #304050;border-radius:8px;padding:14px 10px;text-align:center;font-size:11px;line-height:1.5;color:#7f8aa0;cursor:pointer;margin-top:8px;transition:border-color .15s,background .15s}
 .dropzone:hover,.dropzone.dragover{border-color:#75aadb;background:rgba(117,170,219,.08)}
 .dropzone strong{color:#c9d2e0;font-size:12px}
+#app_premium{grid-template-columns:minmax(400px,440px) 1fr 300px}
+.premium-help{font-size:11px;color:#7f8aa0;line-height:1.5;margin:0 0 10px}
+.premium-secondary{margin-top:12px;border-top:1px solid #1e2a3a;padding-top:10px}
+.premium-secondary summary{cursor:pointer;color:#9cabc0;font-size:11px;font-weight:800}
+.premium-slide-card textarea{margin-top:8px}
+.premium-asset-card{border-color:#2b384c}
+.premium-asset-summary{display:grid;grid-template-columns:92px 1fr;gap:10px;align-items:center;margin:8px 0 10px}
+.premium-asset-thumb{width:92px;height:72px;object-fit:cover;border-radius:7px;background:#161b24;border:1px solid #273040}
+.premium-asset-placeholder{width:92px;height:72px;border-radius:7px;border:1px dashed #304050;background:#111620;color:#718096;display:flex;align-items:center;justify-content:center;text-align:center;font-size:10px;line-height:1.25;padding:7px}
+.premium-asset-card .asset-current{color:#9fb0c5;word-break:break-word}
+.premium-asset-card .actions{margin-top:0}
+.premium-gallery-backdrop{position:fixed;inset:0;background:rgba(3,5,8,.82);z-index:100;display:flex;align-items:center;justify-content:center;padding:18px}
+.premium-gallery-backdrop.hidden{display:none}
+.premium-gallery-modal{width:min(760px,94vw);max-height:84vh;overflow:hidden;background:#0f1219;border:1px solid #2a3547;border-radius:12px;box-shadow:0 26px 90px rgba(0,0,0,.72);display:flex;flex-direction:column}
+.premium-gallery-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid #1e2a3a}
+.premium-gallery-head b{display:block;font-size:14px;margin-bottom:3px}
+.premium-gallery-head small{color:#7f8aa0;font-size:11px}
+.premium-gallery-close{flex:none;width:34px;height:34px;padding:0;border:1px solid #304050;background:transparent;color:#aab6c8;font-size:18px}
+.premium-gallery-tools{padding:14px 18px 10px;border-bottom:1px solid #1e2a3a}
+.premium-gallery-search{display:grid;grid-template-columns:1fr auto;gap:8px}
+.premium-gallery-search button{flex:none;min-width:92px}
+.premium-gallery-body{padding:14px 18px;overflow-y:auto;min-height:190px}
+.premium-gallery-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.premium-gallery-tile{border:1px solid #263246;border-radius:8px;background:#0b0d14;padding:7px;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
+.premium-gallery-tile:hover{border-color:#75aadb;background:#121a26}
+.premium-gallery-tile.loading{opacity:.58;pointer-events:none}
+.premium-library-thumb{display:block;width:100%;height:112px;object-fit:cover;border-radius:6px;background:#161b24;margin-bottom:7px}
+.premium-thumb-fallback{width:100%;height:112px;border-radius:6px;background:#151b24;color:#7f8aa0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:10px;line-height:1.3;padding:8px;margin-bottom:7px}
+.premium-gallery-tile b{display:block;font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.premium-gallery-tile small{display:block;color:#707d91;font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.premium-gallery-sources{padding:0 18px 16px;border-top:1px solid #1e2a3a}
+.premium-gallery-sources summary{cursor:pointer;color:#9cabc0;font-size:11px;font-weight:800;padding:12px 0 8px}
+.premium-gallery-sources .dropzone{padding:10px;margin-top:8px}
+.premium-gallery-sources .actions{margin-top:7px}
+body.premium-gallery-open{overflow:hidden}
+@media(max-width:720px){.premium-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.premium-gallery-modal{max-height:92vh}}
+
+/* ── Candidatas ── */
+#app_candidates{grid-template-columns:minmax(0,1fr);background:#080a0c}
+#app_candidates main{align-items:stretch;justify-content:flex-start;padding:30px;gap:0}
+.candidates-shell{width:min(1120px,100%);margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.candidates-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:2px 2px 4px}
+.candidates-eyebrow{display:block;color:#e54343;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px}
+.candidates-hero h2{font-size:24px;line-height:1.15;margin:0 0 8px;letter-spacing:-.02em}
+.candidates-hero p{max-width:700px;margin:0;color:#8491a5;font-size:12px;line-height:1.55}
+.candidates-refresh{flex:none;min-width:112px;background:#131a26;border:1px solid #2a3547;color:#b7c2d2}
+.candidates-layout{display:grid;grid-template-columns:minmax(280px,340px) minmax(0,1fr);gap:18px;align-items:start}
+.candidates-panel{min-width:0;border:1px solid #202a39;border-radius:12px;background:#0f1219;box-shadow:0 18px 50px rgba(0,0,0,.18);overflow:hidden}
+.candidates-panel-head{padding:18px 20px 14px;border-bottom:1px solid #1c2533}
+.candidates-panel-head h3{font-size:14px;line-height:1.3;margin:0;color:#e8edf4}
+.candidates-panel-head p{font-size:11px;line-height:1.5;color:#7f8aa0;margin:6px 0 0}
+.candidates-panel-body{padding:18px 20px}
+.candidates-panel .status{margin:0;min-height:0}
+.candidates-action-status{margin:0 0 12px!important;min-height:0!important}
+.candidates-count-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.candidates-count{font-size:10px;font-weight:800;color:#91a0b5;white-space:nowrap}
+.candidates-count.err{color:#fca5a5}
+.candidates-count.warn{color:#f5c56d}
+.candidate-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.candidate-card{min-width:0;border:1px solid #243044;border-radius:10px;background:#0a0d13;padding:15px;display:flex;flex-direction:column;gap:11px}
+.candidate-card-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.candidate-chip{display:inline-flex;align-items:center;max-width:100%;border-radius:999px;padding:4px 8px;background:#182131;color:#aab7ca;font-size:9px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.candidate-chip.reason{background:rgba(179,0,0,.2);color:#ff9a9a}
+.candidate-card h4{font-size:14px;line-height:1.4;margin:0;color:#f2f5f8}
+.candidate-reason{font-size:11px;line-height:1.45;color:#8f9caf;margin:0}
+.candidate-meta{display:flex;flex-direction:column;gap:4px;padding-top:10px;border-top:1px solid #192231;color:#6f7c90;font-size:10px;line-height:1.35}
+.candidate-meta-row{display:flex;gap:6px;min-width:0}
+.candidate-meta-label{color:#99a8bc;font-weight:800;flex:none}
+.candidate-meta-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.candidate-card .actions{margin-top:auto}
+.candidate-card button{min-width:0}
+.candidate-empty{grid-column:1/-1;border:1px dashed #2b3749;border-radius:10px;padding:38px 22px;text-align:center;background:#0a0d13}
+.candidate-empty b{display:block;color:#dbe3ee;font-size:13px;margin-bottom:6px}
+.candidate-empty span{display:block;color:#718096;font-size:11px;line-height:1.5}
+@media(max-width:900px){
+  #app_candidates main{padding:22px}
+  .candidates-layout{grid-template-columns:1fr}
+  .candidates-override{order:2}
+  .candidates-inbox{order:1}
+}
+@media(max-width:640px){
+  #app_candidates main{padding:18px 14px}
+  .candidates-hero{flex-direction:column}
+  .candidates-refresh{width:100%}
+  .candidate-list{grid-template-columns:1fr}
+  .candidates-panel-head,.candidates-panel-body{padding-left:15px;padding-right:15px}
+}
 </style>
 </head>
 <body>
@@ -440,9 +605,10 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
       <h3>Título y texto — lo escribís vos</h3>
     </div>
     <div class="field">
-      <label>Título</label>
-      <input id="custom_titulo" maxlength="240" oninput="updateChars('custom_titulo','ctc_titulo',240)">
-      <div class="char-count" id="ctc_titulo">0/240</div>
+      <label>Título <span style="font-weight:400;color:#5a6378">(máximo 120 caracteres)</span></label>
+      <input id="custom_titulo" maxlength="120" oninput="updateChars('custom_titulo','ctc_titulo',120)">
+      <div class="char-count" id="ctc_titulo">0/120</div>
+      <div class="char-count" style="text-align:left;color:#4a5870">Una frase relevante se destaca automáticamente en azul o rojo según la card.</div>
     </div>
     <div class="field">
       <label>Texto (separá párrafos con una línea en blanco)</label>
@@ -501,19 +667,37 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
 <div class="app hidden" id="app_premium">
 <aside>
   <div class="pipe-block">
-    <div class="block-title"><h3>Importar paquete de ChatGPT</h3></div>
+    <div class="block-title">
+      <div class="step-badge" id="pbadge1">1</div>
+      <h3>Pegá la noticia y generá la estructura</h3>
+    </div>
+    <p class="premium-help">La IA trabaja únicamente con el texto que pegás acá: no busca ni completa información externa.</p>
     <div class="field">
-      <label>Pegar paquete de ChatGPT (JSON)</label>
-      <textarea id="premium_import_text" rows="8" placeholder='{"title": "...", "slides": [...]}'></textarea>
+      <label>Pegá acá el texto actualizado de la noticia</label>
+      <textarea id="premium_raw_article_text" rows="10" placeholder="Título, datos confirmados, contexto y texto completo de la noticia…"></textarea>
     </div>
     <div class="actions">
-      <button class="primary" onclick="importPremiumPackage()">Importar</button>
+      <button class="primary" id="premium_generate_btn" onclick="generatePremiumPackage()">Generar estructura con IA</button>
     </div>
-    <div class="status" id="st_premium_import"></div>
+    <div class="status" id="st_premium_generate"></div>
+    <details class="premium-secondary">
+      <summary>¿Ya tenés el JSON? Pegalo acá</summary>
+      <div class="field" style="margin-top:10px">
+        <label>Paquete JSON manual</label>
+        <textarea id="premium_import_text" rows="7" placeholder='{"title": "...", "slides": [...]}'></textarea>
+      </div>
+      <div class="actions">
+        <button class="secondary" onclick="importPremiumPackage()">Importar JSON</button>
+      </div>
+      <div class="status" id="st_premium_import"></div>
+    </details>
   </div>
 
   <div class="pipe-block">
-    <div class="block-title"><h3>Borrador actual</h3></div>
+    <div class="block-title">
+      <div class="step-badge" id="pbadge2">2</div>
+      <h3>Revisá y editá el borrador</h3>
+    </div>
     <div class="field"><label>Título</label><input id="premium_title"></div>
     <div class="field"><label>Caption (sin link)</label><textarea id="premium_caption" rows="3"></textarea></div>
     <div class="field"><label>Sección</label><input id="premium_section"></div>
@@ -533,31 +717,31 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
       <label><input type="checkbox" id="premium_dest_ig" checked> Instagram</label>
       <label><input type="checkbox" id="premium_dest_fb" checked> Facebook</label>
     </div>
-    <div class="actions">
-      <button class="secondary" onclick="addPremiumSlide('image_text')">+ Slide</button>
-      <button class="primary" onclick="savePremiumDraft()">Guardar borrador</button>
-    </div>
-    <div class="status" id="st_premium_draft"></div>
-  </div>
-
-  <div class="pipe-block">
-    <div class="block-title"><h3>Slides</h3></div>
     <div id="premium_slides_list"></div>
+    <button class="secondary full-btn" onclick="addPremiumSlide('image_text')">+ Agregar slide</button>
   </div>
 
   <div class="pipe-block">
-    <div class="block-title"><h3>Buscar en biblioteca</h3></div>
-    <div class="field"><input id="premium_library_query" placeholder="incendio, Chilecito..."></div>
-    <div class="actions"><button class="secondary" onclick="searchPremiumLibrary()">Buscar</button></div>
-    <div id="premium_library_results"></div>
+    <div class="block-title">
+      <div class="step-badge" id="pbadge3">3</div>
+      <h3>Elegí las imágenes</h3>
+    </div>
+    <p class="premium-help">Sólo aparecen los slides que usan foto. Abrí su galería y elegí una miniatura: se asigna y guarda directamente.</p>
+    <div id="premium_asset_slides_list"></div>
+    <div class="status" id="st_premium_assets"></div>
   </div>
 
   <div class="pipe-block">
-    <div class="block-title"><h3>Publicar</h3></div>
+    <div class="block-title">
+      <div class="step-badge" id="pbadge4">4</div>
+      <h3>Guardá, previsualizá y publicá</h3>
+    </div>
     <div class="actions">
-      <button class="primary" onclick="previewPremium()">Generar preview</button>
+      <button class="secondary" onclick="savePremiumDraft()">Guardar borrador</button>
+      <button class="secondary" onclick="previewPremium()">Previsualizar</button>
       <button class="primary" onclick="publishPremium()">Publicar (IG + FB)</button>
     </div>
+    <div class="status" id="st_premium_draft"></div>
     <div class="status" id="st_premium_publish"></div>
   </div>
 </aside>
@@ -572,25 +756,91 @@ main{display:flex;flex-direction:column;align-items:center;justify-content:cente
 </section>
 </div><!-- #app_premium -->
 
-<div class="app hidden" id="app_candidates">
-<main style="width:100%">
-  <div class="pipe-block" style="max-width:900px;margin:0 auto">
-    <div class="block-title"><h3>Mover noticia por identidad</h3></div>
-    <div class="field">
-      <label>Identidad (meta_queue_key / dedup_key / canonical_url)</label>
-      <input id="override_identity" placeholder="link:abc123...">
+<div class="premium-gallery-backdrop hidden" id="premium_gallery_modal" onclick="closePremiumGallery(event)">
+  <div class="premium-gallery-modal" role="dialog" aria-modal="true" aria-labelledby="premium_gallery_title">
+    <div class="premium-gallery-head">
+      <div>
+        <b id="premium_gallery_title">Galería de imágenes</b>
+        <small id="premium_gallery_target">Elegí una imagen para el slide</small>
+      </div>
+      <button class="premium-gallery-close" type="button" onclick="closePremiumGallery()" aria-label="Cerrar galería">×</button>
     </div>
-    <div class="field"><label>Motivo</label><input id="override_reason" placeholder="Nota nacional sin vínculo riojano comprobado"></div>
-    <div class="actions">
-      <button class="secondary" onclick="demoteAutomaticToCandidate()">Quitar de automático → candidatas</button>
-      <button class="secondary" onclick="addPublishedToCandidates()">Añadir a candidatas premium (ya publicada)</button>
+    <div class="premium-gallery-tools">
+      <div class="premium-gallery-search">
+        <input id="premium_library_query" placeholder="Buscar por título, sección o lugar" onkeydown="if(event.key==='Enter'){event.preventDefault();searchPremiumLibrary()}">
+        <button class="secondary" type="button" onclick="searchPremiumLibrary()">Buscar</button>
+      </div>
+      <div class="status" id="st_premium_gallery"></div>
     </div>
-    <div class="status" id="st_override"></div>
+    <div class="premium-gallery-body">
+      <div class="premium-gallery-grid" id="premium_library_results"></div>
+    </div>
+    <details class="premium-gallery-sources">
+      <summary>Agregar otra imagen</summary>
+      <div class="field">
+        <label>Link directo a una imagen</label>
+        <input id="premium_gallery_url" type="url" placeholder="https://…/imagen.jpg">
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" onclick="assignPremiumGalleryUrl()">Usar este link</button>
+      </div>
+      <div class="dropzone" id="premium_gallery_dropzone">
+        <strong>Subir desde mi computadora</strong><br>Arrastrá una imagen o hacé click para elegirla
+        <input type="file" id="premium_gallery_file" accept="image/*" style="display:none">
+      </div>
+    </details>
   </div>
-  <div class="pipe-block" style="max-width:900px;margin:0 auto">
-    <div class="block-title"><h3>Candidatas de Instagram</h3></div>
-    <div class="status" id="st_candidates"></div>
-    <div id="candidates_list"></div>
+</div>
+
+<div class="app hidden" id="app_candidates">
+<main>
+  <div class="candidates-shell">
+    <section class="candidates-hero">
+      <div>
+        <span class="candidates-eyebrow">Selección editorial</span>
+        <h2>Bandeja de candidatas</h2>
+        <p>Revisá las noticias apartadas del flujo automático de Instagram. “Enviar a automática” es una decisión manual autoritativa: habilita su publicación aunque la categoría no esté en la selección habitual o todavía no tenga URL Web.</p>
+      </div>
+      <button class="candidates-refresh" id="candidates_refresh_btn" type="button" onclick="loadCandidates()">Actualizar</button>
+    </section>
+
+    <div class="candidates-layout">
+      <section class="candidates-panel candidates-override">
+        <div class="candidates-panel-head">
+          <span class="candidates-eyebrow">Gestión manual</span>
+          <h3>Mover una noticia por identidad</h3>
+          <p>Usá esta opción para una automática pendiente o para reutilizar una publicación ya confirmada en una pieza premium.</p>
+        </div>
+        <div class="candidates-panel-body">
+          <div class="field">
+            <label>Identidad (meta_queue_key / dedup_key / canonical_url)</label>
+            <input id="override_identity" placeholder="link:abc123...">
+          </div>
+          <div class="field"><label>Motivo</label><input id="override_reason" placeholder="Nota nacional sin vínculo riojano comprobado"></div>
+          <div class="actions">
+            <button class="secondary" onclick="demoteAutomaticToCandidate()">Quitar de automático</button>
+            <button class="secondary" onclick="addPublishedToCandidates()">Reutilizar publicada</button>
+          </div>
+          <div class="status" id="st_override" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="candidates-panel candidates-inbox">
+        <div class="candidates-panel-head">
+          <div class="candidates-count-row">
+            <div>
+              <span class="candidates-eyebrow">Instagram</span>
+              <h3>Candidatas pendientes</h3>
+            </div>
+            <div class="candidates-count" id="st_candidates" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="candidates-panel-body">
+          <div class="status candidates-action-status" id="st_candidates_action" role="status" aria-live="polite"></div>
+          <div class="candidate-list" id="candidates_list"></div>
+        </div>
+      </section>
+    </div>
   </div>
 </main>
 </div><!-- #app_candidates -->
@@ -961,12 +1211,18 @@ async function fetchImageCustom() {
     const d = await r.json();
     if (!d.ok) {
       setStatus('st_custom_fetch', `✗ ${d.error || 'No se encontró imagen'} — pegá la URL manualmente abajo.`, 'err');
-      if (d.titulo_hint) setVal('custom_titulo', d.titulo_hint);
+      if (d.titulo_hint) {
+        setVal('custom_titulo', d.titulo_hint);
+        updateChars('custom_titulo', 'ctc_titulo', 120);
+      }
       return;
     }
     _customSetThumb(d.imagen_url);
     setVal('custom_imagen_manual', d.imagen_url);
-    if (d.titulo_hint) setVal('custom_titulo', d.titulo_hint);
+    if (d.titulo_hint) {
+      setVal('custom_titulo', d.titulo_hint);
+      updateChars('custom_titulo', 'ctc_titulo', 120);
+    }
     document.getElementById('cbadge1').textContent = '✓';
     document.getElementById('cbadge1').classList.add('done');
     show('cblock_content');
@@ -1102,7 +1358,7 @@ function loadCustomDraft(index) {
   setVal('custom_titulo', it.titulo || '');
   setVal('custom_cuerpo', (it.parrafos || []).join('\n\n'));
   if (it.seccion) setVal('custom_seccion', it.seccion);
-  updateChars('custom_titulo', 'ctc_titulo', 240);
+  updateChars('custom_titulo', 'ctc_titulo', 120);
   _customSetThumb(it.imagen_url || '');
   setVal('custom_imagen_manual', it.imagen_url || '');
   if (it.imagen_url) {
@@ -1143,31 +1399,91 @@ setupDropzone('custom_dropzone', 'custom_file_input', 'image', (d, file) => {
 
 // ══ Estudio Premium (Fase 3) ═══════════════════════════════════
 let _premiumPackage = null;
-let _selectedAssetId = '';
-let _selectedAssetLabel = '';
+let _premiumGallerySlideId = '';
+const PREMIUM_SLIDE_TYPES = ['cover', 'image_text', 'full_image', 'key_points', 'quote', 'number', 'closing', 'context', 'impact'];
+const PREMIUM_IMAGE_SLIDE_TYPES = new Set(['cover', 'image_text', 'full_image']);
+const PREMIUM_SLIDE_LABELS = {
+  cover: 'portada', image_text: 'imagen + texto', full_image: 'foto protagonista',
+  key_points: 'puntos clave', quote: 'cita', number: 'en números', closing: 'cierre',
+  context: 'contexto', impact: 'impacto local / qué sigue',
+};
 
 function _fmtErrList(list) {
   return (list && list.length) ? list.join(' · ') : '';
 }
 
+async function generatePremiumPackage() {
+  const raw_text = val('premium_raw_article_text');
+  if (!raw_text.trim()) {
+    setStatus('st_premium_generate', 'Pegá el texto de la noticia primero.', 'err');
+    return;
+  }
+  const button = document.getElementById('premium_generate_btn');
+  button.disabled = true;
+  setStatus('st_premium_generate', '⏳ Generando la estructura con IA…');
+  try {
+    const r = await fetch('/api/premium/generate', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({raw_text}),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.package) {
+      const detail = d.error || _fmtErrList(d.errors) || 'No se pudo generar la estructura';
+      setStatus('st_premium_generate', `✗ ${detail}`, 'err');
+      return;
+    }
+    _premiumPackage = d.package;
+    setVal('premium_import_text', d.generated_json || '');
+    renderPremiumEditor();
+    const generatedWithErrors = d.errors && d.errors.length;
+    document.getElementById('pbadge1').textContent = generatedWithErrors ? '!' : '✓';
+    document.getElementById('pbadge1').classList.toggle('done', !generatedWithErrors);
+    setStatus(
+      'st_premium_generate',
+      generatedWithErrors
+        ? `✗ La estructura requiere correcciones: ${_fmtErrList(d.errors)}`
+        : d.warnings && d.warnings.length
+        ? `✓ Estructura generada con avisos: ${_fmtErrList(d.warnings)}`
+        : '✓ Estructura generada. Revisala antes de publicar.',
+      generatedWithErrors ? 'err' : (d.warnings && d.warnings.length ? 'warn' : 'ok'),
+    );
+    loadPremiumDraftList();
+  } catch (e) {
+    setStatus('st_premium_generate', `✗ ${e.message}`, 'err');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function importPremiumPackage() {
   const raw_text = val('premium_import_text');
+  if (!raw_text.trim()) {
+    setStatus('st_premium_import', 'Pegá un JSON primero.', 'err');
+    return;
+  }
   try {
     const r = await fetch('/api/premium/import', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({raw_text}),
     });
     const d = await r.json();
-    if (!d.package) {
-      setStatus('st_premium_import', `✗ ${_fmtErrList(d.errors)}`, 'err');
+    if (!r.ok || !d.package) {
+      setStatus('st_premium_import', `✗ ${d.error || _fmtErrList(d.errors) || 'JSON inválido'}`, 'err');
       return;
     }
     _premiumPackage = d.package;
     renderPremiumEditor();
+    const importedWithErrors = d.errors && d.errors.length;
+    document.getElementById('pbadge1').textContent = importedWithErrors ? '!' : '✓';
+    document.getElementById('pbadge1').classList.toggle('done', !importedWithErrors);
     setStatus(
       'st_premium_import',
-      d.warnings && d.warnings.length ? `✓ Importado con avisos: ${_fmtErrList(d.warnings)}` : '✓ Importado',
-      'ok',
+      importedWithErrors
+        ? `✗ El paquete requiere correcciones: ${_fmtErrList(d.errors)}`
+        : d.warnings && d.warnings.length
+        ? `✓ Importado con avisos: ${_fmtErrList(d.warnings)}`
+        : '✓ Importado',
+      importedWithErrors ? 'err' : (d.warnings && d.warnings.length ? 'warn' : 'ok'),
     );
     loadPremiumDraftList();
   } catch (e) {
@@ -1185,30 +1501,199 @@ function renderPremiumEditor() {
   const dest = _premiumPackage.destination || [];
   document.getElementById('premium_dest_ig').checked = dest.includes('instagram');
   document.getElementById('premium_dest_fb').checked = dest.includes('facebook');
+  document.getElementById('pbadge2').textContent = '✓';
+  document.getElementById('pbadge2').classList.add('done');
   renderPremiumSlides();
 }
 
+function _premiumButton(label, handler, className='secondary') {
+  const button = document.createElement('button');
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener('click', handler);
+  return button;
+}
+
+function _premiumSlideAcceptsImage(slide) {
+  return Boolean(slide && PREMIUM_IMAGE_SLIDE_TYPES.has(slide.type));
+}
+
+function _premiumGallerySlide() {
+  return ((_premiumPackage && _premiumPackage.slides) || []).find(
+    slide => slide.id === _premiumGallerySlideId,
+  );
+}
+
+function openPremiumGallery(slideId) {
+  const slide = ((_premiumPackage && _premiumPackage.slides) || []).find(item => item.id === slideId);
+  if (!_premiumSlideAcceptsImage(slide)) return;
+  _premiumGallerySlideId = slide.id;
+  document.getElementById('premium_gallery_target').textContent =
+    `Slide #${_premiumPackage.slides.indexOf(slide) + 1} · ${slide.type}`;
+  setVal('premium_library_query', slide.asset_hint || slide.title || val('premium_section') || '');
+  setVal('premium_gallery_url', '');
+  document.getElementById('premium_library_results').textContent = '';
+  document.getElementById('premium_gallery_modal').classList.remove('hidden');
+  document.body.classList.add('premium-gallery-open');
+  setStatus('st_premium_gallery', 'Cargando imágenes…');
+  searchPremiumLibrary();
+}
+
+function closePremiumGallery(event) {
+  const modal = document.getElementById('premium_gallery_modal');
+  if (event && event.target !== modal) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('premium-gallery-open');
+  _premiumGallerySlideId = '';
+}
+
+async function _assignPremiumAsset(slide, payload, label) {
+  if (!_premiumSlideAcceptsImage(slide) || !payload || !payload.asset_id) {
+    setStatus('st_premium_gallery', 'No se pudo asignar la imagen a este tipo de slide.', 'err');
+    return false;
+  }
+  slide.asset_id = payload.asset_id;
+  slide.asset_label = label || payload.titulo || payload.asset_id;
+  renderPremiumSlides();
+  const saved = await savePremiumDraft({quiet: true});
+  if (!saved) return false;
+  document.getElementById('pbadge3').textContent = '✓';
+  document.getElementById('pbadge3').classList.add('done');
+  setStatus('st_premium_assets', `✓ Imagen aplicada y guardada en el slide: ${slide.asset_label}`, 'ok');
+  closePremiumGallery();
+  return true;
+}
+
+async function assignPremiumAssetFromUrl(slide, imageUrl) {
+  if (!imageUrl.trim()) {
+    setStatus('st_premium_gallery', 'Pegá un link de imagen primero.', 'err');
+    return;
+  }
+  setStatus('st_premium_gallery', '⏳ Descargando y validando la imagen…');
+  try {
+    const r = await fetch('/api/premium/asset-from-url', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        url: imageUrl,
+        titulo: val('premium_title'),
+        seccion: val('premium_section'),
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.asset_id) throw new Error(d.error || 'No se pudo ingresar la imagen');
+    await _assignPremiumAsset(slide, d, d.titulo || 'link externo');
+  } catch (e) {
+    setStatus('st_premium_gallery', `✗ ${e.message}`, 'err');
+  }
+}
+
+async function uploadPremiumSlideAsset(slide, file) {
+  if (!file) return;
+  setStatus('st_premium_gallery', `⏳ Subiendo ${file.name}…`);
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('kind', 'image');
+    const uploadResponse = await fetch('/api/upload', {method: 'POST', body: form});
+    const upload = await uploadResponse.json();
+    if (!uploadResponse.ok || !upload.ok) {
+      throw new Error(upload.error || 'No se pudo subir la imagen');
+    }
+    const promoteResponse = await fetch('/api/premium/asset-from-upload', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        stored_name: upload.stored_name,
+        upload_url: upload.url,
+        titulo: val('premium_title'),
+        seccion: val('premium_section'),
+      }),
+    });
+    const promoted = await promoteResponse.json();
+    if (!promoteResponse.ok || !promoted.asset_id) {
+      throw new Error(promoted.error || 'No se pudo agregar la imagen a mi galería');
+    }
+    await _assignPremiumAsset(slide, promoted, file.name);
+  } catch (e) {
+    setStatus('st_premium_gallery', `✗ ${e.message}`, 'err');
+  }
+}
+
+function assignPremiumGalleryUrl() {
+  const slide = _premiumGallerySlide();
+  if (!slide) return;
+  assignPremiumAssetFromUrl(slide, val('premium_gallery_url'));
+}
+
+function uploadPremiumGalleryFile(file) {
+  const slide = _premiumGallerySlide();
+  if (!slide || !file) return;
+  uploadPremiumSlideAsset(slide, file);
+}
+
+function _setupPremiumGalleryDropzone() {
+  const zone = document.getElementById('premium_gallery_dropzone');
+  const input = document.getElementById('premium_gallery_file');
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    uploadPremiumGalleryFile(input.files[0]);
+    input.value = '';
+  });
+  zone.addEventListener('dragover', event => {
+    event.preventDefault();
+    zone.classList.add('dragover');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', event => {
+    event.preventDefault();
+    zone.classList.remove('dragover');
+    uploadPremiumGalleryFile(event.dataTransfer.files[0]);
+  });
+}
+
 function renderPremiumSlides() {
-  const list = document.getElementById('premium_slides_list');
-  list.textContent = '';
+  const editorList = document.getElementById('premium_slides_list');
+  const assetList = document.getElementById('premium_asset_slides_list');
+  editorList.textContent = '';
+  assetList.textContent = '';
   const slides = (_premiumPackage && _premiumPackage.slides) || [];
   slides.forEach((slide, index) => {
     const row = document.createElement('div');
-    row.className = 'item';
+    row.className = 'item premium-slide-card';
 
     const header = document.createElement('b');
-    header.textContent = `#${index + 1} — ${slide.type}`;
+    header.textContent = `#${index + 1} — ${PREMIUM_SLIDE_LABELS[slide.type] || slide.type}`;
     row.appendChild(header);
 
     const typeSelect = document.createElement('select');
-    ['cover', 'image_text', 'full_image', 'key_points', 'quote', 'number', 'closing'].forEach(t => {
+    const usedTypes = new Set(slides.filter(other => other.id !== slide.id).map(other => other.type));
+    PREMIUM_SLIDE_TYPES.forEach(t => {
       const opt = document.createElement('option');
-      opt.value = t; opt.textContent = t;
+      opt.value = t; opt.textContent = PREMIUM_SLIDE_LABELS[t] || t;
       if (t === slide.type) opt.selected = true;
+      if (t !== slide.type && usedTypes.has(t)) opt.disabled = true;
       typeSelect.appendChild(opt);
     });
-    typeSelect.addEventListener('change', () => { slide.type = typeSelect.value; renderPremiumSlides(); });
+    typeSelect.addEventListener('change', () => {
+      const nextType = typeSelect.value;
+      if (slides.some(other => other.id !== slide.id && other.type === nextType)) {
+        alert(`El tipo ${nextType} ya está usado en otro slide.`);
+        typeSelect.value = slide.type;
+        return;
+      }
+      slide.type = nextType;
+      if (!_premiumSlideAcceptsImage(slide)) {
+        slide.asset_id = '';
+        delete slide.asset_label;
+      }
+      renderPremiumSlides();
+    });
     row.appendChild(typeSelect);
+
+    const titleInput = document.createElement('input');
+    titleInput.value = slide.title || '';
+    titleInput.placeholder = 'Título opcional del slide';
+    titleInput.addEventListener('input', () => { slide.title = titleInput.value; });
+    row.appendChild(titleInput);
 
     const textArea = document.createElement('textarea');
     textArea.rows = 2;
@@ -1217,31 +1702,87 @@ function renderPremiumSlides() {
     textArea.addEventListener('input', () => { slide.text = textArea.value; });
     row.appendChild(textArea);
 
-    const assetLabel = document.createElement('small');
-    assetLabel.textContent = slide.asset_id ? `Imagen asignada: ${slide.asset_id}` : 'Sin imagen asignada';
-    row.appendChild(assetLabel);
+    const itemsArea = document.createElement('textarea');
+    itemsArea.rows = 2;
+    itemsArea.value = (slide.items || []).join('\n');
+    itemsArea.placeholder = 'Ítems, uno por línea (opcional)';
+    itemsArea.addEventListener('input', () => {
+      slide.items = itemsArea.value.split('\n').map(item => item.trim()).filter(Boolean);
+    });
+    row.appendChild(itemsArea);
+
+    const highlightsInput = document.createElement('input');
+    highlightsInput.value = (slide.highlights || []).join(', ');
+    highlightsInput.placeholder = 'Palabras destacadas, separadas por coma';
+    highlightsInput.addEventListener('input', () => {
+      slide.highlights = highlightsInput.value.split(',').map(item => item.trim()).filter(Boolean);
+    });
+    row.appendChild(highlightsInput);
 
     const btnRow = document.createElement('div');
     btnRow.className = 'actions';
-    const mkBtn = (label, handler) => {
-      const b = document.createElement('button');
-      b.className = 'secondary';
-      b.textContent = label;
-      b.addEventListener('click', handler);
-      return b;
-    };
-    btnRow.appendChild(mkBtn('↑', () => { moveSlide(slide.id, -1); }));
-    btnRow.appendChild(mkBtn('↓', () => { moveSlide(slide.id, 1); }));
-    btnRow.appendChild(mkBtn('Duplicar', () => { duplicateSlideUI(slide.id); }));
-    btnRow.appendChild(mkBtn('Eliminar', () => { removeSlideUI(slide.id); }));
-    btnRow.appendChild(mkBtn('Asignar imagen seleccionada', () => {
-      if (!_selectedAssetId) { alert('Primero elegí una imagen en "Buscar en biblioteca"'); return; }
-      slide.asset_id = _selectedAssetId;
-      renderPremiumSlides();
-    }));
+    btnRow.appendChild(_premiumButton('↑', () => { moveSlide(slide.id, -1); }));
+    btnRow.appendChild(_premiumButton('↓', () => { moveSlide(slide.id, 1); }));
+    btnRow.appendChild(_premiumButton('Eliminar', () => { removeSlideUI(slide.id); }));
     row.appendChild(btnRow);
+    editorList.appendChild(row);
 
-    list.appendChild(row);
+    // Sólo cover, image_text y full_image usan fotografía. El resto de los
+    // tipos no muestra controles de imagen ni conserva una asignación vieja.
+    if (!_premiumSlideAcceptsImage(slide)) return;
+
+    const assetCard = document.createElement('div');
+    assetCard.className = 'item premium-asset-card';
+
+    const assetHeader = document.createElement('b');
+    assetHeader.textContent = `#${index + 1} — ${slide.type}`;
+    assetCard.appendChild(assetHeader);
+
+    const summary = document.createElement('div');
+    summary.className = 'premium-asset-summary';
+    if (slide.asset_id) {
+      const preview = document.createElement('img');
+      preview.className = 'premium-asset-thumb';
+      preview.src = `/api/media-library/thumb/${encodeURIComponent(slide.asset_id)}`;
+      preview.alt = `Imagen del slide ${index + 1}`;
+      preview.addEventListener('error', () => {
+        const fallback = document.createElement('div');
+        fallback.className = 'premium-asset-placeholder';
+        fallback.textContent = 'Miniatura no disponible';
+        preview.replaceWith(fallback);
+      });
+      summary.appendChild(preview);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'premium-asset-placeholder';
+      placeholder.textContent = 'Sin imagen';
+      summary.appendChild(placeholder);
+    }
+
+    const assetLabel = document.createElement('small');
+    assetLabel.className = 'asset-current';
+    assetLabel.textContent = slide.asset_id
+      ? `Imagen asignada: ${slide.asset_label || slide.asset_id}`
+      : 'Elegí una imagen para completar este slide.';
+    summary.appendChild(assetLabel);
+    assetCard.appendChild(summary);
+
+    const assetActions = document.createElement('div');
+    assetActions.className = 'actions';
+    assetActions.appendChild(
+      _premiumButton(slide.asset_id ? 'Cambiar imagen' : 'Abrir galería', () => openPremiumGallery(slide.id)),
+    );
+    if (slide.asset_id) {
+      assetActions.appendChild(_premiumButton('Quitar', async () => {
+        slide.asset_id = '';
+        delete slide.asset_label;
+        renderPremiumSlides();
+        await savePremiumDraft({quiet: true});
+        setStatus('st_premium_assets', `Imagen quitada del slide #${index + 1}.`, 'ok');
+      }, 'ghost'));
+    }
+    assetCard.appendChild(assetActions);
+    assetList.appendChild(assetCard);
   });
 }
 
@@ -1256,8 +1797,15 @@ function _ensurePackage() {
   }
 }
 
-function addPremiumSlide(type) {
+function addPremiumSlide(preferredType) {
   _ensurePackage();
+  const usedTypes = new Set((_premiumPackage.slides || []).map(slide => slide.type));
+  const availableTypes = PREMIUM_SLIDE_TYPES.filter(type => !usedTypes.has(type));
+  if (!availableTypes.length) {
+    alert('Ya usaste todos los tipos de slide disponibles.');
+    return;
+  }
+  const type = availableTypes.includes(preferredType) ? preferredType : availableTypes[0];
   _premiumPackage.slides.push({
     id: 'tmp_' + Math.random().toString(16).slice(2),
     type, text: '', title: '', items: [], highlights: [], asset_id: '', source_ids: [],
@@ -1275,12 +1823,7 @@ function moveSlide(id, dir) {
 }
 
 function duplicateSlideUI(id) {
-  const slides = _premiumPackage.slides;
-  const i = slides.findIndex(s => s.id === id);
-  if (i < 0) return;
-  const clone = Object.assign({}, slides[i], {id: 'tmp_' + Math.random().toString(16).slice(2)});
-  slides.splice(i + 1, 0, clone);
-  renderPremiumSlides();
+  alert('No se puede duplicar un slide: cada tipo puede aparecer una sola vez.');
 }
 
 function removeSlideUI(id) {
@@ -1289,7 +1832,7 @@ function removeSlideUI(id) {
   renderPremiumSlides();
 }
 
-async function savePremiumDraft() {
+function _syncPremiumPackageFromEditor() {
   _ensurePackage();
   _premiumPackage.title = val('premium_title');
   _premiumPackage.caption = val('premium_caption');
@@ -1300,6 +1843,16 @@ async function savePremiumDraft() {
     document.getElementById('premium_dest_ig').checked ? 'instagram' : null,
     document.getElementById('premium_dest_fb').checked ? 'facebook' : null,
   ].filter(Boolean);
+  (_premiumPackage.slides || []).forEach(slide => {
+    if (!_premiumSlideAcceptsImage(slide)) {
+      slide.asset_id = '';
+      delete slide.asset_label;
+    }
+  });
+}
+
+async function savePremiumDraft({quiet = false} = {}) {
+  _syncPremiumPackageFromEditor();
 
   try {
     const r = await fetch('/api/premium/draft', {
@@ -1307,26 +1860,40 @@ async function savePremiumDraft() {
       body: JSON.stringify({package: _premiumPackage}),
     });
     const d = await r.json();
+    if (!r.ok || !d.package) {
+      throw new Error(d.error || _fmtErrList(d.errors) || 'No se pudo guardar el borrador');
+    }
     _premiumPackage = d.package;
-    setStatus(
-      'st_premium_draft',
-      d.errors && d.errors.length ? `✗ ${_fmtErrList(d.errors)}` : '✓ Borrador guardado',
-      d.errors && d.errors.length ? 'err' : 'ok',
-    );
+    const saved = !(d.errors && d.errors.length);
+    document.getElementById('pbadge4').classList.toggle('done', saved);
+    if (!quiet) {
+      setStatus(
+        'st_premium_draft',
+        d.errors && d.errors.length ? `✗ ${_fmtErrList(d.errors)}` : '✓ Borrador guardado',
+        d.errors && d.errors.length ? 'err' : 'ok',
+      );
+    }
     loadPremiumDraftList();
+    return true;
   } catch (e) {
     setStatus('st_premium_draft', `✗ ${e.message}`, 'err');
+    return false;
   }
 }
 
 async function previewPremium() {
   if (!_premiumPackage || !_premiumPackage.id) { alert('Guardá el borrador primero'); return; }
   try {
+    const saved = await savePremiumDraft({quiet: true});
+    if (!saved) throw new Error('No se pudo sincronizar el borrador antes del preview');
     const r = await fetch('/api/premium/preview', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({id: _premiumPackage.id}),
     });
     const d = await r.json();
+    if (!r.ok) {
+      throw new Error(d.error || _fmtErrList(d.errors) || 'No se pudo generar el preview');
+    }
     const grid = document.getElementById('premium_preview_grid');
     grid.textContent = '';
     (d.images || []).forEach(b64 => {
@@ -1346,6 +1913,8 @@ async function publishPremium() {
   if (!_premiumPackage || !_premiumPackage.id) { alert('Guardá el borrador primero'); return; }
   setStatus('st_premium_publish', 'Publicando…', '');
   try {
+    const saved = await savePremiumDraft({quiet: true});
+    if (!saved) throw new Error('No se pudo sincronizar el borrador antes de publicar');
     const r = await fetch('/api/premium/publish', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({id: _premiumPackage.id}),
@@ -1358,6 +1927,28 @@ async function publishPremium() {
   }
 }
 
+function _premiumChannelSummary(channel, result) {
+  if (result && result.ok) return `${channel}: OK`;
+  const errorType = (result && result.error_type) || 'fallo';
+  const metadata = (result && result.failure_metadata) || {};
+  const providerCode = metadata.provider_code || '';
+  const providerSubcode = metadata.provider_subcode || '';
+  const httpStatus = metadata.http_status || (result && result.error_code) || '';
+  const code = providerCode
+    ? `Meta ${providerCode}${providerSubcode ? '/' + providerSubcode : ''}`
+    : (httpStatus ? `HTTP ${httpStatus}` : '');
+  const stageLabels = {
+    carousel_child_create: 'creación de placa',
+    carousel_child_processing: 'procesamiento de placa',
+    carousel_parent_create: 'armado del carrusel',
+    carousel_parent_processing: 'procesamiento del carrusel',
+    carousel_publish: 'publicación final',
+  };
+  const stage = stageLabels[metadata.stage] || '';
+  const detail = [code, stage].filter(Boolean).join(' · ');
+  return `${channel}: ${errorType}${detail ? ' (' + detail + ')' : ''}`;
+}
+
 async function pollPremiumJob(jobId) {
   try {
     const r = await fetch(`/api/premium/publish-status/${jobId}`);
@@ -1365,7 +1956,7 @@ async function pollPremiumJob(jobId) {
     if (!job.done) { setTimeout(() => pollPremiumJob(jobId), 1500); return; }
     if (job.error) { setStatus('st_premium_publish', `✗ ${job.error}`, 'err'); return; }
     const results = (job.result && job.result.channel_results) || {};
-    const parts = Object.entries(results).map(([ch, res]) => `${ch}: ${res.ok ? 'OK' : (res.error_type || 'fallo')}`);
+    const parts = Object.entries(results).map(([ch, res]) => _premiumChannelSummary(ch, res));
     setStatus('st_premium_publish', `Estado: ${job.status} — ${parts.join(' · ')}`, job.status === 'published' ? 'ok' : 'warn');
     loadPremiumDraftList();
   } catch (e) {
@@ -1375,33 +1966,86 @@ async function pollPremiumJob(jobId) {
 
 async function searchPremiumLibrary() {
   const query = val('premium_library_query');
+  setStatus('st_premium_gallery', '⏳ Buscando en la biblioteca…');
   try {
     const r = await fetch(`/api/media-library?query=${encodeURIComponent(query)}`);
     const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'No se pudo buscar en la biblioteca');
     const container = document.getElementById('premium_library_results');
     container.textContent = '';
-    (d.rows || []).slice(0, 20).forEach(row => {
-      const item = document.createElement('div');
-      item.className = 'item';
+    const rows = (d.rows || []).filter(row =>
+      row.thumbnail && (row.asset_id || /^https?:\/\//i.test(String(row.thumbnail))),
+    ).slice(0, 12);
+    rows.forEach(row => {
+      const tile = document.createElement('div');
+      tile.className = 'premium-gallery-tile';
+      tile.tabIndex = 0;
+      tile.setAttribute('role', 'button');
+      const thumbnail = document.createElement('img');
+      thumbnail.className = 'premium-library-thumb';
+      thumbnail.src = row.thumbnail;
+      thumbnail.alt = row.titulo || 'Imagen de la biblioteca';
+      thumbnail.addEventListener('error', () => {
+        const fallback = document.createElement('div');
+        fallback.className = 'premium-thumb-fallback';
+        fallback.textContent = 'No se pudo cargar esta miniatura';
+        thumbnail.replaceWith(fallback);
+      });
+      tile.appendChild(thumbnail);
       const title = document.createElement('b');
       title.textContent = row.titulo || '(sin título)';
-      item.appendChild(title);
+      tile.appendChild(title);
       const meta = document.createElement('small');
       meta.textContent = `${row.resource_type} · ${row.estado || ''} · usado ${row.used_count || 0}x`;
-      item.appendChild(meta);
-      const btn = document.createElement('button');
-      btn.className = 'secondary';
-      btn.textContent = 'Usar esta imagen';
-      btn.addEventListener('click', () => {
-        _selectedAssetId = row.asset_id || row.resource_id || '';
-        _selectedAssetLabel = row.titulo || _selectedAssetId;
-        alert(`Imagen seleccionada: ${_selectedAssetLabel}. Ahora tocá "Asignar imagen seleccionada" en la slide deseada.`);
+      tile.appendChild(meta);
+      const selectRow = async () => {
+        if (tile.classList.contains('loading')) return;
+        const slide = _premiumGallerySlide();
+        if (!slide) return;
+        tile.classList.add('loading');
+        setStatus('st_premium_gallery', '⏳ Aplicando imagen…');
+        try {
+          let selected = row;
+          if (!row.asset_id) {
+            const ingestResponse = await fetch('/api/premium/asset-from-url', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                url: row.thumbnail,
+                titulo: row.titulo,
+                seccion: row.seccion,
+              }),
+            });
+            selected = await ingestResponse.json();
+            if (!ingestResponse.ok || !selected.asset_id) {
+              throw new Error(selected.error || 'No se pudo agregar la imagen');
+            }
+          }
+          await _assignPremiumAsset(
+            slide,
+            selected,
+            row.titulo || selected.titulo || selected.asset_id,
+          );
+        } catch (e) {
+          tile.classList.remove('loading');
+          setStatus('st_premium_gallery', `✗ ${e.message}`, 'err');
+        }
+      };
+      tile.addEventListener('click', selectRow);
+      tile.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectRow();
+        }
       });
-      item.appendChild(btn);
-      container.appendChild(item);
+      container.appendChild(tile);
     });
+    setStatus(
+      'st_premium_gallery',
+      rows.length ? `${rows.length} imagen(es). Hacé click para aplicarla.` : 'No se encontraron imágenes con miniatura.',
+      rows.length ? '' : 'warn',
+    );
   } catch (e) {
-    // sin resultado visible: no rompe la UI
+    setStatus('st_premium_gallery', `✗ ${e.message}`, 'err');
   }
 }
 
@@ -1432,40 +2076,158 @@ async function loadPremiumDraftList() {
   }
 }
 
+_setupPremiumGalleryDropzone();
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !document.getElementById('premium_gallery_modal').classList.contains('hidden')) {
+    closePremiumGallery();
+  }
+});
+
 // ══ Candidatas ═══════════════════════════════════════════════
+function setCandidatesStatus(message, type='') {
+  const status = document.getElementById('st_candidates');
+  if (!status) return;
+  status.textContent = message;
+  status.className = 'candidates-count' + (type ? ' ' + type : '');
+}
+
+function candidateReasonLabel(reason) {
+  const value = String(reason || '').toLowerCase();
+  if (value.includes('gate:no_riojan_link')) return 'Sin vínculo riojano';
+  if (value.includes('topic_cap_exceeded')) return 'Límite del tema';
+  if (value.includes('operator')) return 'Decisión manual';
+  return 'Criterio editorial';
+}
+
+function candidateOriginLabel(origin) {
+  const labels = {
+    routed: 'Router editorial',
+    operator_demotion: 'Movida manualmente',
+    published_reuse: 'Publicación reutilizada',
+  };
+  return labels[origin] || 'Candidata';
+}
+
+function candidateDateLabel(candidate) {
+  const timestamp = Number(candidate.updated_at_ts || candidate.created_at_ts || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+  try {
+    return new Intl.DateTimeFormat('es-AR', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(new Date(timestamp * 1000));
+  } catch (_) {
+    return '';
+  }
+}
+
+function appendCandidateMeta(container, label, value) {
+  if (!value) return;
+  const row = document.createElement('div');
+  row.className = 'candidate-meta-row';
+  const key = document.createElement('span');
+  key.className = 'candidate-meta-label';
+  key.textContent = label;
+  const detail = document.createElement('span');
+  detail.className = 'candidate-meta-value';
+  detail.textContent = String(value);
+  detail.title = String(value);
+  row.appendChild(key);
+  row.appendChild(detail);
+  container.appendChild(row);
+}
+
+function renderCandidateEmpty(
+  container,
+  titleText='No hay candidatas pendientes',
+  detailText='Las noticias que el router o el operador aparten de Instagram van a aparecer acá.',
+) {
+  const empty = document.createElement('div');
+  empty.className = 'candidate-empty';
+  const title = document.createElement('b');
+  title.textContent = titleText;
+  const detail = document.createElement('span');
+  detail.textContent = detailText;
+  empty.appendChild(title);
+  empty.appendChild(detail);
+  container.appendChild(empty);
+}
+
 async function loadCandidates() {
+  const container = document.getElementById('candidates_list');
+  const refresh = document.getElementById('candidates_refresh_btn');
+  container.replaceChildren();
+  setCandidatesStatus('Cargando…');
+  if (refresh) refresh.disabled = true;
   try {
     const r = await fetch('/api/editorial/candidates?status=candidate');
     const d = await r.json();
-    const container = document.getElementById('candidates_list');
-    container.textContent = '';
-    (d.candidates || []).forEach(c => {
-      const item = document.createElement('div');
-      item.className = 'item';
-      const title = document.createElement('b');
+    if (!r.ok) throw new Error(d.error || 'No se pudieron cargar las candidatas');
+    const candidates = Array.isArray(d.candidates) ? d.candidates.slice() : [];
+    candidates.sort((a, b) =>
+      Number(b.updated_at_ts || b.created_at_ts || 0) - Number(a.updated_at_ts || a.created_at_ts || 0)
+    );
+
+    if (!candidates.length) renderCandidateEmpty(container);
+
+    candidates.forEach(c => {
+      const item = document.createElement('article');
+      item.className = 'candidate-card';
+
+      const head = document.createElement('div');
+      head.className = 'candidate-card-head';
+      const section = document.createElement('span');
+      section.className = 'candidate-chip';
+      section.textContent = c.seccion || 'sin sección';
+      const reasonChip = document.createElement('span');
+      reasonChip.className = 'candidate-chip reason';
+      reasonChip.textContent = candidateReasonLabel(c.route_reason);
+      head.appendChild(section);
+      head.appendChild(reasonChip);
+      item.appendChild(head);
+
+      const title = document.createElement('h4');
       title.textContent = c.titulo || '(sin título)';
       item.appendChild(title);
-      const meta = document.createElement('small');
-      meta.textContent = `${c.seccion || ''} · ${c.topic_key || ''} · ${c.route_reason || ''}`;
+
+      const reason = document.createElement('p');
+      reason.className = 'candidate-reason';
+      reason.textContent = c.route_reason || 'Sin motivo registrado';
+      item.appendChild(reason);
+
+      const meta = document.createElement('div');
+      meta.className = 'candidate-meta';
+      appendCandidateMeta(meta, 'Origen:', candidateOriginLabel(c.origin));
+      appendCandidateMeta(meta, 'Fecha:', candidateDateLabel(c));
+      appendCandidateMeta(meta, 'Tema:', c.topic_key);
+      appendCandidateMeta(meta, 'Identidad:', c.identity);
       item.appendChild(meta);
+
       const btnRow = document.createElement('div');
       btnRow.className = 'actions';
       const promote = document.createElement('button');
       promote.className = 'primary';
-      promote.textContent = 'Promover a automática';
-      promote.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'automatic'));
+      promote.textContent = c.origin === 'published_reuse' ? 'Quitar de candidatas' : 'Enviar a automática';
+      promote.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'automatic', promote));
       const discard = document.createElement('button');
       discard.className = 'secondary';
       discard.textContent = 'Descartar';
-      discard.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'discarded'));
+      discard.addEventListener('click', () => setCandidateStatus(c.candidate_id, 'discarded', discard));
       btnRow.appendChild(promote);
       btnRow.appendChild(discard);
       item.appendChild(btnRow);
       container.appendChild(item);
     });
-    setStatus('st_candidates', `${(d.candidates || []).length} candidatas`, '');
+    setCandidatesStatus(`${candidates.length} ${candidates.length === 1 ? 'pendiente' : 'pendientes'}`);
   } catch (e) {
-    setStatus('st_candidates', `✗ ${e.message}`, 'err');
+    setCandidatesStatus(`✗ ${e.message}`, 'err');
+    renderCandidateEmpty(
+      container,
+      'No se pudo cargar la bandeja',
+      'Revisá el estado local e intentá actualizar nuevamente.',
+    );
+  } finally {
+    if (refresh) refresh.disabled = false;
   }
 }
 
@@ -1505,17 +2267,32 @@ async function addPublishedToCandidates() {
   }
 }
 
-async function setCandidateStatus(candidateId, status) {
+async function setCandidateStatus(candidateId, status, button=null) {
+  if (status === 'automatic' && !window.confirm(
+    'Esta noticia quedará habilitada para publicarse automáticamente en Instagram, aunque su categoría no esté en la selección habitual o todavía no tenga URL Web. ¿Continuar?'
+  )) return;
+  if (button) button.disabled = true;
+  setCandidatesStatus('Actualizando…');
+  setStatus('st_candidates_action', '⏳ Guardando la decisión editorial…');
   try {
     const r = await fetch('/api/editorial/candidates/status', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({candidate_id: candidateId, status}),
     });
     const d = await r.json();
-    if (!d.ok) { setStatus('st_candidates', `✗ ${d.error || 'error'}`, 'err'); return; }
-    loadCandidates();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar la candidata');
+    await loadCandidates();
+    setStatus(
+      'st_candidates_action',
+      status === 'automatic'
+        ? '✓ Habilitada para publicación automática. Entrará en la cola de Instagram en el próximo ciclo.'
+        : '✓ Candidata descartada por decisión editorial.',
+      'ok',
+    );
   } catch (e) {
-    setStatus('st_candidates', `✗ ${e.message}`, 'err');
+    setCandidatesStatus(`✗ ${e.message}`, 'err');
+    setStatus('st_candidates_action', `✗ ${e.message}`, 'err');
+    if (button) button.disabled = false;
   }
 }
 </script>
@@ -1798,6 +2575,25 @@ class VideoReelHandler(BaseHTTPRequestHandler):
             self._json(200, {"rows": rows})
             return
 
+        if path.startswith("/api/media-library/thumb/"):
+            from utils.media_library import get_asset_thumbnail_path
+
+            asset_id = _safe_object_id(path[len("/api/media-library/thumb/"):])
+            if not asset_id:
+                self._json(400, {"error": "asset_id inválido"})
+                return
+            thumbnail_path = get_asset_thumbnail_path(asset_id)
+            if not thumbnail_path:
+                self._json(404, {"error": "miniatura no encontrada"})
+                return
+            try:
+                with open(thumbnail_path, "rb") as thumbnail_file:
+                    data = thumbnail_file.read()
+                self._send(200, data, "image/jpeg")
+            except OSError:
+                self._json(404, {"error": "miniatura no encontrada"})
+            return
+
         # Servir video renderizado: /api/preview/{video_id}.mp4
         if path.startswith("/api/preview/") and path.endswith(".mp4"):
             video_id = _safe_object_id(path[len("/api/preview/"):-4])
@@ -1954,7 +2750,15 @@ class VideoReelHandler(BaseHTTPRequestHandler):
         server_host, server_port = self.server.server_address[:2]
         public_host = f"[{server_host}]" if ":" in server_host else server_host
         url = f"http://{public_host}:{server_port}/api/uploads/{stored_name}"
-        self._json(200, {"ok": True, "url": url, "filename": filename})
+        self._json(
+            200,
+            {
+                "ok": True,
+                "url": url,
+                "filename": filename,
+                "stored_name": stored_name,
+            },
+        )
 
     def do_POST(self) -> None:
         try:
@@ -2175,6 +2979,112 @@ class VideoReelHandler(BaseHTTPRequestHandler):
                 return
 
             # ── Estudio Premium (Fase 3) ────────────────────────
+            if path == "/api/premium/generate":
+                from openIA.premium_package_generator import (
+                    PremiumGenerationError,
+                    generate_premium_package_json,
+                    validate_generated_payload,
+                )
+                from utils.premium_importer import import_chatgpt_package
+                from utils.premium_post_queue import save_package
+
+                raw_text = str(payload.get("raw_text") or "")
+                if not raw_text.strip():
+                    self._json(400, {"error": "raw_text requerido"})
+                    return
+                try:
+                    generated_json = generate_premium_package_json(raw_text)
+                except PremiumGenerationError as exc:
+                    self._json(422, {"error": str(exc)})
+                    return
+                editorial_warnings = validate_generated_payload(
+                    json.loads(generated_json),
+                    raw_text,
+                )
+                package, errors, warnings = import_chatgpt_package(generated_json)
+                warnings = list(warnings or []) + [
+                    f"generación IA: {warning}" for warning in editorial_warnings
+                ]
+                if package is not None:
+                    package = save_package(package)
+                self._json(
+                    200,
+                    {
+                        "package": package,
+                        "errors": errors,
+                        "warnings": warnings,
+                        "generated_json": generated_json,
+                    },
+                )
+                return
+
+            if path == "/api/premium/asset-from-url":
+                from utils.media_library import ingest_image_bytes
+
+                image_url = str(payload.get("url") or "").strip()
+                if not image_url:
+                    self._json(400, {"error": "url requerida"})
+                    return
+                try:
+                    image_bytes, normalized_url, filename = _download_premium_image(image_url)
+                except UnsafeURLError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._json(422, {"error": str(exc)})
+                    return
+                try:
+                    asset = ingest_image_bytes(
+                        image_bytes,
+                        filename=filename,
+                        origin="premium_link",
+                        source_url=normalized_url,
+                        titulo=str(payload.get("titulo") or "").strip() or None,
+                        seccion=str(payload.get("seccion") or "").strip() or None,
+                        source="manual_premium",
+                    )
+                except ValueError as exc:
+                    self._json(422, {"error": str(exc)})
+                    return
+                self._json(200, _premium_asset_payload(asset))
+                return
+
+            if path == "/api/premium/asset-from-upload":
+                from utils.media_library import ingest_image_bytes
+
+                stored_name = str(payload.get("stored_name") or "").strip()
+                upload_path = _owned_upload_name_path(stored_name, kind="image")
+                if not upload_path:
+                    upload_path = _owned_upload_path(
+                        str(payload.get("upload_url") or ""),
+                        kind="image",
+                    )
+                if not upload_path:
+                    self._json(400, {"error": "archivo subido inválido o inexistente"})
+                    return
+                try:
+                    if os.path.getsize(upload_path) > _PREMIUM_IMAGE_MAX_BYTES:
+                        self._json(400, {"error": "archivo demasiado grande (max 20MB)"})
+                        return
+                    with open(upload_path, "rb") as uploaded_file:
+                        image_bytes = uploaded_file.read()
+                    asset = ingest_image_bytes(
+                        image_bytes,
+                        filename=os.path.basename(upload_path),
+                        origin="premium_upload",
+                        titulo=str(payload.get("titulo") or "").strip() or None,
+                        seccion=str(payload.get("seccion") or "").strip() or None,
+                        source="manual_premium",
+                    )
+                except OSError:
+                    self._json(404, {"error": "archivo subido no encontrado"})
+                    return
+                except ValueError as exc:
+                    self._json(422, {"error": str(exc)})
+                    return
+                self._json(200, _premium_asset_payload(asset))
+                return
+
             if path == "/api/premium/import":
                 from utils.premium_importer import import_chatgpt_package
                 from utils.premium_post_queue import save_package

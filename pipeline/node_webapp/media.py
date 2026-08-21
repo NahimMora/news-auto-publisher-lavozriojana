@@ -28,6 +28,7 @@ class MediaResult:
     ok: bool
     main_image: dict | None = None
     og_image_url: str | None = None
+    video_url: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -103,6 +104,52 @@ def _download_remote_image(url: str) -> Path | None:
         return None
 
 
+def _download_remote_video(url: str) -> Path | None:
+    if not _is_http_url(url):
+        return None
+    try:
+        response = safe_get(
+            url,
+            requester=requests.get,
+            timeout=60,
+            stream=True,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
+        if not content_type.startswith("video/") and content_type != "application/octet-stream":
+            logger.error("Remote video is not video/*: %s content_type=%s", url, content_type)
+            response.close()
+            return None
+        digest = hashlib.sha1((url + str(time.time())).encode("utf-8")).hexdigest()[:16]
+        dest = _media_work_dir() / f"video_download_{digest}.mp4"
+        with dest.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+        response.close()
+        return dest
+    except Exception as exc:
+        logger.error("Could not download video %s: %s", url, exc)
+        return None
+
+
+def resolve_source_video(noticia: dict) -> tuple[Path | None, str]:
+    for field_name in ("video_local_path", "video_local"):
+        raw = str(noticia.get(field_name) or "").strip()
+        if raw:
+            path = Path(raw)
+            if path.exists() and path.is_file():
+                return path, field_name
+            logger.warning("Video field %s points to missing file: %s", field_name, raw)
+
+    url = str(noticia.get("video_url") or "").strip()
+    downloaded = _download_remote_video(url)
+    if downloaded:
+        return downloaded, "video_url"
+    return None, "missing"
+
+
 def resolve_source_image(noticia: dict) -> tuple[Path | None, str]:
     for field_name in ("imagen_optimizada", "imagen"):
         raw = str(noticia.get(field_name) or "").strip()
@@ -132,7 +179,7 @@ def convert_main_image_to_webp(source_path: Path, noticia: dict) -> tuple[Path, 
 
 
 def generate_og_image(source_path: Path, digest: str, title: str, noticia: dict | None = None) -> Path:
-    from layout.image_generator import generate_post, FB_W, FB_H
+    from layout.image_generator import generate_facebook_with_engine
 
     slug = slugify(title)
     dest = _media_work_dir() / f"og_{slug}_{digest[:10]}.jpg"
@@ -143,23 +190,23 @@ def generate_og_image(source_path: Path, digest: str, title: str, noticia: dict 
             "seccion": (noticia or {}).get("seccion", ""),
             "imagen_url": "",
         }
-        result = generate_post(article, FB_W, FB_H, preloaded_img=raw)
-    result.save(dest, "JPEG", quality=88, optimize=True, progressive=True)
+        jpeg_bytes, _engine_used = generate_facebook_with_engine(article, preloaded_img=raw)
+    dest.write_bytes(jpeg_bytes)
     return dest
 
 
-def _response_is_public_image(response: requests.Response) -> bool:
+def _response_has_content_type(response: requests.Response, prefixes: tuple[str, ...]) -> bool:
     content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
-    return response.status_code == 200 and content_type.startswith("image/")
+    return response.status_code == 200 and content_type.startswith(prefixes)
 
 
-def verify_public_image_url(url: str) -> bool:
+def _verify_public_media_url(url: str, prefixes: tuple[str, ...]) -> bool:
     if not _is_http_url(url):
         return False
 
     enabled = os.getenv("WEB_PUBLIC_MEDIA_CHECK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     if not enabled:
-        logger.warning("Public image verification disabled; trusting URL: %s", url)
+        logger.warning("Public media verification disabled; trusting URL: %s", url)
         return True
 
     attempts = int(os.getenv("WEB_PUBLIC_MEDIA_CHECK_ATTEMPTS", "3"))
@@ -178,7 +225,7 @@ def verify_public_image_url(url: str) -> bool:
                 timeout=12,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            if _response_is_public_image(head):
+            if _response_has_content_type(head, prefixes):
                 return True
             get = safe_get(
                 url,
@@ -188,15 +235,23 @@ def verify_public_image_url(url: str) -> bool:
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             try:
-                if _response_is_public_image(get):
+                if _response_has_content_type(get, prefixes):
                     return True
             finally:
                 get.close()
         except Exception as exc:
-            logger.warning("Public image check attempt %s/%s failed for %s: %s", attempt, attempts, url, exc)
+            logger.warning("Public media check attempt %s/%s failed for %s: %s", attempt, attempts, url, exc)
         if attempt < attempts:
             time.sleep(retry_sleep)
     return False
+
+
+def verify_public_image_url(url: str) -> bool:
+    return _verify_public_media_url(url, ("image/",))
+
+
+def verify_public_video_url(url: str) -> bool:
+    return _verify_public_media_url(url, ("video/", "application/octet-stream"))
 
 
 def upload_main_image(noticia: dict) -> tuple[dict, Path, str]:
@@ -253,11 +308,43 @@ def upload_og_image(source_webp_path: Path, digest: str, title: str, fallback_ur
     return fallback_url
 
 
+def upload_video(noticia: dict) -> str | None:
+    """Sube a R2 el video asociado a la noticia (scrapeado o generado por el pipeline), si existe.
+
+    Nunca lanza: el video es opcional y su ausencia o fallo no debe bloquear la publicación.
+    """
+    source_path, source_kind = resolve_source_video(noticia)
+    if not source_path:
+        return None
+
+    try:
+        digest = _sha1_file(source_path, str(noticia.get("canonical_url") or noticia.get("url") or ""))[:20]
+        title = clean_text(noticia.get("titulo") or noticia.get("titulo_original") or "Noticia", max_chars=150)
+        slug = slugify(title)
+        key = f"noticias/videos/{slug}-{digest[:10]}.mp4"
+        url, _object_key = r2_storage.upload_file(
+            str(source_path),
+            key,
+            "video/mp4",
+            cache_control="public, max-age=31536000, immutable",
+        )
+        if not verify_public_video_url(url):
+            logger.warning("Video subido pero no se pudo verificar publicamente, se omite: %s", url)
+            return None
+        logger.info("Video uploaded source=%s key=%s", source_kind, key)
+        return url
+    except Exception as exc:
+        logger.warning("Video upload failed, se publica sin video: %s", exc)
+        return None
+
+
 def prepare_media(noticia: dict, title: str) -> MediaResult:
     try:
         main_image, webp_path, digest = upload_main_image(noticia)
         og_image_url = upload_og_image(webp_path, digest, title, main_image["url"], noticia)
-        return MediaResult(ok=True, main_image=main_image, og_image_url=og_image_url)
     except Exception as exc:
         logger.error("Media preparation failed for %s: %s", clean_text(noticia.get("titulo"), max_chars=70), exc)
         return MediaResult(ok=False, warnings=[str(exc)])
+
+    video_url = upload_video(noticia)
+    return MediaResult(ok=True, main_image=main_image, og_image_url=og_image_url, video_url=video_url)

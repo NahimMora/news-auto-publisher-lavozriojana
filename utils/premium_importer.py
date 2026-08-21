@@ -10,7 +10,13 @@ from __future__ import annotations
 import json
 
 from utils.file_manager import JsonStateError
-from utils.premium_contract import SLIDE_TYPES, new_package, new_slide, validate_package
+from utils.premium_contract import (
+    IMAGE_REQUIRED_SLIDE_TYPES,
+    SLIDE_TYPES,
+    new_package,
+    new_slide,
+    validate_package,
+)
 
 REQUIRED_TOP_FIELDS = ("title", "slides")
 
@@ -89,17 +95,21 @@ def import_chatgpt_package(raw_text: str) -> tuple[dict | None, list[str], list[
             warnings.append(f"slide_{index}_tipo_desconocido:{slide_type}, se usa image_text")
             slide_type = "image_text"
 
-        asset_hint = str(raw_slide.get("asset_hint") or "").strip()
+        uses_image = slide_type in IMAGE_REQUIRED_SLIDE_TYPES
+        asset_hint = str(raw_slide.get("asset_hint") or "").strip() if uses_image else ""
         title_hint = str(raw_slide.get("text") or payload.get("title") or "")
-        suggestions = _suggest_assets(asset_hint or title_hint)
-        if not suggestions:
+        suggestions = _suggest_assets(asset_hint or title_hint) if uses_image else []
+        if uses_image and not suggestions:
             warnings.append(f"slide_{index}_sin_sugerencia_de_imagen")
 
         slide = new_slide(
             slide_type,
             text=str(raw_slide.get("text") or ""),
+            title=str(raw_slide.get("title") or ""),
+            items=[str(item) for item in (raw_slide.get("items") or [])],
             highlights=list(raw_slide.get("highlights") or []),
             source_ids=list(raw_slide.get("source_ids") or []),
+            locality=str(raw_slide.get("locality") or ""),
         )
         slide["suggested_assets"] = suggestions
         slide["asset_hint"] = asset_hint

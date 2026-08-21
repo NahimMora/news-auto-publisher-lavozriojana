@@ -11,6 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from meta.facebook_token_manager import get_page_token
+from utils import r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.operation_result import OperationResult
@@ -80,10 +81,9 @@ def _set_backoff() -> int:
 
 
 def _build_message(noticia: dict, link: str = "") -> str:
-    title = str(noticia.get("titulo") or noticia.get("titulo_original") or "").strip()
     parts = [
         part
-        for part in (title, build_instagram_caption(noticia), link.strip())
+        for part in (build_instagram_caption(noticia), link.strip())
         if part
     ]
     return "\n\n".join(parts)
@@ -211,6 +211,38 @@ def prewarm_link_preview(link: str) -> OperationResult:
             retryable=True,
             details={"publication_outcome": "not_published"},
         )
+
+
+def force_facebook_rescrape(link: str, token: str) -> OperationResult:
+    """Fuerza a Facebook a re-scrapear la URL (equivalente a "Scrape Again" del
+    Sharing Debugger). Best-effort: nunca debe bloquear la publicación, porque
+    `prewarm_link_preview` sólo valida desde la red de la app, no desde la de
+    Facebook, y el post igual puede publicarse aunque este llamado falle."""
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/",
+            data={"id": link, "scrape": "true", "access_token": token},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+        )
+    data = _safe_json(response)
+    if response.status_code == 200 and not data.get("error"):
+        logger.info("Facebook re-scrape forzado ok para %s", link)
+        return OperationResult(StageStatus.SUCCESS, response=data)
+    return OperationResult(
+        StageStatus.DEGRADED,
+        error_type="scrape_rejected",
+        error_code=response.status_code,
+        response=data or None,
+        retryable=True,
+    )
 
 
 def _is_http_url(value: object) -> bool:
@@ -341,6 +373,7 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
     endpoint = "feed"
     payload = {"message": _build_message(noticia)}
     timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    token: str | None = None
     if _is_video_item(noticia):
         video_url = _video_url(noticia)
         if not video_url:
@@ -364,14 +397,27 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
                     prewarm.error_type,
                 )
                 return prewarm
+        try:
+            token = get_page_token()
+        except ValueError as exc:
+            logger.error("No se obtuvo token de página: %s", exc)
+            return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+        rescrape = force_facebook_rescrape(link, token)
+        if not rescrape.ok:
+            logger.warning(
+                "No se pudo forzar el re-scrape de Facebook para %s (se publica igual): %s",
+                link,
+                rescrape.error_type,
+            )
         payload["message"] = _build_message(noticia, link)
         payload["link"] = link
 
-    try:
-        token = get_page_token()
-    except ValueError as exc:
-        logger.error("No se obtuvo token de página: %s", exc)
-        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    if token is None:
+        try:
+            token = get_page_token()
+        except ValueError as exc:
+            logger.error("No se obtuvo token de página: %s", exc)
+            return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
     payload["access_token"] = token
 
     try:
@@ -412,6 +458,217 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
 def post_to_facebook(noticia: dict) -> bool:
     """Wrapper compatible con el contrato booleano histórico."""
     return post_to_facebook_detailed(noticia).ok
+
+
+# ── Video paparazzi editado (fuente automática) ────────────────────────────
+# post_to_facebook_detailed ya publica video nativo cuando hay video_url, pero
+# usaría la URL cruda del scraper (entrevista larga, sin recortar, sin marca
+# — ver scraping/base_paparazzi.py). Esta función reemplaza esa URL por un
+# clip editado con la misma marca que la portada antes de subirlo, igual que
+# meta/ig_client.py::post_paparazzi_carousel_to_instagram del lado de
+# Instagram. Reutiliza el mismo fb_posted.json/dedup que el flujo estándar.
+
+
+def post_paparazzi_video_to_facebook(noticia: dict) -> OperationResult:
+    """Publica una nota de paparazzi.com.ar en Facebook.
+
+    Si hay un video fuente utilizable, sube un único clip editado
+    (``utils.video_renderer.render_paparazzi_clips`` con ``split=False`` —
+    Facebook no tiene el límite de 60s por hijo que sí tiene el carrusel de
+    Instagram, así que no hace falta dividir en partes; hasta
+    PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS reales, nunca la entrevista
+    completa). Sin video utilizable, o si el recorte falla, cae al post
+    estándar (link/imagen) — ``post_to_facebook_detailed``.
+    """
+    if not PAGE_ID or PAGE_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if PAGE_ID in DISABLED_PAGE_IDS:
+        return OperationResult(
+            StageStatus.NO_WORK,
+            error_type="platform_disabled",
+            details={"page_id_configured": True},
+        )
+    try:
+        state = _load_state()
+    except JsonStateError as exc:
+        logger.error("Estado Facebook ilegible: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+
+    until = _backoff_until(state)
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+
+    dedup_key = str(noticia.get("dedup_key") or _dedup_key(noticia))
+    if _is_posted(state, dedup_key):
+        record = state["posted"].get(dedup_key)
+        external_id = str(record.get("external_id") or "") if isinstance(record, dict) else ""
+        return OperationResult(StageStatus.SUCCESS, external_id=external_id, deduplicated=True)
+
+    def _as_standard_post() -> OperationResult:
+        stripped = {
+            key: value
+            for key, value in noticia.items()
+            if key not in ("video_url", "video_duration_seconds", "media_type")
+        }
+        return post_to_facebook_detailed(stripped)
+
+    if not noticia.get("video_url"):
+        return _as_standard_post()
+
+    from utils.video_renderer import render_paparazzi_clips
+
+    clip_paths, clip_info = render_paparazzi_clips(noticia, split=False)
+    if not clip_paths:
+        logger.info(
+            "Sin clip de video utilizable para paparazzi en Facebook (%s); publicando post estándar",
+            clip_info.get("error_type"),
+        )
+        return _as_standard_post()
+    clip_path = clip_paths[0]
+
+    r2_key: str | None = None
+    try:
+        try:
+            video_url, r2_key = r2_storage.upload_temp(clip_path, ttl_hint="fb")
+        except RuntimeError as exc:
+            return OperationResult(
+                StageStatus.FAILED,
+                error_type="r2_upload_error",
+                details={"message": str(exc)},
+            )
+
+        try:
+            token = get_page_token()
+        except ValueError as exc:
+            logger.error("No se obtuvo token de página: %s", exc)
+            return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+
+        payload = {
+            "description": _build_message(noticia),
+            "file_url": video_url,
+            "access_token": token,
+        }
+        timeout = int(os.getenv("FB_VIDEO_REQUEST_TIMEOUT_SECONDS", "120"))
+        try:
+            response = requests.post(f"{GRAPH_API}/{PAGE_ID}/videos", data=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            logger.error("Error de red publicando video paparazzi en Facebook: %s", exc)
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="network_error",
+                error_code=type(exc).__name__,
+                retryable=True,
+                details={"publication_outcome": "unknown"},
+            )
+
+        result = _api_result(response)
+        if result.ok:
+            try:
+                _mark_posted(dedup_key, result.external_id, noticia)
+            except JsonStateError as exc:
+                logger.error(
+                    "Video paparazzi publicado en Facebook pero no se persistió la evidencia: %s", exc
+                )
+                return OperationResult(
+                    StageStatus.DEGRADED,
+                    error_type="published_state_write_error",
+                    external_id=result.external_id,
+                    response=result.response,
+                    details={"publication_outcome": "confirmed"},
+                )
+            logger.info(
+                "Video paparazzi editado publicado en Facebook (%ss): %s",
+                clip_info.get("duration_seconds"),
+                str(noticia.get("titulo") or "")[:70],
+            )
+        else:
+            logger.error("Facebook rechazó el video paparazzi: %s", result.to_dict())
+        return result
+    finally:
+        if r2_key:
+            r2_storage.delete(r2_key)
+        try:
+            os.unlink(clip_path)
+        except OSError:
+            pass
+
+
+# ── Reel independiente de paparazzi (video solo, sin video nativo simple) ──
+# Publica un video ya hosteado en R2. A diferencia de post_to_facebook_detailed
+# y post_paparazzi_video_to_facebook, no hace dedup propio: el llamador
+# (utils/paparazzi_reels.py) es dueño de la idempotencia con su propio
+# estado, porque esta publicación es intencionalmente una segunda
+# publicación de la misma nota (distinto formato, título superpuesto estilo
+# Reel Manager 127.0.0.1:8765) y no debe chocar con el dedup del post
+# estándar/video nativo.
+
+
+def post_reel_video_to_facebook(item: dict) -> OperationResult:
+    if not PAGE_ID or PAGE_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if PAGE_ID in DISABLED_PAGE_IDS:
+        return OperationResult(
+            StageStatus.NO_WORK,
+            error_type="platform_disabled",
+            details={"page_id_configured": True},
+        )
+    try:
+        state = _load_state()
+    except JsonStateError as exc:
+        logger.error("Estado Facebook ilegible: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+
+    until = _backoff_until(state)
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+
+    video_url = _video_url(item)
+    if not video_url:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_video_url")
+
+    try:
+        token = get_page_token()
+    except ValueError as exc:
+        logger.error("No se obtuvo token de página: %s", exc)
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+
+    payload = {
+        "description": _build_message(item),
+        "file_url": video_url,
+        "access_token": token,
+    }
+    timeout = int(os.getenv("FB_VIDEO_REQUEST_TIMEOUT_SECONDS", "120"))
+    try:
+        response = requests.post(f"{GRAPH_API}/{PAGE_ID}/videos", data=payload, timeout=timeout)
+    except requests.RequestException as exc:
+        logger.error("Error de red publicando reel de paparazzi en Facebook: %s", exc)
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="network_error",
+            error_code=type(exc).__name__,
+            retryable=True,
+            details={"publication_outcome": "unknown"},
+        )
+
+    result = _api_result(response)
+    if result.ok:
+        logger.info(
+            "Reel de paparazzi publicado en Facebook: %s",
+            str(item.get("titulo_reel") or item.get("titulo") or "")[:70],
+        )
+    else:
+        logger.error("Facebook rechazó el reel de paparazzi: %s", result.to_dict())
+    return result
 
 
 # ── Media directa premium (Fase 3): social-only, sin link, sin CMS ────────
