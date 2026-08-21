@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 
 from layout import image_generator
 from pipeline.node_webapp import media
@@ -98,8 +98,25 @@ class AutomaticInstagramEngineDispatchTests(unittest.TestCase):
 
     ARTICLE = {"titulo": "Detuvieron a un hombre en un control policial", "seccion": "policiales"}
 
+    def test_manual_pillow_fallback_keeps_double_resolution_and_444(self):
+        article = {**self.ARTICLE, "source": "manual_custom_post"}
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
+        self.assertEqual(engine, "pillow")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.IG_W * 2, image_generator.IG_H * 2))
+            self.assertEqual(JpegImagePlugin.get_sampling(img), 0)
+
     def test_pillow_engine_uses_generate_post_and_returns_pillow(self):
-        with patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
             jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
         self.assertEqual(engine, "pillow")
         self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
@@ -109,7 +126,11 @@ class AutomaticInstagramEngineDispatchTests(unittest.TestCase):
     def test_remotion_engine_success_returns_remotion(self):
         fake_png = io.BytesIO()
         Image.new("RGB", (1080, 1350), (10, 10, 10)).save(fake_png, "PNG")
-        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
             "utils.remotion_renderer.render_still", return_value=(fake_png.getvalue(), {"engine": "remotion"})
         ) as render_still_mock:
             jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
@@ -117,6 +138,90 @@ class AutomaticInstagramEngineDispatchTests(unittest.TestCase):
         self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
         render_still_mock.assert_called_once()
         self.assertEqual(render_still_mock.call_args.args[0], "AutomaticInstagramCard")
+        self.assertEqual(render_still_mock.call_args.args[1]["publicationStyle"], "automatic")
+        self.assertEqual(render_still_mock.call_args.kwargs["scale"], 1)
+
+    def test_disabled_automatic_suppresses_a_highlight_persisted_before_rollback(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (1080, 1350), (10, 10, 10)).save(fake_png, "PNG")
+        article = {**self.ARTICLE, "highlight_terms": ["control policial"]}
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still",
+            return_value=(fake_png.getvalue(), {"engine": "remotion"}),
+        ) as render_still_mock:
+            image_generator.generate_instagram_with_engine(article)
+
+        props = render_still_mock.call_args.args[1]
+        self.assertEqual(props["publicationStyle"], "automatic")
+        self.assertEqual(props["highlightTerms"], [])
+
+    def test_enabled_automatic_uses_manual_visual_package_and_high_resolution(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (2160, 2700), (10, 10, 10)).save(fake_png, "PNG")
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still",
+            return_value=(fake_png.getvalue(), {"engine": "remotion"}),
+        ) as render_still_mock, patch(
+            "openIA.caption_generator.select_highlight_phrase",
+            return_value="control policial",
+        ):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
+
+        props = render_still_mock.call_args.args[1]
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(props["publicationStyle"], "manual_publication")
+        self.assertEqual(props["highlightTerms"], ["control policial"])
+        self.assertEqual(render_still_mock.call_args.kwargs["scale"], 2)
+        with Image.open(io.BytesIO(jpeg_bytes)) as output:
+            self.assertEqual(output.size, (2160, 2700))
+            self.assertEqual(JpegImagePlugin.get_sampling(output), 0)
+
+    def test_enabled_automatic_pillow_fallback_keeps_double_resolution(self):
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "pillow")
+        with Image.open(io.BytesIO(jpeg_bytes)) as output:
+            self.assertEqual(output.size, (2160, 2700))
+            self.assertEqual(JpegImagePlugin.get_sampling(output), 0)
+
+    def test_manual_custom_post_uses_publication_style_and_high_resolution(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (2160, 2700), (10, 10, 10)).save(fake_png, "PNG")
+        article = {
+            **self.ARTICLE,
+            "source": "manual_custom_post",
+            "highlight_terms": ["control policial"],
+        }
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still",
+            return_value=(fake_png.getvalue(), {"engine": "remotion"}),
+        ) as render_still_mock:
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
+
+        props = render_still_mock.call_args.args[1]
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(props["publicationStyle"], "manual_publication")
+        self.assertEqual(props["highlightTerms"], ["control policial"])
+        self.assertEqual(render_still_mock.call_args.kwargs["scale"], 2)
+        with Image.open(io.BytesIO(jpeg_bytes)) as output:
+            self.assertEqual(output.size, (2160, 2700))
+            self.assertEqual(JpegImagePlugin.get_sampling(output), 0)
 
     def test_remotion_engine_failure_falls_back_to_pillow(self):
         from utils.remotion_renderer import RemotionRenderError
@@ -166,6 +271,77 @@ class AutomaticInstagramEngineDispatchTests(unittest.TestCase):
         cleanup()  # no-op, no debe lanzar
 
 
+class FacebookOgEngineDispatchTests(unittest.TestCase):
+    """generate_facebook_with_engine (tarjeta Open Graph, ver
+    docs/DECISIONS.md "Las piezas de una sola imagen adoptan la escala
+    premium") — dispatch mockeado, sin depender de Node/Remotion real.
+    Mismo patrón que AutomaticInstagramEngineDispatchTests."""
+
+    ARTICLE = {"titulo": "Detuvieron a un hombre en un control policial", "seccion": "policiales"}
+
+    def test_pillow_engine_uses_generate_post_and_returns_pillow(self):
+        with patch("utils.remotion_renderer.resolve_engine", return_value="pillow"):
+            jpeg_bytes, engine = image_generator.generate_facebook_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "pillow")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.FB_W, image_generator.FB_H))
+
+    def test_remotion_engine_success_returns_remotion(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (1200, 630), (10, 10, 10)).save(fake_png, "PNG")
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still", return_value=(fake_png.getvalue(), {"engine": "remotion"})
+        ) as render_still_mock:
+            jpeg_bytes, engine = image_generator.generate_facebook_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        render_still_mock.assert_called_once()
+        self.assertEqual(render_still_mock.call_args.args[0], "FacebookOgCard")
+        self.assertEqual(render_still_mock.call_args.args[1]["publicationStyle"], "automatic")
+
+    def test_enabled_automatic_boxes_og_section_and_derives_highlight(self):
+        fake_png = io.BytesIO()
+        Image.new("RGB", (1200, 630), (10, 10, 10)).save(fake_png, "PNG")
+        with patch.dict(
+            os.environ,
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true"},
+            clear=False,
+        ), patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still",
+            return_value=(fake_png.getvalue(), {"engine": "remotion"}),
+        ) as render_still_mock, patch(
+            "openIA.caption_generator.select_highlight_phrase",
+            return_value="control policial",
+        ):
+            image_generator.generate_facebook_with_engine(self.ARTICLE)
+
+        props = render_still_mock.call_args.args[1]
+        self.assertEqual(props["publicationStyle"], "manual_publication")
+        self.assertEqual(props["highlightTerms"], ["control policial"])
+
+    def test_remotion_engine_failure_falls_back_to_pillow(self):
+        from utils.remotion_renderer import RemotionRenderError
+
+        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion"), patch(
+            "utils.remotion_renderer.render_still", side_effect=RemotionRenderError("boom")
+        ):
+            jpeg_bytes, engine = image_generator.generate_facebook_with_engine(self.ARTICLE)
+        self.assertEqual(engine, "pillow")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+
+    def test_remotion_unavailable_raises_instead_of_silent_fallback(self):
+        from utils.remotion_renderer import RemotionRenderError
+
+        with patch("utils.remotion_renderer.resolve_engine", return_value="remotion_unavailable"):
+            with self.assertRaises(RemotionRenderError):
+                image_generator.generate_facebook_with_engine(self.ARTICLE)
+
+
 REMOTION_NODE_MODULES = Path(__file__).resolve().parents[1] / "remotion" / "node_modules"
 
 
@@ -193,12 +369,91 @@ class AutomaticInstagramLiveRenderTests(unittest.TestCase):
             "seccion": "politica",
             "highlight_terms": ["presupuesto 2026"],
         }
-        with patch.dict(os.environ, {"AUTOMATIC_STATIC_RENDER_ENGINE": "remotion"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATIC_STATIC_RENDER_ENGINE": "remotion",
+                "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false",
+            },
+            clear=False,
+        ):
             jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
         self.assertEqual(engine, "remotion")
         self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
         with Image.open(io.BytesIO(jpeg_bytes)) as img:
             self.assertEqual(img.size, (image_generator.IG_W, image_generator.IG_H))
+
+    def test_manual_publication_renders_at_double_resolution(self):
+        article = {
+            "titulo": "La Legislatura debate el presupuesto 2026 en sesión extraordinaria",
+            "seccion": "politica",
+            "highlight_terms": ["presupuesto 2026"],
+            "source": "manual_custom_post",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATIC_STATIC_RENDER_ENGINE": "remotion",
+                "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "false",
+            },
+            clear=False,
+        ):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
+        self.assertEqual(engine, "remotion")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.IG_W * 2, image_generator.IG_H * 2))
+            self.assertEqual(JpegImagePlugin.get_sampling(img), 0)
+
+    def test_enabled_automatic_renders_with_manual_visual_package(self):
+        article = {
+            "titulo": "La Legislatura debate el presupuesto 2026 en sesión extraordinaria",
+            "seccion": "politica",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "AUTOMATIC_STATIC_RENDER_ENGINE": "remotion",
+                "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            jpeg_bytes, engine = image_generator.generate_instagram_with_engine(article)
+        self.assertEqual(engine, "remotion")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.IG_W * 2, image_generator.IG_H * 2))
+            self.assertEqual(JpegImagePlugin.get_sampling(img), 0)
+
+
+@unittest.skipUnless(
+    str(os.getenv("REMOTION_LIVE_TESTS", "auto")).strip().lower() != "skip" and REMOTION_NODE_MODULES.is_dir(),
+    "remotion/node_modules no está instalado en este entorno; se omite el render real "
+    "(set REMOTION_LIVE_TESTS=skip para omitir explícitamente aunque esté instalado)",
+)
+class FacebookOgLiveRenderTests(unittest.TestCase):
+    """Render real de punta a punta de generate_facebook_with_engine contra
+    Remotion (servidor persistente o subprocess de red, ver
+    utils/remotion_renderer.py). Mismo criterio de skip que
+    AutomaticInstagramLiveRenderTests."""
+
+    @classmethod
+    def setUpClass(cls):
+        from utils.remotion_renderer import remotion_available
+
+        if not remotion_available(force_recheck=True):
+            raise unittest.SkipTest("Remotion CLI no respondió (Node/npx no operativo en este entorno)")
+
+    def test_generates_via_remotion_end_to_end(self):
+        article = {
+            "titulo": "La Legislatura debate el presupuesto 2026 en sesión extraordinaria",
+            "seccion": "politica",
+            "highlight_terms": ["presupuesto 2026"],
+        }
+        with patch.dict(os.environ, {"OG_STATIC_RENDER_ENGINE": "remotion"}, clear=False):
+            jpeg_bytes, engine = image_generator.generate_facebook_with_engine(article)
+        self.assertEqual(engine, "remotion")
+        self.assertEqual(jpeg_bytes[:2], b"\xff\xd8")
+        with Image.open(io.BytesIO(jpeg_bytes)) as img:
+            self.assertEqual(img.size, (image_generator.FB_W, image_generator.FB_H))
 
 
 class WebMediaFallbackTests(unittest.TestCase):

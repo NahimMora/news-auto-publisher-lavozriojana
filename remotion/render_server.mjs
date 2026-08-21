@@ -13,8 +13,9 @@
 //
 // Protocolo:
 //   GET  /health           -> 200 {ok, pid, bundleLocation}
-//   POST /render           -> body {compositionId, inputProps, assetPaths}
+//   POST /render           -> body {compositionId, inputProps, assetPaths, scale?}
 //                              assetPaths: {propName: rutaAbsolutaLocal}
+//                              scale: densidad de salida entre 0.1 y 4
 //                              devuelve el PNG crudo (Content-Type image/png,
 //                              header X-Render-Duration-Ms).
 //
@@ -108,8 +109,14 @@ async function main() {
         const copiedAssets = [];
         try {
           const raw = await readBody(req);
-          const { compositionId, inputProps, assetPaths } = JSON.parse(raw.toString("utf-8"));
+          const { compositionId, inputProps, assetPaths, scale: rawScale = 1 } = JSON.parse(
+            raw.toString("utf-8"),
+          );
           if (!compositionId) throw new Error("falta compositionId");
+          const scale = Number(rawScale);
+          if (!Number.isFinite(scale) || scale < 0.1 || scale > 4) {
+            throw new Error("scale debe estar entre 0.1 y 4");
+          }
 
           const workingProps = { ...(inputProps || {}) };
           const renderId = randomUUID();
@@ -136,6 +143,7 @@ async function main() {
             output: null,
             inputProps: workingProps,
             imageFormat: "png",
+            scale,
             puppeteerInstance: browser,
             chromiumOptions: { gl: "angle" },
           });
@@ -145,9 +153,10 @@ async function main() {
             "Content-Type": "image/png",
             "Content-Length": buffer.length,
             "X-Render-Duration-Ms": String(durationMs),
+            "X-Render-Scale": String(scale),
           });
           res.end(buffer);
-          log(`render OK ${compositionId} en ${durationMs}ms`);
+          log(`render OK ${compositionId} scale=${scale} en ${durationMs}ms`);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           log("render FALLÓ:", message);

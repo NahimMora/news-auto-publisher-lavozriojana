@@ -210,6 +210,9 @@ class PremiumStudioHttpTests(unittest.TestCase):
         self.assertEqual("Texto confirmado", body["package"]["title"])
         self.assertRegex(body["package"]["id"], r"^[a-f0-9]{32}$")
         self.assertTrue((self.data / "premium_packages.json").exists())
+        self.assertTrue(
+            any(warning.startswith("generación IA:") for warning in body["warnings"])
+        )
 
     def test_generate_endpoint_reports_manual_openai_failure(self):
         from openIA.premium_package_generator import PremiumGenerationError
@@ -356,6 +359,18 @@ class PremiumStudioHttpTests(unittest.TestCase):
         self.assertIn("/api/premium/asset-from-url", html)
         self.assertIn("/api/premium/asset-from-upload", html)
         self.assertIn("premium-library-thumb", html)
+        self.assertIn("premium_gallery_modal", html)
+        self.assertIn("premium-gallery-grid", html)
+        self.assertIn("PREMIUM_SLIDE_TYPES", html)
+        self.assertIn("'impact'", html)
+        self.assertIn("PREMIUM_IMAGE_SLIDE_TYPES", html)
+        self.assertIn("_premiumChannelSummary", html)
+        self.assertIn("failure_metadata", html)
+        self.assertIn("usedTypes.has(t)", html)
+        self.assertIn("Abrir galería", html)
+        self.assertIn("savePremiumDraft({quiet: true})", html)
+        self.assertNotIn("_premiumButton('Duplicar'", html)
+        self.assertNotIn("Usar la seleccionada de biblioteca", html)
         for badge in ("pbadge1", "pbadge2", "pbadge3", "pbadge4"):
             self.assertIn(badge, html)
 

@@ -86,7 +86,7 @@ def generate_reel_meta(article: dict) -> dict:
     """
     import re as _re
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key or api_key == "PENDIENTE":
         titulo = article.get("titulo", "SIN TÍTULO")
         return {
@@ -96,9 +96,9 @@ def generate_reel_meta(article: dict) -> dict:
             "seccion": "sociedad",
         }
 
-    from openai import OpenAI
+    from utils.ai_client import chat_completion
 
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     titulo = article.get("titulo", "")
     texto = "\n\n".join(article.get("parrafos", [])[:4]) or titulo
 
@@ -123,14 +123,14 @@ def generate_reel_meta(article: dict) -> dict:
         '{"titulo_reel": "...", "caption": "...", "seccion": "..."}'
     )
 
-    client = OpenAI(api_key=api_key, timeout=float(os.getenv("OPENAI_TIMEOUT", "60")))
-    resp = client.chat.completions.create(
-        model=model,
+    raw = chat_completion(
         messages=[{"role": "user", "content": prompt}],
+        model=model,
+        api_key=api_key,
         temperature=0.7,
         max_tokens=400,
-    )
-    raw = resp.choices[0].message.content.strip()
+        timeout=float(os.getenv("GEMINI_TIMEOUT", "60")),
+    ).strip()
     match = _re.search(r"\{.*\}", raw, _re.DOTALL)
     data: dict = json.loads(match.group() if match else raw)
 

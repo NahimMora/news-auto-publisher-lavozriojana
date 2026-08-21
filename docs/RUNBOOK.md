@@ -1,6 +1,6 @@
 # Runbook de operación e incidentes
 
-Última actualización: 2026-07-30.
+Última actualización: 2026-08-21.
 
 ## Principios
 
@@ -11,6 +11,92 @@
   sin autorización explícita del operador.
 - Considerar `degraded` como atención requerida, aunque el proceso haya completado
   trabajo parcial.
+
+## Entorno: desarrollo vs. producción (2026-08-21)
+
+Desde el 2026-08-21 hay dos hosts físicamente distintos con roles que no se mezclan.
+Ver la decisión completa en `docs/DECISIONS.md` (2026-08-21) y el incidente que la
+motivó en `docs/KNOWN_ISSUES.md` #84.
+
+| | Desarrollo (esta PC, `pc10`) | Producción (PC dedicada, `PC@192.168.1.150`, `C:\LVR`) |
+|---|---|---|
+| Rol | escribir código, correr tests, revisar renders, editar docs | única instancia que publica de verdad |
+| `venv`, `.env`, `data/` | propios, aislados; `.env` **sin** credenciales productivas reales para correr el servicio | credenciales reales, `data/` es el historial/dedup autoritativo |
+| `python cli.py start` / `run_24x7.py` / `video_reel_manager.py` | **prohibido correrlos directo** | es donde corren, vía las tareas programadas |
+| `scripts/register_scheduled_tasks.bat` | **nunca ejecutarlo acá** | ya ejecutado; `LaVozRiojana-24x7`/`LaVozRiojana-ManualUI` viven sólo ahí |
+| Acceso | local | SSH con clave (`ssh -i ~/.ssh/id_ed25519_lvr PC@192.168.1.150`) |
+
+**Regla dura: el servicio no se vuelve a levantar en esta PC de desarrollo, bajo
+ningún motivo.** El incidente de `docs/KNOWN_ISSUES.md` #84 fue exactamente eso —
+tareas programadas locales olvidadas relanzando el pipeline completo con
+credenciales reales, en paralelo a la instancia de producción, con riesgo real de
+publicar contenido duplicado en Facebook/Instagram.
+
+### Flujo de cambios: acá se prueba, allá se publica
+
+1. **Desarrollar y probar en esta PC** — tests (`python -m unittest discover
+   tests`), validación visual de Remotion, smoke test manual de la UI en
+   `127.0.0.1:8765` con `.env` de QA (sin credenciales reales o con
+   `PIPELINE_DEPLOYMENT_MODE=observe`/kill switches apagados). Nunca contra las
+   cuentas reales desde acá.
+2. **Commit y push** a una rama, PR contra `main` (branch protection exige el check
+   `reliability-windows`).
+3. **Merge** una vez que CI pasa y hay revisión.
+4. **Desplegar el cambio en producción por SSH**:
+
+   ```powershell
+   ssh -i ~/.ssh/id_ed25519_lvr PC@192.168.1.150
+   cd C:\LVR
+   git pull origin main
+   ```
+
+   Si el cambio toca `requirements.txt` o `remotion/package.json`, además:
+
+   ```powershell
+   venv\Scripts\python.exe -m pip install -r requirements.txt
+   cd remotion && npm i && cd ..
+   ```
+
+5. **Reiniciar el backend** para que tome el código nuevo (el proceso corriendo no
+   recarga módulos solo):
+
+   ```powershell
+   venv\Scripts\python.exe cli.py stop
+   ```
+
+   El supervisor detenido vuelve a levantarse solo en el próximo disparo de la tarea
+   `LaVozRiojana-24x7` (cada 5 minutos) ya con el código actualizado. Para no esperar:
+
+   ```powershell
+   powershell -NoProfile -Command "Start-ScheduledTask -TaskName 'LaVozRiojana-24x7'"
+   ```
+
+6. **Verificar** antes de dar el despliegue por bueno:
+
+   ```powershell
+   venv\Scripts\python.exe cli.py status --json
+   venv\Scripts\python.exe cli.py doctor --scope supervisor --json
+   ```
+
+   Confirmar `heartbeat.status: fresh`, `overall_status: success` (o `no_work`, es
+   sano), y que `supervisor.pid` sea un único PID coherente — si hay dudas de
+   duplicados, ver el chequeo de la siguiente sección antes de asumir que está bien.
+
+### Cómo confirmar que no hay una segunda instancia corriendo
+
+El PID del supervisor vive en `data/.supervisor.pid`. Cualquier operación que
+reemplace `data/` completo (una migración, un restore) sin que el supervisor viejo
+esté detenido primero rompe ese rastreo — `cli.py start` deja de detectar la
+instancia previa y arranca una segunda en paralelo sin avisar (exactamente lo que
+pasó en el incidente #84). Antes de cualquier operación así, o ante cualquier duda:
+
+```powershell
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LVR' } | Select-Object ProcessId,ParentProcessId,Name,CreationDate
+```
+
+Una sola cadena de procesos con timestamps de creación coherentes (no dos tandas con
+horarios de arranque distintos) es lo esperado. Si aparecen dos generaciones, matar
+ambas, borrar `data/.supervisor.pid` y reiniciar una sola vez.
 
 ## Diagnóstico inicial
 
@@ -83,6 +169,80 @@ Un log inexistente es “sin evidencia”, no “sano”.
 5. Ejecute `python -m unittest tests.test_scraper_fixtures -v`.
 6. La prueba manual contra el tercero es read-only y complementaria; su
    disponibilidad no se confunde con el contrato local.
+
+## Fuente paparazzi.com.ar (farándula) y cupo 8+2 de Instagram
+
+Ver decisión completa en `docs/DECISIONS.md` (2026-08-05).
+
+1. **Activar**: `SCRAPER_PAPARAZZI_ENABLED=1` habilita el scraping
+   (`python main_paparazzi.py` para correrlo suelto). `IG_PAPARAZZI_MAX_PER_RUN`
+   (default 2) controla cuántas se publican por ciclo, además — no en vez — de las
+   `IG_MAX_PER_RUN` generales.
+2. **429 de Cloudflare**: el sitio rate-limitea sin pausa entre requests.
+   `PAPARAZZI_REQUEST_DELAY_SECONDS` (default 2.5s) ya lo evita en uso normal; si
+   vuelve a aparecer, subir el valor antes que bajar `SCRAPER_MAX_LINKS`.
+3. **Nota sin video / video "perdido"**: es esperado — no todas las notas embeben
+   JWPlayer, y la resolución contra `cdn.jwplayer.com/v2/media/{id}` puede fallar sin
+   romper el scraping (`scraping/base_paparazzi.py::_extract_video` degrada
+   silenciosamente). La nota igual se publica, solo con imagen
+   (`post_to_instagram_detailed`, no carrusel).
+4. **Clip de video no se genera**: revisar `ffmpeg` en PATH
+   (`python cli.py doctor --scope all`) y el log de `video_renderer` — un fallo acá
+   también cae a imagen sola, nunca bloquea la publicación.
+5. **Conteo por ciclo distinto de 8+2**: revisar `meta/run_ig.py::main()` — selecciona
+   dos pools (`get_pending(..., exclude_source_prefix="paparazzi")` y
+   `get_pending(..., source_prefix="paparazzi")`) y los concatena; si el pool general
+   ya trae paparazzi mezclado, algo está mal seteando `noticia["source"]` río arriba
+   (debe ser exactamente `"paparazzi"`, ver `scraping/base_paparazzi.py`).
+
+## Reel independiente de paparazzi (video solo), motor 127.0.0.1:8765
+
+Ver decisión completa en `docs/DECISIONS.md` (2026-08-10).
+
+1. **Activar**: `PAPARAZZI_REEL_ENABLED=true` en `.env` (default `false` — no cambia
+   nada hasta activación explícita). Además requiere R2 configurado y al menos uno de
+   `IG_PUBLISH_ENABLED`/`FB_PUBLISH_ENABLED` en `true`; cada plataforma se publica
+   independientemente según su propio switch.
+2. **Cuándo dispara**: sólo justo después de que el carrusel estándar de una nota de
+   paparazzi con video se publicó con éxito en Instagram (`meta/run_ig.py`, dentro del
+   ciclo normal — no es un script/canal separado). Notas sin `video_url` (imagen sola)
+   nunca generan Reel.
+3. **No se publicó ningún Reel pese al flag activo**: revisar
+   `logs/paparazzi_reels.log`. Motivos esperados: el video fuente no se pudo descargar
+   al momento de renderizar (cae a imagen/overlay — este flujo nunca publica ese
+   fallback, sólo "el video solo"), R2 no configurado, o la nota ya tiene un registro
+   en `data/paparazzi_reels_posted.json` (dedup propio, independiente del
+   `ig_posted.json`/`fb_posted.json` del carrusel).
+4. **Se publicó en una plataforma pero no en la otra**: es un resultado válido
+   (`ig_ok`/`fb_ok` independientes) — revisar el `error_type` logueado para esa
+   plataforma puntual; no reintenta solo, hay que resolver la causa y re-disparar el
+   ciclo.
+5. **Verificar sin publicar**: `python -m unittest tests.test_paparazzi_reels -v`
+   (mocks — no toca cuentas reales).
+
+## Estadísticas de Instagram y promoción de candidatas por rendimiento
+
+Ver decisión completa en `docs/DECISIONS.md` (2026-08-05).
+
+1. **Ver el snapshot actual**: `data/ig_category_performance.json` — `updated_at`,
+   `overall.engagement_rate` y `categories.<categoria>.{engagement_rate,sample_size}`.
+   Se actualiza cada ciclo (`meta/ig_insights.py`, solo lectura).
+2. **Nada se promueve todavía**: revisar `sample_size` por categoría contra
+   `IG_STATS_MIN_SAMPLE_SIZE` (default 5) — con la cuenta joven, la mayoría de las
+   categorías no van a alcanzar la muestra mínima hasta acumular más historial.
+3. **Apagar solo la promoción sin perder la recolección**:
+   `IG_STATS_PROMOTION_ENABLED=false` (mantiene `IG_STATS_ENABLED=true` recolectando
+   para cuando haya más historial). Apagar `IG_STATS_ENABLED` detiene también la
+   recolección.
+4. **Candidata promovida que no debería**: revisar `route_reason` de la noticia
+   (`editorial_candidates.json` o `noticias_meta.json`) — debe incluir
+   `category_performance:<categoria>`. El tope por tema (`TOPIC_AUTOMATIC_CAP`) sigue
+   aplicando igual; si una nota pasó pese a estar sobre el tope, es un bug, no el
+   comportamiento esperado de esta función.
+5. **Ajustar qué tan exigente es la promoción**: `IG_STATS_PROMOTION_THRESHOLD_RATIO`
+   (default 1.0 = igual o mejor que el promedio de la cuenta; subirlo lo hace más
+   exigente) y `IG_STATS_MIN_SAMPLE_SIZE` (default 5; subirlo exige más historial antes
+   de confiar en una categoría).
 
 ## JSON corrupto
 
@@ -447,6 +607,79 @@ El script rechaza un listener externo y un servicio desconocido ocupando el puer
 La URL autorizada es únicamente `http://127.0.0.1:8765/`. Además de las pestañas
 Videos y Publicaciones, incluye Estudio Premium y Candidatas (ver más abajo).
 
+### Sistema visual de Reels
+
+`REEL_CINEMATIC_VISUAL_STYLE_ENABLED=false` conserva la composición histórica
+`Main`. Para habilitar la versión profesional exclusivamente en la pestaña
+**Videos**, fijar el flag en `true` y reiniciar sólo la UI manual para que vuelva a
+cargar `.env`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\start_manual_video_ui.ps1
+```
+
+La versión nueva informa `visual_style=editorial_cinematic_v2` en la respuesta de
+`/api/render-video`, incorpora su cierre de tres segundos en la misma composición y
+no usa el outro legacy de `data/media/outro.mp4`. Generar una vista previa no publica
+en Meta; el botón **Publicar IG + FB** sigue siendo una acción externa separada. Para
+rollback visual, volver el flag a `false` y reiniciar sólo la UI.
+
+La escala activa reserva 164 px para cabecera, 78 px para la bandera de sección y
+104 px para la firma inferior. Si se ajustan esos valores en `EditorialReel.tsx`, se
+deben renderizar al menos un título largo en el frame de lectura y un frame del cierre;
+agrandar fuentes sin mover `REEL_MEDIA_TOP`/`REEL_PANEL_BOTTOM` puede volver a invadir
+el título o el footer.
+
+En la fase compacta, sección y titular deben verse como un solo grupo, y el titular
+debe terminar cerca del panel/footer sin tocarlo. La regresión mínima requiere un
+título largo con frase destacada: revisar un frame antes de compactar, uno durante la
+transición y otro después; ninguna línea debe volver a partirse dentro del span
+coloreado, cortarse o dejar una franja negra amplia arriba o debajo. El estado final
+debe volver a repartir palabras para ocupar el ancho útil; no debe verse como el
+layout grande simplemente encogido y cargado hacia la izquierda.
+
+### Publicaciones personalizadas
+
+En la pestaña **Publicaciones**, el título admite de 8 a 120 caracteres. El límite
+se valida en el navegador y nuevamente en el backend; un borrador anterior más largo
+debe editarse y nunca se trunca en silencio. Use **Vista previa** antes de publicar:
+la imagen resultante es la misma que consumirá el publicador de Instagram.
+
+La card ajusta el tamaño del título hasta un piso legible, usa hasta cinco líneas y
+reserva el footer. El panel degradado crece o baja según la altura medida del título,
+la localidad y la bajada; no requiere que el operador complete espacio manualmente.
+La sección aparece dentro de una bandera Premium (azul noche en
+Editorial). Una frase de 2 a 4 palabras contiguas del título se destaca automáticamente
+en rojo (Crónica) o azul (Editorial). Debe expresar acción + objeto, sujeto + decisión
+o resultado principal; no puede ser sólo lugar, fecha ni un cierre genérico. Una frase
+al final sólo se admite si allí está el hecho principal. El backend exige copia exacta
+del título y aplica estas reglas también cuando usa el selector local sin OpenAI. La
+ausencia de localidad o bajada sigue siendo válida y no bloquea la vista previa.
+
+La card manual se genera en **2160×2700 (4:5)**, aunque el navegador la muestre
+reducida para entrar en la pantalla. El JPEG usa alta calidad y color 4:4:4 para que
+texto y acentos toleren mejor el zoom en PC. No redimensione el preview para
+publicar: el botón de publicación vuelve a usar el mismo renderer 2×.
+
+Para que el autopublicador use exactamente ese paquete visual:
+
+```text
+AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED=true
+```
+
+El default de código es `false`: un deploy no cambia producción por sí solo. Con el
+flag activo, Instagram automático usa el mismo recuadro de sección, panel/título
+adaptable, frase relevante y JPEG 2160×2700/4:4:4. La tarjeta OG adopta el recuadro y
+el highlight dentro de su proporción 1200×630. Las entradas antiguas sin
+`highlight_terms` derivan una frase localmente sin llamar a OpenAI. El costo de render
+y transferencia del automático aumenta; apagar el flag restaura 1080×1350 y la
+geometría anterior sin migrar colas.
+
+No use el botón **Publicar (Web + IG + FB)** para QA. Para una prueba integral sin
+llamadas externas, arranque la UI con `CUSTOM_POST_DRY_RUN=true` y directorios
+`LVR_*_DIR` temporales.
+
 ## Router editorial (candidatas de Instagram)
 
 Modo report-only, no modifica nada:
@@ -473,8 +706,21 @@ comporta exactamente como antes de esta rama. Antes de activar el flag en
 producción, correr `editorial-route --report-only` sobre el historial real y
 revisar cuántas noticias quedarían como candidatas.
 
-Candidatas: se gestionan desde la pestaña "Candidatas" de la UI manual, o
-directamente:
+Candidatas: se gestionan desde la pestaña "Candidatas" de la UI manual. La bandeja
+muestra primero las entradas pendientes más recientes, con motivo, origen, tema e
+identidad. `Enviar a automática` y `Descartar` aplican las transiciones declaradas;
+`Enviar a automática` es un override editorial explícito y habilita Instagram aunque
+la categoría no figure en `IG_ALLOWED_CATEGORIES` o la noticia todavía no tenga URL
+Web. Esta excepción es sólo para Instagram; Facebook y el flujo automático normal
+siguen esperando la URL. No saltea deduplicación, validación de imagen, kill switch,
+rate limits ni estados ambiguos. Si la rotación ya retiró la noticia de
+`noticias_meta.json`, el próximo bootstrap puede restaurarla desde el payload durable
+de la candidata; la métrica `restored_from_candidate_store` deja esa ruta visible.
+Para una
+publicación reutilizada, `Quitar de candidatas` conserva intacta la evidencia histórica
+y nunca la republica. El panel secundario permite mover por identidad una automática
+pendiente o agregar una ya publicada para reutilización premium. También se pueden
+listar directamente:
 
 ```powershell
 python -c "from utils.editorial_router import list_candidates; import json; print(json.dumps(list_candidates(channel='instagram', status='candidate'), ensure_ascii=False, indent=2))"
@@ -502,17 +748,40 @@ visible tiene cuatro pasos:
    OpenAI sólo estructura ese texto; no investiga ni completa datos. Si falta
    credencial, falla el proveedor o devuelve JSON inválido, se muestra el error y no
    se crea un fallback silencioso. El import JSON manual sigue disponible como
-   alternativa secundaria.
+   alternativa secundaria. La generación exige un título informativo de 60 a 80
+   caracteres, 3 o 4 slides con contenido suficiente para comprender toda la noticia
+   sin leer el caption y un caption con apertura local clara, emojis pertinentes,
+   fuente sólo cuando aparece en el original y 3 a 6 hashtags (incluido `#LaRioja`).
+   Si la respuesta no cumple, el generador reintenta con una lista concreta de
+   correcciones y conserva el JSON erróneo como mensaje anterior de la conversación;
+   nunca inventa contexto para alcanzar una extensión. Si se agotan los intentos pero
+   existe un JSON parseable, carga el último resultado en el editor con avisos
+   `generación IA:` para revisión manual. Los errores de proveedor o una secuencia sin
+   ningún JSON parseable siguen bloqueando la operación de forma visible.
 2. Revisar título, caption, sección, plantilla y cada slide. Se pueden editar título,
-   texto, ítems, highlights, tipo y orden.
-3. Asignar una imagen a cada slide: link público directo, archivo propio desde
-   **mi galería**, o biblioteca. Los links se validan contra SSRF, redirects,
+   texto, ítems, highlights, tipo y orden. Cada tipo puede aparecer una sola vez:
+   las opciones ya usadas quedan deshabilitadas y no existe duplicación de slides.
+   Un JSON importado con tipos repetidos se conserva como borrador inválido para no
+   perder texto, pero la publicación requiere corregirlo. La generación IA dispone
+   de `impact` como placa textual sin foto para impacto local o próximos pasos; si
+   devuelve dos `context`, el segundo pasa a `impact` sin alterar su contenido. La
+   vista Remotion usa
+   una escala Premium ampliada para que cuerpos, tarjetas, chips, cabecera de sección,
+   footer, numeración y citas sigan siendo legibles en pantalla de celular; las cards
+   automáticas mantienen su escala previa.
+3. Los controles de imagen aparecen sólo para `cover`, `image_text` y `full_image`.
+   Tocar **Abrir galería** en uno de esos slides abre un selector compacto dirigido
+   a ese slide; un click en una miniatura la ingresa si hace falta, la asigna y guarda
+   el borrador en el mismo paso. El panel **Agregar otra imagen** permite link público
+   directo o archivo propio. Los links se validan contra SSRF, redirects,
    Content-Type y límite de 20 MB; las subidas se validan por firma/contenido. Ambos
    caminos terminan en `utils.media_library.ingest_image_bytes`, con deduplicación
-   por hash. Las miniaturas de biblioteca se sirven sólo por
+   por hash. Las miniaturas se sirven sólo por
    `/api/media-library/thumb/{asset_id}`, nunca como rutas locales.
 4. Guardar borrador, previsualizar y recién entonces publicar. Preview y publicación
-   siguen usando `utils.premium_renderer.render_package_with_engine`.
+   sincronizan primero el editor actual y usan
+   `utils.premium_renderer.render_package_with_engine`; así una imagen recién
+   asignada no queda fuera por estar leyendo una versión anterior del borrador.
 
 El flujo nunca crea artículo web ni depende del CMS; Facebook nunca incluye link.
 Guardar/generar un borrador tampoco publica nada.
@@ -531,10 +800,15 @@ pipeline.
 
 Publicación parcial (`degraded`): revisar `channel_results` del paquete en
 `data/premium_packages.json`; el canal exitoso conserva su `external_id` y nunca se
-reintenta. Reintentar sólo el canal fallido:
+reintenta. `failure_metadata` identifica la etapa del carrusel y, cuando Meta los
+devuelve, el HTTP y código/subcódigo del proveedor. Instagram espera que cada placa y
+el carrusel padre lleguen a `FINISHED` antes de avanzar; la espera usa
+`PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS` (90s) y
+`PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS` (2s). Reintentar sólo el canal fallido
+y únicamente con autorización operativa vigente:
 
 ```powershell
-python -c "from utils.premium_publisher import retry_channel; import json; print(json.dumps(retry_channel('<package_id>', 'facebook'), ensure_ascii=False, indent=2))"
+python -c "from utils.premium_publisher import retry_channel; import json; print(json.dumps(retry_channel('<package_id>', '<instagram|facebook>'), ensure_ascii=False, indent=2))"
 ```
 
 Un resultado con `requires_reconciliation=true` (outcome ambiguo, típicamente
@@ -551,7 +825,7 @@ definida:
 |---|---|---:|
 | Automático (Instagram, alto volumen) | `AUTOMATIC_STATIC_RENDER_ENGINE` | `auto` |
 | Estudio Premium (manual, bajo volumen) | `PREMIUM_STATIC_RENDER_ENGINE` | `remotion` |
-| OG Facebook/web | `OG_STATIC_RENDER_ENGINE` | `pillow` |
+| OG Facebook/web | `OG_STATIC_RENDER_ENGINE` | `auto` |
 
 Las tres admiten `auto|remotion|pillow`. Precedencia: variable específica del
 workflow (si está definida explícitamente) > `STATIC_RENDER_ENGINE` legacy (sólo si
@@ -559,12 +833,11 @@ está definida explícitamente) > default seguro del workflow. **No activar
 `STATIC_RENDER_ENGINE` sin necesidad**: cambia el motor de cualquier workflow que no
 tenga su propia variable definida, incluido el automático.
 
-Ambos flujos con wiring real (Estudio Premium y, desde 2026-07-31, el automático de
-Instagram) pasan por `utils/remotion_renderer.py::render_still()`, que ahora intenta
+Los tres flujos con wiring real (Estudio Premium, automático de Instagram y OG de
+Facebook/web) pasan por `utils/remotion_renderer.py::render_still()`, que ahora intenta
 primero un **servidor de render persistente** (`remotion/render_server.mjs`) antes de
 caer al `subprocess` histórico de `npx remotion still` — ver "Servidor de render
-persistente" más abajo. El OG de Facebook/web **sigue sin wiring real a Remotion** — su
-variable existe para cuando se decida integrarlo.
+persistente" más abajo.
 
 - `utils/premium_renderer.py::render_package_with_engine` — Estudio Premium,
   `workflow="premium"` por defecto.
@@ -573,6 +846,8 @@ variable existe para cuando se decida integrarlo.
   `pipeline/custom_post.py::render_preview_image` y `preview_pipeline.py`. Nunca toca
   `generate_post`/`generate_instagram`/`generate_facebook` (Pillow) — quedan intactas
   como fallback, llamadas internamente si Remotion falla o no está disponible.
+- `layout/image_generator.py::generate_facebook_with_engine` — tarjeta OG del artículo
+  web (`workflow="og"`), con Pillow como fallback si Remotion no está disponible.
 
 ```powershell
 # Ejemplos

@@ -1,30 +1,53 @@
 import React from "react";
-import { AbsoluteFill, Img, staticFile } from "remotion";
+import { AbsoluteFill } from "remotion";
 import { useFontsReady } from "./fonts";
 import { Grain } from "./Grain";
-import { SectionBadge } from "./SectionBadge";
 import { SlideCounter } from "./SlideCounter";
-import { ModeTokens, SAFE, fullScrimStack, hexToRgba } from "./designSystem";
+import { EditorialMasthead } from "./editorial/EditorialMasthead";
+import { EditorialTexture } from "./editorial/EditorialTexture";
+import { SocialFooter } from "./editorial/SocialFooter";
+import { SourceCredit } from "./editorial/SourceCredit";
+import { SwipeCue } from "./editorial/SwipeCue";
+import { ModeTokens, hexToRgba } from "./designSystem";
 
-// Layout compartido entre PremiumSlide y AutomaticInstagramCard: fondo
-// (foto ambiental con gradientes por capas, o base de marca con textura
-// cuando no hay foto), barra de acento, grano editorial, footer con badge
-// de sección + numeración, y marca de logo discreta. Un solo lugar para la
-// jerarquía visual compartida entre las dos piezas — ver
-// docs/DECISIONS.md "Editorial Cinemática Riojana".
+// Marco compartido v2: masthead de marca real (no una barra lateral +
+// logo chico, queja explícita del brief), grano/textura, y un footer
+// liviano con crédito de fuente + señal de continuidad + numeración.
 //
-// FacebookOgCard sigue usando el StillLayout anterior de forma implícita
-// (no se tocó en esta entrega, workflow "og" fuera de alcance) — este
-// archivo es exclusivamente para PremiumSlide/AutomaticInstagramCard.
+// A diferencia de v1 (donde el "fondo con foto" era SIEMPRE la imagen
+// blureada a 46px, incluso en cover/full_image — la foto nítida nunca se
+// mostraba realmente), acá `media` es responsabilidad de cada slide
+// (vía HeroMedia, ver shared/editorial/HeroMedia.tsx) y se pinta a pantalla
+// completa DEBAJO del masthead/footer, con foto nítida real cuando el
+// tratamiento es full_bleed/framed. StillLayout sólo agrega textura,
+// scrim superior de legibilidad y chrome de marca — nunca decide el
+// tratamiento fotográfico.
+//
+// FacebookOgCard sigue usando LegacyStillLayout (workflow "og" fuera de
+// alcance de este rediseño).
+export const MASTHEAD_H = 92;
+export const FOOTER_H = 78;
 
 export type StillLayoutProps = {
   width: number;
   height: number;
   mode: ModeTokens;
   section?: string;
+  locality?: string;
   index?: number;
   total?: number;
-  backgroundAssetFile?: string; // relativo a public/, "" si no hay imagen
+  sourceCredit?: string;
+  showSwipeCue?: boolean;
+  // Piezas de una sola imagen (AutomaticInstagramCard/FacebookOgCard) no
+  // tienen fuente que citar ni carrusel que señalar — muestran en su lugar
+  // la firma social compacta (FB/IG + sitio). PremiumSlide nunca activa
+  // esto: su footer sigue siendo crédito de fuente + deslizamiento + numeración.
+  showSocialFooter?: boolean;
+  boxedSection?: boolean;
+  mastheadHeight?: number;
+  footerHeight?: number;
+  chromeScale?: number;
+  media?: React.ReactNode; // pintado a pantalla completa, debajo de masthead/footer
   children: React.ReactNode;
 };
 
@@ -33,43 +56,27 @@ export const StillLayout: React.FC<StillLayoutProps> = ({
   height,
   mode,
   section,
+  locality,
   index,
   total,
-  backgroundAssetFile,
+  sourceCredit,
+  showSwipeCue,
+  showSocialFooter,
+  boxedSection,
+  mastheadHeight = MASTHEAD_H,
+  footerHeight = FOOTER_H,
+  chromeScale = 1,
+  media,
   children,
 }) => {
   // Bloquea la captura de Remotion (delayRender) hasta que Archivo/Source
-  // Serif 4 están registradas de verdad y el DOM volvió a pintar con ellas.
-  // `children` (títulos/textos vía FittedTitle) sólo se monta después,
-  // así fitText.ts siempre mide con la tipografía real — nunca con el
-  // fallback del sistema. Ver docs/DECISIONS.md, bug detectado en smoke
-  // test manual (wrap incorrecto por medir antes de que cargara la fuente).
+  // Serif 4 están registradas de verdad y el DOM volvió a pintar con ellas
+  // — ver docs/DECISIONS.md, bug de wrap incorrecto detectado en smoke test.
   const fontsReady = useFontsReady();
-  const footerH = SAFE.footerH;
-  const hasImage = Boolean(backgroundAssetFile);
 
   return (
     <AbsoluteFill style={{ backgroundColor: mode.ink }}>
-      {hasImage ? (
-        <>
-          <Img
-            src={staticFile(backgroundAssetFile as string)}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width,
-              height,
-              objectFit: "cover",
-              filter: `blur(46px) brightness(0.5) ${mode.photoFilter}`,
-              transform: "scale(1.15)",
-            }}
-          />
-          {fullScrimStack(mode).map((layer, i) => (
-            <div key={i} style={{ position: "absolute", inset: 0, background: layer }} />
-          ))}
-        </>
-      ) : (
+      {!media && (
         <>
           <div
             style={{
@@ -88,37 +95,58 @@ export const StillLayout: React.FC<StillLayoutProps> = ({
         </>
       )}
 
+      {media}
+
+      {media && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 190,
+            background: "linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0) 100%)",
+          }}
+        />
+      )}
+
+      <EditorialTexture mode={mode} zone="footer" width={width} height={height} />
       <Grain opacity={0.03} />
 
-      {/* Barra de acento — identidad compartida entre las piezas */}
-      <div style={{ position: "absolute", top: 0, left: 0, width: SAFE.accentBarW, height, backgroundColor: mode.accent }} />
-
-      <div style={{ position: "absolute", inset: 0 }}>{fontsReady ? children : null}</div>
-
-      {/* Marca discreta, esquina superior derecha — siempre por encima del contenido de la slide */}
-      <Img
-        src={staticFile("logo.png")}
-        style={{ position: "absolute", top: 28, right: 28, width: 92, opacity: 0.86, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))" }}
+      <EditorialMasthead
+        mode={mode}
+        section={section || ""}
+        locality={locality}
+        pad={mode.pad}
+        scale={chromeScale}
+        boxedSection={boxedSection}
       />
 
-      {/* Footer: separador fino + badge de sección + numeración */}
+      <div style={{ position: "absolute", top: mastheadHeight, left: 0, right: 0, bottom: footerHeight }}>
+        {fontsReady ? children : null}
+      </div>
+
+      {/* Footer: crédito de fuente (si hay) + señal de continuidad + numeración */}
       <div
         style={{
           position: "absolute",
           left: 0,
           right: 0,
           bottom: 0,
-          height: footerH,
+          height: footerHeight,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          paddingLeft: SAFE.pad,
-          paddingRight: SAFE.pad,
+          paddingLeft: mode.pad,
+          paddingRight: mode.pad,
         }}
       >
-        <div style={{ position: "absolute", top: 0, left: SAFE.accentBarW, right: 0, height: 1, backgroundColor: hexToRgba(mode.accent, 0.35) }} />
-        <SectionBadge label={(section || "").toUpperCase()} accent={mode.accent} size="sm" />
-        {total ? <SlideCounter index={index || 1} total={total} accent={mode.accent} /> : null}
+        <div style={{ position: "absolute", top: 0, left: mode.pad, right: mode.pad, height: 1, backgroundColor: hexToRgba(mode.accent, 0.3) }} />
+        {showSocialFooter ? <SocialFooter scale={chromeScale} /> : <SourceCredit text={sourceCredit} scale={chromeScale} />}
+        <div style={{ display: "flex", alignItems: "center", gap: Math.round(28 * chromeScale), marginLeft: "auto" }}>
+          {showSwipeCue ? <SwipeCue mode={mode} scale={chromeScale} /> : null}
+          {total ? <SlideCounter index={index || 1} total={total} accent={mode.accent} scale={chromeScale} /> : null}
+        </div>
       </div>
     </AbsoluteFill>
   );

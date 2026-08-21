@@ -116,39 +116,39 @@ class ExternalPreflightTests(unittest.TestCase):
         from utils.preflight import (
             check_cms,
             check_facebook,
+            check_gemini,
             check_instagram,
-            check_openai,
             check_r2,
         )
         from utils.stage_result import StageStatus
 
-        for checker in (check_openai, check_r2, check_cms, check_facebook, check_instagram):
+        for checker in (check_gemini, check_r2, check_cms, check_facebook, check_instagram):
             with self.subTest(check=checker.__name__):
                 result = checker({})
                 self.assertEqual(StageStatus.BLOCKED, result.status)
                 self.assertEqual(3, result.exit_code)
 
-    def test_openai_structured_success_and_invalid_token(self):
-        from utils.preflight import check_openai
+    def test_gemini_structured_success_and_invalid_token(self):
+        from utils.preflight import check_gemini
         from utils.stage_result import StageStatus
 
-        response = SimpleNamespace(output_text='{"status":"ok","purpose":"lvr_preflight"}')
+        response = SimpleNamespace(text='{"status":"ok","purpose":"lvr_preflight"}')
         client = SimpleNamespace(
-            responses=SimpleNamespace(create=mock.Mock(return_value=response))
+            models=SimpleNamespace(generate_content=mock.Mock(return_value=response))
         )
-        success = check_openai(
-            {"OPENAI_API_KEY": "test", "OPENAI_MODEL": "model"},
+        success = check_gemini(
+            {"GEMINI_API_KEY": "test", "GEMINI_MODEL": "model"},
             client_factory=lambda **kwargs: client,
         )
 
         class Unauthorized(Exception):
-            status_code = 401
+            code = 401
 
         denied_client = SimpleNamespace(
-            responses=SimpleNamespace(create=mock.Mock(side_effect=Unauthorized()))
+            models=SimpleNamespace(generate_content=mock.Mock(side_effect=Unauthorized()))
         )
-        denied = check_openai(
-            {"OPENAI_API_KEY": "test"},
+        denied = check_gemini(
+            {"GEMINI_API_KEY": "test"},
             client_factory=lambda **kwargs: denied_client,
         )
 
@@ -347,7 +347,7 @@ class ExternalPreflightTests(unittest.TestCase):
             name: (lambda current=name: StageResult(f"preflight_{current}", StageStatus.SUCCESS))
             for name in (
                 "sources",
-                "openai",
+                "gemini",
                 "r2",
                 "cms",
                 "facebook",
@@ -356,7 +356,7 @@ class ExternalPreflightTests(unittest.TestCase):
                 "supervisor",
             )
         }
-        overrides["openai"] = lambda: StageResult("preflight_openai", StageStatus.BLOCKED)
+        overrides["gemini"] = lambda: StageResult("preflight_gemini", StageStatus.BLOCKED)
         result = run_preflight("all", {}, overrides=overrides)
 
         self.assertEqual(StageStatus.BLOCKED, result.status)

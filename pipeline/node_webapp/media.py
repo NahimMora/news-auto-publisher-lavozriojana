@@ -179,7 +179,7 @@ def convert_main_image_to_webp(source_path: Path, noticia: dict) -> tuple[Path, 
 
 
 def generate_og_image(source_path: Path, digest: str, title: str, noticia: dict | None = None) -> Path:
-    from layout.image_generator import generate_post, FB_W, FB_H
+    from layout.image_generator import generate_facebook_with_engine
 
     slug = slugify(title)
     dest = _media_work_dir() / f"og_{slug}_{digest[:10]}.jpg"
@@ -190,8 +190,8 @@ def generate_og_image(source_path: Path, digest: str, title: str, noticia: dict 
             "seccion": (noticia or {}).get("seccion", ""),
             "imagen_url": "",
         }
-        result = generate_post(article, FB_W, FB_H, preloaded_img=raw)
-    result.save(dest, "JPEG", quality=88, optimize=True, progressive=True)
+        jpeg_bytes, _engine_used = generate_facebook_with_engine(article, preloaded_img=raw)
+    dest.write_bytes(jpeg_bytes)
     return dest
 
 

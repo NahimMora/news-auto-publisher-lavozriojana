@@ -12,7 +12,7 @@ import time
 
 from utils.file_manager import update_json
 from utils.paths import data_dir
-from utils.premium_contract import new_package
+from utils.premium_contract import IMAGE_REQUIRED_SLIDE_TYPES, new_package
 
 PACKAGES_PATH = str(data_dir() / "premium_packages.json")
 
@@ -31,6 +31,10 @@ def save_package(package: dict) -> dict:
     """Upsert por ``id``. Guarda incluso si el paquete no es publicable aún
     (un borrador debe ser recuperable aunque tenga errores de validación)."""
     package = copy.deepcopy(package)
+    for slide in package.get("slides") or []:
+        if isinstance(slide, dict) and slide.get("type") not in IMAGE_REQUIRED_SLIDE_TYPES:
+            slide["asset_id"] = ""
+            slide.pop("asset_label", None)
     package["updated_at_ts"] = int(time.time())
 
     def mutate(packages):

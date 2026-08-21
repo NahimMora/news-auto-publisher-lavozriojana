@@ -38,7 +38,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils.editorial_priority import item_is_breaking, normalize_category
+from utils.category_performance import is_strong_performing_category, load_category_performance
+from utils.editorial_priority import item_category, item_is_breaking, normalize_category
 from utils.file_manager import JsonStateError, load_json, update_json, update_json_files
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
@@ -310,10 +311,13 @@ def evaluate_routing(
     *,
     recent_topic_entries: list[dict] | None = None,
     now_ts: int | None = None,
+    category_performance: dict | None = None,
 ) -> RoutingDecision:
     """Decisión pura. ``recent_topic_entries`` son entradas ya podadas a la
     ventana de 12h para el ``topic_key`` de esta noticia y el canal
-    Instagram, más antiguas primero. No hace I/O.
+    Instagram, más antiguas primero. ``category_performance`` es el snapshot
+    ya cargado por el llamador (``utils.category_performance.load_category_performance``,
+    {} si la promoción por rendimiento está apagada o sin datos aún). No hace I/O.
     """
     now_ts = int(now_ts if now_ts is not None else time.time())
     recent_topic_entries = recent_topic_entries or []
@@ -343,7 +347,14 @@ def evaluate_routing(
     riojan_link, locality_reason = detect_riojan_link(noticia)
     reasons = [locality_reason]
 
-    if not riojan_link:
+    category = item_category(noticia)
+    strong_category = not riojan_link and is_strong_performing_category(
+        category, category_performance or {}
+    )
+    if strong_category:
+        reasons.append(f"category_performance:{category}")
+
+    if not (riojan_link or strong_category):
         instagram_route = "candidate"
         reasons.append("gate:no_riojan_link")
     else:
@@ -540,13 +551,20 @@ def _record_candidate(noticia: dict, decision: RoutingDecision, *, channel: str)
     )
 
 
-def apply_routing(noticia: dict, *, now_ts: int | None = None) -> RoutingDecision:
+def apply_routing(
+    noticia: dict,
+    *,
+    now_ts: int | None = None,
+    category_performance: dict | None = None,
+) -> RoutingDecision:
     """Calcula y persiste la decisión de ruteo (topic state, evento, candidata).
 
     Aditivo: nunca modifica colas productivas (noticias_meta.json,
     noticias_sociales_pendientes.json, etc). Sólo la aplicación en
     ``meta/run_ig.py`` (detrás de ``EDITORIAL_ROUTER_ENABLED``) consume
     ``route_by_channel.instagram`` para filtrar la selección automática.
+    ``category_performance``: ver ``evaluate_routing``; el llamador lo carga
+    una sola vez por corrida (``utils.category_performance.load_category_performance``).
     """
     now_ts = int(now_ts if now_ts is not None else time.time())
     topic_key = compute_topic_key(noticia)
@@ -559,7 +577,12 @@ def apply_routing(noticia: dict, *, now_ts: int | None = None) -> RoutingDecisio
         topic_state = state.get(topic_key) or {}
         channel_entries = _prune_entries(topic_state.get("instagram") or [], now_ts)
 
-        decision = evaluate_routing(noticia, recent_topic_entries=channel_entries, now_ts=now_ts)
+        decision = evaluate_routing(
+            noticia,
+            recent_topic_entries=channel_entries,
+            now_ts=now_ts,
+            category_performance=category_performance,
+        )
         result["decision"] = decision
 
         if decision.editorial_route != "suppressed":
@@ -603,6 +626,7 @@ def report_routing(noticias: list[dict], *, limit: int | None = None, now_ts: in
     now_ts = int(now_ts if now_ts is not None else time.time())
     persisted_state = load_json(_routing_state_path(), {}, expected_type=dict)
     local_state = copy.deepcopy(persisted_state)
+    category_performance = load_category_performance()
 
     items = noticias[:limit] if limit else noticias
     rows: list[dict] = []
@@ -611,7 +635,12 @@ def report_routing(noticias: list[dict], *, limit: int | None = None, now_ts: in
         topic_state = local_state.get(topic_key) or {}
         channel_entries = _prune_entries(topic_state.get("instagram") or [], now_ts)
 
-        decision = evaluate_routing(noticia, recent_topic_entries=channel_entries, now_ts=now_ts)
+        decision = evaluate_routing(
+            noticia,
+            recent_topic_entries=channel_entries,
+            now_ts=now_ts,
+            category_performance=category_performance,
+        )
 
         if decision.editorial_route != "suppressed":
             channel_entries.append(_entry_from_decision(noticia, decision))
@@ -646,6 +675,42 @@ def list_candidates(*, channel: str | None = None, status: str | None = None) ->
     if status:
         rows = [item for item in rows if item.get("status") == status]
     return rows
+
+
+def manual_automatic_candidates(*, channel: str = "instagram") -> list[dict]:
+    """Candidatas que el operador promovió explícitamente a automático.
+
+    ``status=automatic`` por sí solo no alcanza: debe existir una transición
+    durable ``candidate -> automatic`` en el historial manual. Las entradas
+    ``published_reuse`` se excluyen porque su acción "quitar de candidatas"
+    nunca significa volver a publicar una pieza ya confirmada.
+    """
+    promoted: list[dict] = []
+    for item in list_candidates(channel=channel, status="automatic"):
+        if item.get("origin") == "published_reuse":
+            continue
+        history = item.get("manual_override_history")
+        if not isinstance(history, list):
+            continue
+        was_manually_promoted = any(
+            isinstance(change, dict)
+            and change.get("from") == "candidate"
+            and change.get("to") == "automatic"
+            for change in history
+        )
+        identity = str(item.get("identity") or "").strip()
+        if was_manually_promoted and identity:
+            promoted.append(item)
+    return promoted
+
+
+def manual_automatic_identities(*, channel: str = "instagram") -> set[str]:
+    """Identidades de las candidatas promovidas manualmente a automático."""
+    return {
+        str(item.get("identity") or "").strip()
+        for item in manual_automatic_candidates(channel=channel)
+        if str(item.get("identity") or "").strip()
+    }
 
 
 def _sync_noticia_route(identity: str, target_route: str) -> bool:

@@ -64,6 +64,7 @@ CYCLE_SCRIPTS = [
     ("pipeline/publish_web.py", 3600, "web"),
     ("meta/run_fb.py", 600, "facebook"),
     ("meta/run_ig.py", 600, "instagram"),
+    ("meta/ig_insights.py", 600, "instagram"),
 ]
 
 
@@ -341,7 +342,7 @@ def cmd_run_once(args) -> int:
                     "ALERTS_ENABLED": "false",
                     "PRIVATE_API_KEY": "PENDIENTE",
                     "WEBAPP_API_KEY": "PENDIENTE",
-                    "OPENAI_API_KEY": "PENDIENTE",
+                    "GEMINI_API_KEY": "PENDIENTE",
                     "FB_PAGE_ACCESS_TOKEN": "PENDIENTE",
                     "IG_ACCESS_TOKEN": "PENDIENTE",
                     "R2_ACCESS_KEY_ID": "PENDIENTE",

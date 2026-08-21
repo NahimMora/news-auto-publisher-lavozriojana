@@ -9,12 +9,14 @@ Node/npm son dependencias de sistema; no se instalan con `pip`.
 | ID | Tipo | Resolución | Uso |
 |---|---|---|---|
 | `Main` | video | 1080×1920 | Reel automático/manual (`video_reel_manager.py`) |
+| `EditorialReel` | video | 1080×1920 | Reel manual profesional, opt-in por flag; incluye cierre |
 | `Outro` | video | 1080×1920 | Cierre de marca, cacheado una vez |
 | `PremiumSlide` | still | 1080×1350 | Slides del carrusel premium (`utils/premium_renderer.py`) |
 | `AutomaticInstagramCard` | still | 1080×1350 | Card automática de Instagram (`layout/image_generator.py::generate_instagram_with_engine`) |
 | `FacebookOgCard` | still | 1200×630 | Imagen OG para Facebook/web (workflow `og`, sin wiring real todavía) |
+| `PaparazziClip` | video | 1080×1350 | Clip de video del carrusel paparazzi (imagen+video), mismo masthead/footer que `AutomaticInstagramCard` (`utils/video_renderer.py::_render_remotion_paparazzi_clip`) |
 
-## Editorial Cinemática Riojana (sistema visual, `PremiumSlide`/`AutomaticInstagramCard`)
+## Editorial Cinemática Riojana
 
 `PremiumSlide` y `AutomaticInstagramCard` comparten un sistema de diseño centralizado
 en `src/shared/`:
@@ -45,8 +47,11 @@ en `src/shared/`:
   `FacebookOgCard.tsx` sigue usando `LegacyStillLayout.tsx` (copia congelada del layout
   anterior) para quedar pixel-idéntico — está fuera del alcance de este rediseño.
 
-`Main.tsx`/`Outro.tsx` (Reels) no se tocaron — siguen usando `HighlightedTitle.tsx`
-(wrapping implícito del navegador) tal como estaban.
+`EditorialReel.tsx` extiende el mismo sistema al video sin reemplazar `Main`: usa
+Archivo/Source Serif 4, color por sección, auto-fit, destaque de frase, reveal del
+medio, Ken Burns/parallax, título por renglones, fase compacta y un cierre integrado.
+`utils/video_renderer.py` lo selecciona sólo con
+`REEL_CINEMATIC_VISUAL_STYLE_ENABLED=true`; `Main` y `Outro` siguen como rollback.
 
 ## Paleta oficial
 
@@ -71,6 +76,7 @@ directamente en las últimas dos).
 npm i                              # instalar dependencias
 npm run dev                        # Remotion Studio (preview interactivo)
 npx remotion render Main out.mp4 --props=props.json
+npx remotion render EditorialReel out.mp4 --props=props.json
 npx remotion still PremiumSlide out.png --props=props.json
 npm run lint                       # eslint src && tsc --noEmit
 node render_server.mjs --port=0    # levantar el servidor de render persistente a mano (debug)
@@ -78,7 +84,11 @@ node render_server.mjs --port=0    # levantar el servidor de render persistente 
 
 ## Invocación desde Python
 
-- `utils/video_renderer.py` — reels (`Main`, `Outro`), vía `npx remotion render`.
+- `utils/video_renderer.py` — reels (`Main`, `Outro`) y el clip del carrusel paparazzi
+  (`PaparazziClip`, `_render_remotion_paparazzi_clip`), todos vía `npx remotion render`
+  (sin servidor persistente — ver más abajo). Sin Remotion/Node disponible, el clip
+  paparazzi cae a un overlay PIL/ffmpeg equivalente (`_paparazzi_overlay` +
+  `_ffmpeg_compose_paparazzi_clip`), mismo patrón que `render_video()` con Main.
 - `utils/remotion_renderer.py` — piezas estáticas (`render_still`). Intenta primero el
   **servidor de render persistente** (`render_server.mjs`, ver abajo) y cae al
   `subprocess` de `npx remotion still` si no puede levantar — mismo contrato de

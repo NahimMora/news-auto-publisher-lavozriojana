@@ -89,11 +89,31 @@ class ManualInterfaceSecurityTests(unittest.TestCase):
         self.assertNotIn("(d.web_ok) ? 'ok'", html)
         self.assertIn("title.textContent = listText(it.titulo)", html)
         self.assertIn("detail.textContent = listText(", html)
+        self.assertIn('id="custom_titulo" maxlength="120"', html)
+        self.assertIn("0/120", html)
+        self.assertIn("Una frase relevante se destaca automáticamente", html)
         designer = (
             Path(__file__).resolve().parents[1] / "instagram_layout_designer.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn(".innerHTML =", designer)
         self.assertIn("infoTitle.textContent", designer)
+
+    def test_candidates_tab_uses_full_width_and_safe_dom_rendering(self):
+        import video_reel_manager
+
+        html = video_reel_manager.HTML
+        self.assertIn("#app_candidates{grid-template-columns:minmax(0,1fr)", html)
+        self.assertIn('class="candidates-layout"', html)
+        self.assertIn('class="candidate-list" id="candidates_list"', html)
+        self.assertIn("item.className = 'candidate-card'", html)
+        self.assertIn("title.textContent = c.titulo", html)
+        self.assertIn("if (!r.ok) throw new Error", html)
+        self.assertIn("renderCandidateEmpty(container)", html)
+        self.assertIn("decisión manual autoritativa", html)
+        self.assertIn("quedará habilitada para publicarse automáticamente", html)
+        self.assertIn("todavía no tenga URL Web", html)
+        self.assertIn("Entrará en la cola de Instagram en el próximo ciclo", html)
+        self.assertNotIn("container.innerHTML", html)
 
     def test_external_bind_is_rejected(self):
         from video_reel_manager import _safe_object_id, validate_bind_host

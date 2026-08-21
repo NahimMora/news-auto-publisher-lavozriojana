@@ -25,6 +25,7 @@ class InstagramCarouselClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "premium_ig.json"
             calls = []
+            status_calls = []
 
             def fake_post(url, data=None, timeout=None):
                 calls.append((url, dict(data or {})))
@@ -36,12 +37,18 @@ class InstagramCarouselClientTests(unittest.TestCase):
                     return FakeResponse(200, {"id": "ig-post-final"})
                 return FakeResponse(400, {})
 
+            def fake_get(url, params=None, timeout=None):
+                status_calls.append(url.rsplit("/", 1)[-1])
+                return FakeResponse(200, {"status_code": "FINISHED"})
+
             with patch.object(ig_client, "IG_ACCOUNT_ID", "acc"), patch.object(
                 ig_client, "IG_ACCESS_TOKEN", "token"
             ), patch.object(ig_client, "PREMIUM_IG_STATE_PATH", str(state)), patch.object(
                 ig_client, "IG_RATE_LIMIT_PATH", str(Path(tmp) / "rl.json")
             ), patch.object(
                 ig_client.requests, "post", side_effect=fake_post
+            ), patch.object(
+                ig_client.requests, "get", side_effect=fake_get
             ), patch.object(
                 ig_client.r2_storage, "upload_temp", side_effect=[(f"https://r2/{i}", f"key{i}") for i in range(3)]
             ), patch.object(
@@ -57,6 +64,7 @@ class InstagramCarouselClientTests(unittest.TestCase):
             parent_calls = [c for c in calls if c[1].get("media_type") == "CAROUSEL"]
             self.assertEqual(1, len(parent_calls))
             self.assertEqual("child-1,child-2,child-3", parent_calls[0][1]["children"])
+            self.assertEqual(["child-1", "child-2", "child-3", "parent-container"], status_calls)
 
     def test_dedup_avoids_double_publication(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,6 +106,38 @@ class InstagramCarouselClientTests(unittest.TestCase):
             result = ig_client.post_premium_carousel_to_instagram({"id": "x"}, [b"only-one"])
         self.assertEqual("invalid_slide_count", result.error_type)
         post.assert_not_called()
+
+    def test_child_processing_error_stops_before_parent_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "premium_ig.json"
+
+            def fake_post(url, data=None, timeout=None):
+                return FakeResponse(200, {"id": "child-1"})
+
+            with patch.object(ig_client, "IG_ACCOUNT_ID", "acc"), patch.object(
+                ig_client, "IG_ACCESS_TOKEN", "token"
+            ), patch.object(ig_client, "PREMIUM_IG_STATE_PATH", str(state)), patch.object(
+                ig_client, "IG_RATE_LIMIT_PATH", str(Path(tmp) / "rl.json")
+            ), patch.object(
+                ig_client.requests, "post", side_effect=fake_post
+            ) as post, patch.object(
+                ig_client.requests,
+                "get",
+                return_value=FakeResponse(200, {"status_code": "ERROR", "status": "Rejected"}),
+            ), patch.object(
+                ig_client.r2_storage,
+                "upload_temp",
+                side_effect=[("https://r2/1", "key1"), ("https://r2/2", "key2")],
+            ), patch.object(ig_client.r2_storage, "delete"):
+                result = ig_client.post_premium_carousel_to_instagram(
+                    {"id": "pkg-error", "title": "T"},
+                    [b"a", b"b"],
+                )
+
+            self.assertEqual("media_processing_error", result.error_type)
+            self.assertEqual("carousel_child_processing", result.details["stage"])
+            self.assertEqual(1, result.details["container_index"])
+            self.assertEqual(1, post.call_count)
 
 
 class FacebookDirectMediaClientTests(unittest.TestCase):
@@ -266,7 +306,7 @@ class PremiumPublisherOrchestratorTests(unittest.TestCase):
             destination=("instagram", "facebook"),
         )
         add_slide(draft, "closing", text="a")
-        add_slide(draft, "closing", text="b")
+        add_slide(draft, "context", title="Contexto", text="b")
         from utils.premium_post_queue import save_package
 
         save_package(draft)
@@ -309,6 +349,43 @@ class PremiumPublisherOrchestratorTests(unittest.TestCase):
         self.assertEqual("degraded", result["status"])
         self.assertEqual("ig-ok", result["channel_results"]["instagram"]["external_id"])
         self.assertFalse(result["channel_results"]["facebook"]["ok"])
+
+    def test_provider_codes_and_carousel_stage_are_persisted_safely(self):
+        from utils.operation_result import OperationResult
+        from utils.premium_publisher import publish_package
+        from utils.stage_result import StageStatus
+
+        draft = self._draft()
+        with patch("meta.ig_client.post_premium_carousel_to_instagram") as ig_mock, patch(
+            "meta.fb_client.post_premium_direct_media_to_facebook"
+        ) as fb_mock:
+            ig_mock.return_value = OperationResult(
+                StageStatus.FAILED,
+                error_type="request_rejected",
+                error_code=400,
+                response={
+                    "error": {
+                        "code": 100,
+                        "error_subcode": 2207030,
+                        "type": "OAuthException",
+                        "message": "detalle externo que no debe persistirse completo",
+                    }
+                },
+                details={
+                    "publication_outcome": "not_published",
+                    "stage": "carousel_parent_create",
+                },
+            )
+            fb_mock.return_value = OperationResult(StageStatus.SUCCESS, external_id="fb-ok")
+            result = publish_package(draft["id"])
+
+        instagram = result["channel_results"]["instagram"]
+        self.assertEqual("degraded", result["status"])
+        self.assertEqual(400, instagram["error_code"])
+        self.assertEqual(100, instagram["failure_metadata"]["provider_code"])
+        self.assertEqual(2207030, instagram["failure_metadata"]["provider_subcode"])
+        self.assertEqual("carousel_parent_create", instagram["failure_metadata"]["stage"])
+        self.assertNotIn("message", instagram["failure_metadata"])
 
     def test_retry_only_calls_the_failed_channel(self):
         from utils.operation_result import OperationResult

@@ -175,11 +175,15 @@ def remotion_available(*, force_recheck: bool = False) -> bool:
 # calidad visual y cae a Pillow sin bloquear una publicación real si el
 # servidor Node tiene un problema puntual — nunca "remotion" estricto acá,
 # que haría fallar la publicación entera ante cualquier hiccup de Node.
-# "og" (Facebook/web) no se tocó en esta entrega — fuera de alcance.
+# "og" siguió el mismo camino (2026-07-31, segunda ronda): la tarjeta Open
+# Graph se genera una sola vez por artículo al publicar en la web (no es un
+# flujo de alto volumen como "automatic"), y "auto" nunca bloquea esa
+# publicación si Remotion falla — cae a Pillow en silencio hacia el
+# llamador, sólo logueado. Ver layout/image_generator.py::generate_facebook_with_engine.
 WORKFLOW_DEFAULT_ENGINE = {
     "automatic": "auto",
     "premium": "remotion",
-    "og": "pillow",
+    "og": "auto",
 }
 WORKFLOW_ENV_VARS = {
     "automatic": "AUTOMATIC_STATIC_RENDER_ENGINE",
@@ -263,8 +267,13 @@ def render_still(
     *,
     asset_paths: dict[str, str] | None = None,
     timeout: int = 180,
+    scale: float = 1.0,
 ) -> tuple[bytes, dict]:
     """Renderiza una composición still y devuelve ``(png_bytes, metadata)``.
+
+    ``scale`` controla la densidad de píxeles sin alterar la geometría CSS
+    de la composición: ``2`` convierte, por ejemplo, un lienzo 1080×1350 en
+    un PNG 2160×2700. Se limita al rango seguro aceptado por Remotion.
 
     ``asset_paths`` mapea el nombre del prop de asset (p.ej. ``"assetFile"``)
     a una ruta local real. Intenta primero el servidor de render persistente
@@ -277,11 +286,30 @@ def render_still(
     if not os.path.isdir(REMOTION_DIR):
         raise RemotionRenderError("carpeta remotion/ no encontrada")
 
-    server_result = _render_still_via_server(composition_id, props, asset_paths=asset_paths, timeout=timeout)
+    try:
+        render_scale = float(scale)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("scale debe ser un número entre 0.1 y 4") from exc
+    if not 0.1 <= render_scale <= 4:
+        raise ValueError("scale debe estar entre 0.1 y 4")
+
+    server_result = _render_still_via_server(
+        composition_id,
+        props,
+        asset_paths=asset_paths,
+        timeout=timeout,
+        scale=render_scale,
+    )
     if server_result is not None:
         return server_result
 
-    return _render_still_via_subprocess(composition_id, props, asset_paths=asset_paths, timeout=timeout)
+    return _render_still_via_subprocess(
+        composition_id,
+        props,
+        asset_paths=asset_paths,
+        timeout=timeout,
+        scale=render_scale,
+    )
 
 
 def _render_still_via_server(
@@ -290,6 +318,7 @@ def _render_still_via_server(
     *,
     asset_paths: dict[str, str] | None,
     timeout: int,
+    scale: float,
 ) -> tuple[bytes, dict] | None:
     """Devuelve ``(png_bytes, metadata)`` vía el servidor persistente, o
     ``None`` si el servidor no está disponible (el llamador debe caer al
@@ -306,6 +335,7 @@ def _render_still_via_server(
         "compositionId": composition_id,
         "inputProps": props,
         "assetPaths": asset_paths or {},
+        "scale": scale,
     }
     try:
         response = requests.post(
@@ -330,10 +360,25 @@ def _render_still_via_server(
             detail = response.text[:500]
         raise RemotionRenderError(f"servidor de render persistente falló para {composition_id}: {detail}")
 
+    reported_scale = response.headers.get("X-Render-Scale")
+    if scale != 1 and reported_scale != f"{scale:g}":
+        # Compatibilidad durante una actualización: un proceso Node que ya
+        # estaba vivo puede ejecutar la versión previa del protocolo e
+        # ignorar ``scale``. En ese caso descartamos su PNG 1× y usamos el
+        # subprocess, que sí respeta la resolución pedida.
+        logger.warning(
+            "servidor de render persistente no confirmó scale=%s para %s; "
+            "se usa el subprocess compatible",
+            scale,
+            composition_id,
+        )
+        return None
+
     return response.content, {
         "engine": "remotion",
         "duration_seconds": round(duration, 3),
         "render_path": "persistent_server",
+        "scale": scale,
     }
 
 
@@ -343,6 +388,7 @@ def _render_still_via_subprocess(
     *,
     asset_paths: dict[str, str] | None = None,
     timeout: int = 180,
+    scale: float = 1.0,
 ) -> tuple[bytes, dict]:
     """Camino histórico (Fase 4): ``npx remotion still`` por render, re-bundlea
     cada vez. Se conserva como red de seguridad interna cuando el servidor
@@ -371,7 +417,16 @@ def _render_still_via_subprocess(
 
         try:
             result = subprocess.run(
-                _npx_args(["remotion", "still", composition_id, output_path, f"--props={props_path}"]),
+                _npx_args(
+                    [
+                        "remotion",
+                        "still",
+                        composition_id,
+                        output_path,
+                        f"--props={props_path}",
+                        f"--scale={scale:g}",
+                    ]
+                ),
                 cwd=REMOTION_DIR,
                 capture_output=True,
                 text=True,
@@ -389,7 +444,12 @@ def _render_still_via_subprocess(
 
         with open(output_path, "rb") as handle:
             data = handle.read()
-        return data, {"engine": "remotion", "duration_seconds": round(duration, 3), "render_path": "subprocess"}
+        return data, {
+            "engine": "remotion",
+            "duration_seconds": round(duration, 3),
+            "render_path": "subprocess",
+            "scale": scale,
+        }
     finally:
         for path in copied_assets:
             try:

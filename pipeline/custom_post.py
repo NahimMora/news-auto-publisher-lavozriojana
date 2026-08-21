@@ -29,6 +29,8 @@ SECTIONS = [
     "salud", "educacion", "deportes", "cultura", "espectaculos",
 ]
 
+CUSTOM_TITLE_MAX_CHARS = 120
+
 
 def _uploaded_local_path(value: str) -> str:
     """Resuelve únicamente uploads generados por la UI local."""
@@ -88,8 +90,10 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
     comporten igual que para cualquier otra nota.
     """
     titulo = " ".join(str(payload.get("titulo") or "").split())
-    if not (8 <= len(titulo) <= 240):
-        raise ValueError("El titulo debe tener entre 8 y 240 caracteres")
+    if not (8 <= len(titulo) <= CUSTOM_TITLE_MAX_CHARS):
+        raise ValueError(
+            f"El título debe tener entre 8 y {CUSTOM_TITLE_MAX_CHARS} caracteres"
+        )
 
     parrafos = _split_paragraphs(payload.get("cuerpo"))
     if not parrafos:
@@ -117,6 +121,20 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
     caption = "\n\n".join(parrafos)[:2200] or titulo
     dedup_key = str(payload.get("dedup_key") or f"custom:{uuid4().hex[:16]}")
 
+    # Completar localidad/bajada por IA para la card de Instagram (ver
+    # openIA/caption_generator.py::generate_locality_and_deck). Nunca
+    # bloquea la publicación manual: si OpenAI no está disponible o falla,
+    # quedan vacíos y la imagen se genera igual, sin chip ni bajada.
+    try:
+        from openIA.caption_generator import generate_locality_and_deck
+        locality_deck = generate_locality_and_deck(
+            {"titulo": titulo, "parrafos": parrafos},
+            include_highlight=True,
+        )
+    except Exception as exc:
+        logger.warning("generate_locality_and_deck fallo para publicacion manual: %s", exc)
+        locality_deck = {"locality": "", "deck": ""}
+
     noticia = {
         "media_type": "image",
         "titulo": titulo,
@@ -133,6 +151,11 @@ def build_custom_noticia(payload: dict, *, require_image: bool = True) -> dict:
         "titulo_instagram": titulo[:80],
         "texto_instagram": caption,
         "caption": caption,
+        "locality": locality_deck.get("locality", ""),
+        "deck": locality_deck.get("deck", ""),
+        "highlight_terms": [locality_deck["highlight_phrase"]]
+        if locality_deck.get("highlight_phrase")
+        else [],
         "dedup_key": dedup_key,
         "manual_status": "ready",
     }

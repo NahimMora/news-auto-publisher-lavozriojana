@@ -28,6 +28,7 @@ def run_section(
     output_path: str,
     fetch_links: Callable[[], LinkScrapeResult],
     fetch_article: Callable[[str], ArticleScrapeResult],
+    extra_discard: Callable[[dict], tuple[bool, str]] | None = None,
 ) -> StageResult:
     started = time.monotonic()
     if not enabled:
@@ -119,6 +120,26 @@ def run_section(
                 succeeded -= 1
                 logger.error("%s no pudo registrar descarte: %s", stage, exc)
             continue
+
+        if extra_discard is not None:
+            should_discard, discard_reason = extra_discard(article)
+            if should_discard:
+                discarded += 1
+                succeeded += 1
+                terminal = {**article, "discarded_status": "filtered"}
+                try:
+                    append_json_items(history_path, [terminal], key=_url_key)
+                    record_queue_event(
+                        stage=stage,
+                        status="completed",
+                        reason=discard_reason,
+                        item=terminal,
+                    )
+                except JsonStateError as exc:
+                    failed += 1
+                    succeeded -= 1
+                    logger.error("%s no pudo registrar descarte: %s", stage, exc)
+                continue
 
         try:
             # Orden deliberado: la cola durable/consumible se guarda antes del

@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from meta.fb_client import PAGE_ID, post_to_facebook_detailed
+from meta.fb_client import PAGE_ID, post_paparazzi_video_to_facebook, post_to_facebook_detailed
+from utils.editorial_priority import item_source
 from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
@@ -32,13 +33,19 @@ logger = setup_logger("run_fb", "run_fb.log")
 
 META_INPUT = str(data_dir() / "noticias_meta.json")
 FB_STATE_PATH = str(data_dir() / "fb_posted.json")
+FB_PAPARAZZI_SOURCE_PREFIX = "paparazzi"
 
 
 def _bootstrap_queue() -> int:
+    """Solo encola lo que select_publish_batch.py marcó para este lote (mismo
+    lote que Web e Instagram, ver docs/DECISIONS.md) — antes encolaba todo lo
+    que tuviera web_url, sin ningún filtro."""
     noticias = load_json(META_INPUT, [], expected_type=list)
     included = 0
     for noticia in noticias:
         if not str(noticia.get("web_url") or noticia.get("noticia_url") or "").strip():
+            continue
+        if not noticia.get("selected_for_publish"):
             continue
         enqueue(noticia, platform="facebook")
         included += 1
@@ -114,7 +121,10 @@ def main() -> StageResult:
         if not claim(noticia, "facebook"):
             deferred += 1
             continue
-        operation = post_to_facebook_detailed(noticia)
+        if item_source(noticia).startswith(FB_PAPARAZZI_SOURCE_PREFIX):
+            operation = post_paparazzi_video_to_facebook(noticia)
+        else:
+            operation = post_to_facebook_detailed(noticia)
         processed += 1
         if operation.ok:
             mark_done(

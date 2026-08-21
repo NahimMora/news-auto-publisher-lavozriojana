@@ -159,10 +159,11 @@ def stage_environment(channel: str, plan: DeploymentPlan) -> dict[str, str]:
     if not plan.channel_enabled(channel):
         return {}
     if channel == "web":
-        return {
-            "WEB_PUBLISH_MAX_PER_RUN": "0",
-            "WEB_MAX_DEPORTES_PER_RUN": "-1",
-        }
+        # La curación de qué se publica (Web/Facebook/Instagram) la hace
+        # select_publish_batch.py, un único lote replicado en los 3 canales
+        # (ver docs/DECISIONS.md) — Web ya no tiene un límite propio que
+        # inyectar acá.
+        return {}
     if channel == "facebook":
         return {"PUBLISH_MAX_PER_RUN": "8"}
     if channel == "instagram":

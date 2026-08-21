@@ -21,7 +21,7 @@ from pipeline.node_webapp.editorial import (
 from pipeline.node_webapp.media import MediaResult, prepare_media
 from utils.classifier import clasificar as _clasificar
 from utils.editorial_policy import evaluate_web_fallback
-from utils.editorial_priority import priority_interleave, split_priority_batch
+from utils.editorial_priority import priority_interleave
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
@@ -53,26 +53,6 @@ _CATEGORY_AUTHORS: dict[str, str] = {
     "cultura":      "Redacción Cultura",
     "espectaculos": "Redacción Espectáculos",
 }
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _web_max_per_run() -> int | None:
-    value = _env_int("WEB_PUBLISH_MAX_PER_RUN", 0)
-    return value if value > 0 else None
-
-
-def _web_category_caps() -> dict[str, int]:
-    max_deportes = _env_int(
-        "WEB_MAX_DEPORTES_PER_RUN",
-        _env_int("MAX_DEPORTES_PER_RUN", 1),
-    )
-    return {"deportes": max_deportes}
 
 
 class InvalidCredentialError(RuntimeError):
@@ -947,17 +927,15 @@ def publish_pending() -> StageResult:
             details={"duplicates": skipped_duplicates},
         )
 
-    noticias, diferidas = split_priority_batch(
-        noticias,
-        max_items=_web_max_per_run(),
-        category_caps=_web_category_caps(),
+    # Qué se publica ya lo decidió select_publish_batch.py (mismo lote que
+    # Facebook e Instagram, ver docs/DECISIONS.md) — lo no seleccionado queda
+    # en cola, elegible para un próximo lote.
+    diferidas = [item for item in noticias if not item.get("selected_for_publish")]
+    noticias = priority_interleave(
+        [item for item in noticias if item.get("selected_for_publish")]
     )
     if diferidas:
-        logger.info(
-            "WebApp: prioridad editorial dejo %s notas diferidas (cupo Deportes=%s)",
-            len(diferidas),
-            _web_category_caps().get("deportes"),
-        )
+        logger.info("WebApp: %s notas todavía sin seleccionar para un lote", len(diferidas))
 
     publicadas: list[dict] = []
     retenidas: list[dict] = []

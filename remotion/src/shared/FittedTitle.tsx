@@ -1,34 +1,79 @@
 import React from "react";
-import { escapeRegExp } from "./HighlightedTitle";
 import { FitTextOptions, fitText } from "./fitText";
 
 // fitText.ts wrapea por PALABRA COMPLETA delimitada por espacios
 // (text.split(/\s+/)). El resaltado tiene que usar EXACTAMENTE la misma
-// tokenización — si en cambio se resalta por fragmento de regex y después
-// se separa cada fragmento por espacios (como hace
-// utils/premium_renderer.py en Python), un término que hace match en medio
-// de una palabra con puntuación pegada ("end-to-end:", sin espacio antes
-// de los ":") genera DOS tokens para esa única palabra. Como
-// assignWordsToLines reparte tokens por CANTIDAD (no por contenido), ese
-// token de más corre el resto de la cola y desplaza palabras a la línea
-// equivocada — se vio en smoke test manual como un ":" solo en su propia
-// línea y el resto del título recortado fuera del lienzo.
-//
-// Por eso acá se resalta la PALABRA COMPLETA (con su puntuación pegada) si
-// el término aparece en cualquier parte de ella — un token por palabra,
-// siempre, igual que fitText.ts — en vez de resaltar sólo la subcadena
-// exacta que matchea.
+// tokenización para no desincronizar índices entre líneas y tokens.
 type FlaggedWord = { value: string; highlight: boolean };
 
-function flagWords(text: string, terms: string[]): FlaggedWord[] {
+// Feedback editorial (2026-07-31, segunda ronda): el énfasis tiene que leerse
+// como FRASE (2-4 palabras en Publicaciones), no como palabras sueltas — "un comercio en
+// pleno centro", no "comercio" y "centro" resaltados por separado sin
+// relación visual. `highlightTerms` sigue siendo un array de strings, pero
+// ahora cada string se trata como una frase candidata: se busca como
+// secuencia contigua de palabras (comparación insensible a mayúsculas/
+// puntuación de borde) y, si aparece, TODAS sus palabras se resaltan juntas
+// — nunca una palabra suelta de en medio.
+function normalizeWord(word: string): string {
+  return word
+    .toLowerCase()
+    .normalize("NFC")
+    .replace(/^[.,;:!?¿¡"'«»()\-—–]+|[.,;:!?¿¡"'«»()\-—–]+$/g, "");
+}
+
+// Tope de cobertura: como máximo ~30% de las palabras del texto principal
+// pueden estar resaltadas, y como máximo `maxPhrases` frases distintas (por
+// defecto 2, 1 en portada Crónica — ver CoverSlide). Cada frase candidata
+// que no entre en el presupuesto simplemente no se resalta (nunca se
+// trunca a la mitad).
+function flagPhrases(
+  text: string,
+  phrases: string[],
+  opts: { maxPhrases?: number; maxCoverageRatio?: number } = {},
+): FlaggedWord[] {
+  const { maxPhrases = 2, maxCoverageRatio = 0.3 } = opts;
   const words = text.split(/\s+/).filter(Boolean);
-  const cleaned = (terms || []).map((t) => t.trim()).filter(Boolean);
-  if (cleaned.length === 0) {
-    return words.map((value) => ({ value, highlight: false }));
+  const normWords = words.map(normalizeWord);
+  const highlighted = new Array(words.length).fill(false);
+
+  const candidates = (phrases || [])
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => p.split(/\s+/).filter(Boolean).map(normalizeWord))
+    .filter((p) => p.length > 0);
+
+  const maxHighlightedWords = Math.max(1, Math.floor(words.length * maxCoverageRatio));
+  let usedPhrases = 0;
+  let highlightedCount = 0;
+
+  for (const phraseWords of candidates) {
+    if (usedPhrases >= maxPhrases) break;
+    // El tope de cobertura (~30%) frena una SEGUNDA frase que infle el
+    // resaltado — la primera frase siempre puede intentar matchear, aunque
+    // sea una fracción grande de un titular corto (los ejemplos del brief,
+    // p.ej. "un comercio en pleno centro" sobre un titular de 10 palabras,
+    // superan el 30% y siguen siendo válidos).
+    if (usedPhrases > 0 && highlightedCount + phraseWords.length > maxHighlightedWords) continue;
+    for (let i = 0; i <= normWords.length - phraseWords.length; i += 1) {
+      let alreadyUsed = false;
+      let matches = true;
+      for (let j = 0; j < phraseWords.length; j += 1) {
+        if (highlighted[i + j]) alreadyUsed = true;
+        if (normWords[i + j] !== phraseWords[j]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches && !alreadyUsed) {
+        for (let j = 0; j < phraseWords.length; j += 1) highlighted[i + j] = true;
+        highlightedCount += phraseWords.length;
+        usedPhrases += 1;
+        break;
+      }
+    }
   }
-  const pattern = cleaned.map(escapeRegExp).join("|");
-  const regex = new RegExp(`\\b(?:${pattern})\\b`, "iu");
-  return words.map((value) => ({ value, highlight: regex.test(value) }));
+
+  return words.map((value, i) => ({ value, highlight: highlighted[i] }));
 }
 
 function assignWordsToLines(lines: string[], flagged: FlaggedWord[]): FlaggedWord[][] {
@@ -48,7 +93,7 @@ function assignWordsToLines(lines: string[], flagged: FlaggedWord[]): FlaggedWor
 }
 
 // Título con auto-fit real (Canvas 2D measureText, ver fitText.ts) +
-// resaltado de términos, usado por las composiciones still nuevas
+// resaltado de frases, usado por las composiciones still nuevas
 // (PremiumSlide, AutomaticInstagramCard). A diferencia de HighlightedTitle
 // (que Main.tsx sigue usando con wrapping implícito del navegador), este
 // componente calcula el wrap/tamaño él mismo para poder detectar overflow
@@ -61,7 +106,10 @@ export type FittedTitleProps = Omit<FitTextOptions, "text"> & {
   highlightColor: string;
   letterSpacing?: string;
   textShadow?: string;
-  align?: "left" | "center";
+  align?: "left" | "center" | "right";
+  // Tope de frases resaltadas simultáneas — 2 por defecto, 1 en la portada
+  // de Crónica (ver PremiumSlide.tsx::CoverSlide).
+  maxHighlightPhrases?: number;
   onFit?: (result: { overflow: boolean; fontSize: number }) => void;
 };
 
@@ -73,13 +121,14 @@ export const FittedTitle: React.FC<FittedTitleProps> = ({
   letterSpacing,
   textShadow,
   align = "left",
+  maxHighlightPhrases,
   onFit,
   ...fitOpts
 }) => {
   const result = fitText({ text, ...fitOpts });
   if (onFit) onFit({ overflow: result.overflow, fontSize: result.fontSize });
 
-  const flagged = flagWords(text, highlightTerms || []);
+  const flagged = flagPhrases(text, highlightTerms || [], { maxPhrases: maxHighlightPhrases });
   const lineTokens = assignWordsToLines(result.lines, flagged);
 
   return (

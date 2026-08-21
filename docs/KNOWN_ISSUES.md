@@ -1,6 +1,6 @@
 # Problemas conocidos
 
-Última actualización: 2026-07-30. Los problemas resueltos no se borran.
+Última actualización: 2026-08-02. Los problemas resueltos no se borran.
 
 ## 1. Fallos de Facebook sin detalle
 
@@ -486,8 +486,10 @@
   backlog que no tenía preview ni evidencia de publicación Web.
 - Causa raíz: bootstrap desde `noticias_meta.json` no exigía la transición durable
   `web publicada → URL sincronizada`.
-- Corrección: Facebook e Instagram sólo incorporan entradas con URL Web verificable;
-  el resto queda diferido y contabilizado como `blocked_missing_web_url`.
+- Corrección: Facebook y el flujo automático normal de Instagram sólo incorporan
+  entradas con URL Web verificable; el resto queda diferido y contabilizado como
+  `blocked_missing_web_url`. Desde 2026-08-03 existe una excepción acotada para una
+  promoción manual `candidate→automatic` de Instagram (ver #83).
 - Tests: `tests.test_social_stage_results`.
 - Estado actual: **resuelto**.
 
@@ -508,6 +510,9 @@
   ausencia de `WEBAPP_PREFLIGHT_PATH`.
 - Tratamiento: el bloqueo no se convierte en éxito. La escritura se verificó con
   tres publicaciones autorizadas, ID/URL y HTTP público 200.
+- Revalidación 2026-08-02: fuentes, OpenAI, R2, Meta y filesystem pasaron; CMS siguió
+  `blocked`. La reactivación explícitamente autorizada produjo 17 URLs Web y mantuvo
+  esta excepción operativa visible; no cambia el estado del preflight.
 - Estado actual: **bloqueado por entorno/repositorio externo**.
 - Riesgo residual: autenticación y capacidad no pueden comprobarse sin crear contenido
   antes de cada reinicio.
@@ -802,3 +807,297 @@
 - Riesgo residual: las filas agregadas de noticias pueden referir una imagen remota
   que ya no exista; ese fallo se muestra como miniatura ausente y la ingesta por link
   se niega si la descarga o el contenido no son válidos.
+
+## 72. La imagen recién asignada podía no aparecer en el preview premium — RESUELTO 2026-07-31
+
+- ID: UX Estudio Premium; severidad media.
+- Reproducción: la UI modificaba `slide.asset_id` sólo en memoria, mientras
+  `/api/premium/preview` renderizaba el paquete guardado. Si el operador asignaba una
+  foto y previsualizaba sin guardar manualmente, el renderer recibía la versión
+  anterior. La biblioteca además exigía seleccionar globalmente una imagen y luego
+  elegir en otra card dónde usarla, con formularios de link/subida duplicados por
+  cada slide.
+- Corrección: la galería modal se abre desde el slide de destino y cada miniatura se
+  asigna y persiste en un solo paso. Preview y publicación sincronizan el editor
+  antes de continuar. Sólo `cover`, `image_text` y `full_image` aceptan imágenes;
+  UI, persistencia, importador y ambos renderers ignoran o limpian `asset_id` en los
+  tipos exclusivamente textuales.
+- Evidencia: `tests.test_premium_studio` cubre cambio de tipo, importación,
+  persistencia y renderer; `tests.test_premium_studio_http` verifica el contrato
+  HTML/HTTP de la galería y miniaturas. El JavaScript embebido pasa `node --check`.
+- Estado actual: **resuelto en la rama**, pendiente de review/merge.
+
+## 73. Instagram podía rechazar el padre Premium si los hijos aún estaban procesándose — RESUELTO 2026-07-31
+
+- ID: publicación parcial Estudio Premium; severidad alta.
+- Reproducción: un paquete de cuatro placas quedó `degraded`: Facebook confirmó ID
+  externo, mientras Instagram devolvió `request_rejected`. R2 confirmó la creación y
+  descarga de los cuatro assets; el cliente creaba inmediatamente el padre después
+  de recibir IDs de hijos, sin consultar `status_code`, y descartaba del resultado el
+  HTTP/código/subcódigo devuelto por Meta. El detalle exacto de ese intento no puede
+  recuperarse retroactivamente porque nunca se persistió.
+- Corrección: `meta/ig_client.py` espera `FINISHED` por cada hijo y por el padre antes
+  de avanzar. Timeout/error ocurre antes de `media_publish`, se clasifica como
+  `not_published` y conserva etapa e índice. `utils/premium_publisher.py` persiste
+  `failure_metadata` seguro; la UI muestra etapa y códigos sin copiar cuerpos externos.
+- Evidencia: fixtures cubren orden hijo→FINISHED→padre→FINISHED→publish, error de
+  procesamiento que detiene el carrusel y persistencia de códigos sin mensaje externo.
+- Estado actual: **resuelto en la rama**. El paquete afectado conserva Facebook OK;
+  no se reintentó Instagram durante la corrección.
+
+## 74. La UI manual seguía mostrando el diseño viejo pese al rediseño — RESUELTO 2026-07-31
+
+- ID: Editorial Cinemática Riojana, pieza de una sola imagen; severidad alta (el
+  rediseño de `AutomaticInstagramCard`/`FacebookOgCard` era efectivamente invisible
+  en producción).
+- Reproducción: el `.env` local tenía `AUTOMATIC_STATIC_RENDER_ENGINE=pillow` y
+  `OG_STATIC_RENDER_ENGINE=pillow` fijados explícitamente (de antes de que el default
+  de código pasara de `pillow` a `auto`, ver docs/DECISIONS.md). Una variable
+  específica de workflow gana siempre sobre el default seguro (`resolve_engine`), así
+  que `generate_instagram_with_engine`/`generate_facebook_with_engine` caían siempre
+  al Pillow viejo (badge, logo watermark, iconos FB/IG) sin importar los cambios en
+  `remotion/src/`. La vista previa de "Publicaciones" en `http://127.0.0.1:8765/`
+  confirmó el síntoma en vivo.
+- Corrección: `.env` pasa esas dos variables a `auto` (mismo valor ya recomendado en
+  `.env.example`) — Remotion primero, Pillow sólo si falla, nunca bloquea una
+  publicación real. Se reinició el servidor de render persistente y la UI manual para
+  que tomaran el bundle/entorno nuevos.
+- Evidencia: `resolve_engine("automatic")`/`resolve_engine("og")` devuelven
+  `"remotion"` con el `.env` corregido; la vista previa de "Publicaciones" en vivo
+  muestra el diseño nuevo (masthead de marca, foto + panel de tinta, sin logo
+  watermark ni iconos FB/IG del sistema viejo).
+- Estado actual: **resuelto**. Queda como recordatorio: un `.env` local con una
+  variable de workflow fijada explícitamente sigue mandando aunque el código cambie
+  su default — revisar `.env` (no sólo `.env.example`) ante cualquier cambio de motor
+  de render que "no se vea".
+
+## 75. Publicaciones truncaba títulos y no generaba un resaltado relevante — RESUELTO 2026-08-02
+
+- Reproducción: `AutomaticInstagramCard` limitaba el panel con foto a tres líneas.
+  Cuando el título no entraba al piso tipográfico, `fitText` agregaba una elipsis;
+  con localidad y bajada el presupuesto vertical era todavía menor. La sección del
+  modo Editorial se mostraba como texto suelto y el flujo manual no poblaba
+  `highlight_terms`, por lo que ninguna frase salía azul o roja.
+- Corrección: la UI y el backend limitan el título manual a 120 caracteres; el estilo
+  explícito `manual_publication` mide con la fuente real y ajusta el panel degradado
+  entre 260 y 554 px según título, localidad y bajada. El padding vertical es el 7,5%
+  del panel, limitado a 36–48 px por lado; admite cinco líneas y un piso de 32 px. El
+  masthead fuerza la bandera Premium; para Editorial usa el
+  azul noche `#0B2F4F`, separado del azul más luminoso del destaque. La
+  llamada existente de localidad/bajada, con `include_highlight=True` sólo para
+  `manual_custom_post`, devuelve una frase de 2 a 4 palabras. Prompt y backend
+  priorizan acción + objeto, sujeto + decisión o resultado principal; rechazan
+  artículos/preposiciones en los bordes, lugares/fechas aislados y cierres genéricos.
+  Una frase final sólo se admite si contiene una acción o resultado concreto. Si
+  OpenAI falta o propone texto ajeno, el selector local aplica las mismas reglas.
+- Evidencia: tests de `tests.test_domain_units`,
+  `tests.test_security_controls.ManualInterfaceSecurityTests` y
+  `tests.test_remotion_visual.PremiumSlideSchemaTests`; `npx tsc --noEmit` y ESLint
+  sin errores. Renders Remotion azul y rojo con 119 caracteres, localidad y bajada
+  mostraron el texto completo y el footer sin superposición; una palabra única de
+  120 caracteres también entró en cinco líneas sin elipsis. Renders adicionales de
+  título corto, medio con contexto y extremo confirmaron que el degradado acompaña el
+  contenido sin franjas vacías excesivas. El default `automatic`
+  quedó cubierto como regresión y conserva el comportamiento anterior.
+- Estado actual: **resuelto en código y render controlado**. No se publicó en cuentas
+  externas durante la validación.
+
+## 76. La card manual se pixelaba al ampliarla en escritorio — RESUELTO 2026-08-02
+
+- Reproducción: la vista previa de Publicaciones entregaba un JPEG de 1080×1350 con
+  calidad 90 y el submuestreo cromático por defecto. Esa salida es suficiente a
+  tamaño de feed, pero al ampliar en un monitor de PC se hacían visibles los píxeles
+  y la compresión alrededor del título y de las palabras destacadas.
+- Corrección: sólo para `source=manual_custom_post`, Remotion recibe `scale=2` y
+  produce un PNG 2160×2700 sin alterar la geometría 4:5. La conversión final usa JPEG
+  calidad 95 y 4:4:4 (`subsampling=0`). `render_still` valida una escala de 0.1–4 y la
+  propaga tanto al servidor persistente como al CLI de respaldo. Si durante una
+  actualización hay un servidor viejo que no confirma `X-Render-Scale`, su PNG se
+  descarta y se usa el CLI compatible.
+- Alcance: el flujo automático continúa en 1080×1350/calidad 90; Premium y OG usan
+  su escala previa. El fallback Pillow manual genera el mismo 2160×2700/4:4:4, de
+  modo que una degradación de Remotion no reduce la resolución. No cambian el
+  contrato durable ni los publicadores.
+- Evidencia: tests mockeados verifican escala manual 2×, automática 1×, dimensiones,
+  4:4:4 y rechazo de escalas inseguras; el test Remotion en vivo valida 2160×2700.
+- Estado actual: **resuelto en código y render real controlado**. No se ejecutó
+  ninguna publicación externa.
+
+## 77. Manual y automático no compartían el paquete visual completo — RESUELTO 2026-08-02
+
+- Reproducción: ambos flujos renderizaban `AutomaticInstagramCard`, pero el caller
+  enviaba `publicationStyle=manual_publication` sólo para
+  `source=manual_custom_post`. El automático conservaba sección sin recuadro, panel
+  de tres líneas, 1080×1350/calidad 90 y normalmente no traía `highlight_terms`.
+- Corrección: `AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED` es un flag específico, validado
+  y apagado por default. Al activarlo, el automático usa el mismo recuadro azul noche
+  o rojo, panel/título adaptable de hasta cinco líneas, frase relevante verificable,
+  render 2160×2700 y JPEG calidad 95/4:4:4. `FacebookOgCard` recibe el mismo
+  `publicationStyle` para recuadro/highlight dentro de su proporción 1200×630.
+- Compatibilidad: el flag apagado conserva pixel y contratos previos. Las noticias
+  nuevas generan `highlight_terms` en la llamada existente de contexto visual, sin
+  una llamada extra a OpenAI. Las ya encoladas derivan la frase con el selector local
+  a partir del título; nunca inventa palabras. El campo nuevo en la cola Meta es
+  opcional y aditivo, sin migración de JSON.
+- Rollout local: el host tiene `AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED=true`; la tarea
+  24/7 continúa deshabilitada y no se ejecutó ningún publicador durante el cambio.
+- Evidencia: 35/35 pruebas dirigidas, 413/413 en la suite completa y un render
+  Remotion automático real confirmaron 2160×2700, JPEG 4:4:4, recuadro azul noche y
+  destaque derivado del título. TypeScript y ESLint no registran errores nuevos.
+- Estado actual: **resuelto en código y activado en la configuración local**.
+
+## 78. Reels conservaba el lenguaje visual anterior a las publicaciones — RESUELTO 2026-08-02
+
+- Reproducción: las cards manuales, automáticas y Premium ya compartían tipografías,
+  color por sección, textura y destaque relevante, pero `Main.tsx` seguía en Arial,
+  con una única transición grande→compacta y un outro separado cacheado. El video se
+  percibía correcto pero menos editorial y profesional que las publicaciones.
+- Corrección: se agregó `EditorialReel.tsx` como composición aditiva 9:16. Reusa el
+  esquema de `Main`, las fuentes locales y los tokens de "Editorial Cinemática
+  Riojana"; anima reveal del medio, Ken Burns/parallax, masthead, badge de sección,
+  titular escalonado, destaque de frase, reflejos, textura, progreso, compactación y
+  un cierre de marca propio. Las animaciones dependen sólo del frame de Remotion.
+- Seguridad y compatibilidad: `REEL_CINEMATIC_VISUAL_STYLE_ENABLED` está apagado por
+  default y sólo lo consulta `utils/video_renderer.py`, llamado por la UI manual. El
+  host lo activa por pedido explícito. `Main`, el outro legacy y ffmpeg permanecen
+  como fallbacks; no cambian autopublicadores, colas ni contratos de Meta/CMS. El
+  destaque se deriva con las reglas locales existentes y no suma una llamada de IA.
+- Evidencia: tests de flag, selección de composición, props/highlight y compatibilidad;
+  `tsc`/ESLint sin errores; renders reales con foto, sin foto, rojo y azul; MP4 H.264
+  1080×1920 a 30 fps de 11,05 s validado con `ffprobe` y plancha temporal.
+- Estado actual: **resuelto en código y listo para la UI manual; sin publicación
+  externa durante el QA**.
+
+## 79. Cabecera, sección y footer del Reel perdían presencia al reducirse — RESUELTO 2026-08-02
+
+- Reproducción: sobre el lienzo 1080×1920, el masthead usaba logo de 54 px, la sección
+  tipografía de 24 px y el footer texto de 25 px con íconos de 28 px. En una vista
+  reducida de teléfono esos componentes existían, pero no se apreciaban claramente.
+- Corrección: se centralizaron reservas explícitas en `EditorialReel.tsx`:
+  `REEL_HEADER_H=164`, `REEL_SECTION_H=78` y `REEL_FOOTER_H=104`. Logo/nombre de la
+  cabecera suben a 74/35 px; logo/texto de sección a 42/31 px; footer a texto de 33 px
+  e íconos de 38 px. `REEL_MEDIA_TOP`, `REEL_PANEL_BOTTOM`, progreso y presupuesto del
+  título se recalcularon para conservar safe areas reales.
+- Evidencia: TypeScript/ESLint sin errores, contrato automatizado de escala y renders
+  reales del frame principal y del cierre con título largo y modo Editorial azul.
+- Estado actual: **resuelto y activo en la composición cinemática manual**.
+
+## 80. El titular compacto dejaba una franja negra antes del footer — RESUELTO 2026-08-02
+
+- Reproducción: `EditorialReel` reducía el titular a 0,78× manteniendo el ancla
+  superior. El alto liberado se acumulaba debajo del texto y formaba una franja negra
+  visible antes de la firma inferior.
+- Corrección: la compactación obtiene un segundo layout medido y calcula desde su alto
+  la posición final del panel completo. Sección y titular mantienen 18 px
+  estructurales y el último renglón queda dentro de la safe area del footer. Una
+  reserva horizontal y `white-space: nowrap` impiden particiones secundarias.
+- Evidencia: contrato automatizado y renders Remotion reales en lectura, transición y
+  compacto con título largo; sección y título quedan agrupados, y el último renglón
+  queda completo, próximo al footer y dentro de la safe area.
+- Estado actual: **resuelto en la composición cinemática manual; sin publicación
+  externa durante el QA**.
+
+## 81. El titular reducido desaprovechaba el ancho derecho — RESUELTO 2026-08-02
+
+- Reproducción: escalar uniformemente a 0,78× conservaba los cortes de línea grandes,
+  por lo que también encogía el ancho visual y dejaba palabras que podían entrar en
+  el mismo renglón repartidas hacia abajo, con demasiado vacío a la derecha.
+- Corrección: `fitCompactHeadline` genera un layout independiente de hasta 72 px,
+  vuelve a envolver por palabras completas sobre 800 px seguros y hace crossfade con
+  el layout grande mediante `compactProgress`. El panel toma el alto real del nuevo
+  bloque, de modo que el mejor uso horizontal no reintroduce huecos verticales.
+- Evidencia: renders reales en frames 140, 150 y 165 con una frase destacada partida
+  entre spans; el compacto usa tres líneas equilibradas, llega cerca del margen
+  derecho y conserva todo el texto sin superposición durante el cruce.
+- Estado actual: **resuelto en `EditorialReel`; sin publicación externa durante el
+  QA**.
+
+## 82. Candidatas quedaba confinada a la columna lateral — RESUELTO 2026-08-03
+
+- Reproducción: la pestaña `Candidatas` reutilizaba `.app`, cuya grilla está pensada
+  para Videos (`370px 1fr 300px`), pero sólo contenía un `main`. El navegador ubicaba
+  ese único hijo en la primera columna: formularios, botones y cards quedaban en 370
+  px mientras más de dos tercios de la pantalla permanecían vacíos.
+- Corrección: `#app_candidates` usa una única columna y un shell propio de ancho
+  completo. La gestión por identidad queda en un panel lateral y la bandeja pendiente
+  en el panel principal; bajo 900 px la bandeja pasa primero y, bajo 640 px, las cards
+  usan una sola columna. La carga distingue espera, vacío, error HTTP y resultado;
+  conserva `textContent` para todos los datos persistidos.
+- Evidencia: contrato unitario del HTML/DOM, JavaScript embebido validado por Node y
+  smoke visual Playwright en 1440×1000 y 620×1000 con tres candidatas simuladas; ancho
+  de `main` igual al viewport, layout responsivo y cero errores de consola.
+- Estado actual: **resuelto en código y QA local aislado**. No se modificaron rutas,
+  colas ni estados productivos y no se ejecutó ningún publicador.
+
+## 83. “Enviar a automática” no superaba filtros previos de Instagram — RESUELTO 2026-08-03
+
+- Reproducción: dos candidatas de `policiales` pasaron correctamente a
+  `status=automatic` y sincronizaron `route_by_channel.instagram=automatic`, pero el
+  ciclo #87 terminó Instagram `no_work`: `included=0`, `omitted_by_policy=5`. El
+  bootstrap aplicaba primero `IG_ALLOWED_CATEGORIES`; como los títulos tampoco
+  activaban `breaking`, la decisión manual desaparecía de la bandeja sin entrar a la
+  cola social.
+- Corrección: `manual_automatic_identities()` reconoce exclusivamente transiciones
+  durables `candidate→automatic` y `run_ig` las considera un override del filtro
+  editorial de categoría. Exige que la ruta real siga en `automatic`, permite que
+  esa decisión explícita avance en Instagram aunque no exista URL Web y excluye
+  `published_reuse`. Si el ítem ya rotó fuera de `noticias_meta.json`, recupera el
+  payload guardado en la candidata y conserva su identidad. `enqueue` reactiva un estado
+  `excluded` a `pending`, pero mantiene las protecciones de `completed`, `processing`
+  y `dead_letter`.
+- Evidencia: tests de categoría fuera de política, ruta candidata, promoción sin URL,
+  publicación reutilizada, recuperación sin Meta activo y reactivación real
+  `excluded→pending` sobre disco temporal;
+  sintaxis del JavaScript y contrato de confirmación/feedback de la UI.
+- Estado actual: **resuelto en código**. Las promociones manuales existentes quedan
+  reconocidas sin migrar ni cambiar la forma del JSON.
+
+## 84. Instancias duplicadas del servicio en dev y en producción — RESUELTO 2026-08-21
+
+- ID: separación dev/producción; severidad alta (riesgo real de publicar contenido
+  duplicado en Facebook/Instagram con credenciales reales).
+- Reproducción, dos causas independientes que se dieron en la misma migración:
+  1. **Dev (esta PC)**: el host de desarrollo conservaba, desde el arranque
+     productivo original del 2026-07-27, dos tareas programadas
+     (`LaVozRiojana-24x7`, `LaVozRiojana-ManualUI`) apuntando a este mismo repo.
+     Al migrar el servicio a una PC de producción dedicada se mataron los procesos
+     activos en dev, pero no se borraron esas tareas — Task Scheduler los volvió a
+     levantar solo, cada 5 minutos, con `.env` productivo real
+     (`PIPELINE_DEPLOYMENT_MODE=all`, `FB_PUBLISH_ENABLED=true`,
+     `IG_PUBLISH_ENABLED=true`). Un ciclo relanzado llegó hasta
+     `meta/run_fb.py` antes de detectarse.
+  2. **Producción (`C:\LVR`)**: el PID del supervisor vive en
+     `data/.supervisor.pid`. Al migrar el historial de colas/dedup (`data/`
+     completo) desde dev hacia la PC de producción, reemplazar la carpeta pisó ese
+     archivo de PID con uno obsoleto. `cli.py start` dejó de detectar la instancia
+     ya corriendo y arrancó una segunda generación completa del supervisor en
+     paralelo sobre el mismo `data/`, ambas avanzando de forma independiente hacia
+     las etapas de Facebook/Instagram (detenidas antes de que ninguna llegara a
+     publicar, confirmado por `logs/run_24x7.log`).
+  3. Adicionalmente quedó un servidor de render Remotion (`render_server.mjs`) con
+     su árbol completo de `chrome-headless-shell.exe` (GPU, network service,
+     renderer) huérfano en dev, invisible a una búsqueda de procesos por nombre
+     exacto `python.exe`/`node.exe` porque hay que buscarlo por *contenido* del
+     `CommandLine`/ruta del ejecutable, no por nombre de imagen.
+- Causa raíz común: no existía una regla operativa explícita de "un solo host
+  ejecuta el servicio" ni un procedimiento de migración que pausara/verificara el
+  supervisor de origen antes de tocar `data/`.
+- Corrección:
+  - Se borraron (no sólo deshabilitaron) las tareas programadas en dev y se
+    verificó ausencia de cualquier autoarranque relacionado (tareas por contenido
+    de acción, registro `Run`/`RunOnce`, carpetas Startup) en dev y en producción.
+  - Se estableció la regla dura: el servicio corre **exclusivamente** en la PC de
+    producción dedicada; dev nunca ejecuta `cli.py start`/`run_24x7.py`/
+    `video_reel_manager.py` ni registra las tareas programadas. Ver
+    `docs/RUNBOOK.md` ("Entorno: desarrollo vs. producción") y
+    `docs/DECISIONS.md` (2026-08-21).
+  - Se documentó que cualquier operación que reemplace `data/` completo debe
+    detener el supervisor de destino primero y verificar `data/.supervisor.pid`
+    después — no asumir que `cli.py start` va a detectar solo una instancia previa
+    si el archivo de PID pudo haberse pisado.
+- Evidencia: `Get-CimInstance Win32_Process` filtrado por contenido de `CommandLine`
+  (no por nombre de imagen) en ambos hosts, `logs/run_24x7.log` de producción
+  mostrando las dos generaciones y sus timestamps, verificación final de una sola
+  cadena de procesos y cero tareas/registro/Startup referenciando el repo en dev.
+- Estado actual: **resuelto**. Riesgo residual: si en el futuro se vuelve a mover
+  `data/` entre hosts, repetir el chequeo de PID antes de reiniciar cualquier lado.

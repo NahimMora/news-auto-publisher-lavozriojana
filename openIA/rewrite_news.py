@@ -13,13 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
-from openai import OpenAI
+from utils.ai_client import chat_completion
 from utils.file_manager import (
     JsonStateError,
     load_json,
     update_json,
     update_json_files,
 )
+from utils.category_performance import load_category_performance
 from utils.durable_queue import DurableQueue
 from utils.editorial_policy import evaluate_fallback_policy
 from utils.editorial_priority import priority_interleave
@@ -28,11 +29,13 @@ from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
 from utils.logging_setup import setup_logger
 from utils.classifier import clasificar_con_resultado
+from utils.paparazzi_relevance import score_relevance
 from utils.paths import data_dir
 from utils.queue_events import record_queue_event
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 from utils.url_normalization import url_hash
-from openIA.caption_generator import generate_caption
+from utils.visual_style import automatic_manual_visual_style_enabled
+from openIA.caption_generator import generate_caption, generate_locality_and_deck
 
 logger = setup_logger("rewrite_news", "rewrite_news.log")
 
@@ -43,15 +46,16 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_interior.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
 ]
 META_OUTPUT = os.path.join(DATA_DIR, "noticias_meta.json")
 WEB_OUTPUT = os.path.join(DATA_DIR, "noticias_web_pending.json")
 REWRITE_STATE = os.path.join(DATA_DIR, "rewrite_queue_state.json")
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-OPENAI_RETRY_COUNT = int(os.getenv("OPENAI_RETRY_COUNT", "4"))
-OPENAI_RETRY_SLEEP = float(os.getenv("OPENAI_RETRY_SLEEP", "3"))
-OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "60"))
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_RETRY_COUNT = int(os.getenv("GEMINI_RETRY_COUNT", "4"))
+GEMINI_RETRY_SLEEP = float(os.getenv("GEMINI_RETRY_SLEEP", "3"))
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "60"))
 
 META_FIELDS = (
     "titulo",
@@ -64,9 +68,14 @@ META_FIELDS = (
     "seccion",
     "seccion_scraper",
     "imagen_url",
+    "video_url",
+    "video_duration_seconds",
     "fecha",
     "source",
     "hashtag_localidad",
+    "locality",
+    "deck",
+    "highlight_terms",
     "queued_at",
     "fallbacks_used",
     "fallback_policy",
@@ -78,6 +87,22 @@ META_FIELDS = (
     "material_update",
     "breaking",
     "routed_at_ts",
+    "paparazzi_relevance_score",
+    # Escritos por otras etapas DESPUÉS de que la nota ya está en
+    # noticias_meta.json (sync_meta_web_link tras publicar en Web,
+    # select_publish_batch.py al armar el lote) — deben sobrevivir a
+    # normalize_meta_queue(), que reconstruye cada ítem con este tuple en
+    # CADA corrida, no sólo la primera vez. Omitirlos acá los borra en
+    # silencio en el ciclo siguiente (ver docs/DECISIONS.md).
+    "web_url",
+    "noticia_url",
+    "web_published_at",
+    "web_slug",
+    "web_post_id",
+    "selected_for_publish",
+    "publish_batch_id",
+    "publish_batch_at",
+    "publish_bucket",
 )
 
 WEB_EXCLUDE_FIELDS = {
@@ -123,9 +148,8 @@ Texto: {texto}
 """
 
 
-def _call_openai(titulo: str, parrafos: list[str]) -> tuple[str, str]:
+def _call_gemini(titulo: str, parrafos: list[str]) -> tuple[str, str]:
     """Retorna (nuevo_titulo, hashtag). Lanza excepción si falla."""
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
     texto_resumen = " ".join(parrafos[:3])  # Primeros 3 párrafos como contexto
     prompt = PROMPT_TEMPLATE.format(
         hashtags=", ".join(LOCALITY_HASHTAGS),
@@ -133,13 +157,14 @@ def _call_openai(titulo: str, parrafos: list[str]) -> tuple[str, str]:
         texto=texto_resumen[:1500],
     )
 
-    resp = client.chat.completions.create(
-        model=OPENAI_MODEL,
+    content = chat_completion(
         messages=[{"role": "user", "content": prompt}],
+        model=GEMINI_MODEL,
+        api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.7,
         max_tokens=200,
-    )
-    content = resp.choices[0].message.content.strip()
+        timeout=GEMINI_TIMEOUT,
+    ).strip()
 
     nuevo_titulo = titulo
     hashtag = ""
@@ -158,21 +183,21 @@ def rewrite_noticia(noticia: dict) -> dict:
     parrafos = noticia.get("parrafos", [])
 
     fallbacks_used: dict[str, bool] = {}
-    for attempt in range(1, OPENAI_RETRY_COUNT + 1):
+    for attempt in range(1, GEMINI_RETRY_COUNT + 1):
         try:
-            nuevo_titulo, hashtag = _call_openai(titulo_original, parrafos)
+            nuevo_titulo, hashtag = _call_gemini(titulo_original, parrafos)
             noticia["titulo_original"] = titulo_original
             noticia["titulo"] = nuevo_titulo
             noticia["hashtag_localidad"] = hashtag
             logger.info(f"Reescrito: {nuevo_titulo[:70]}")
             break
         except Exception as e:
-            logger.warning(f"Error OpenAI intento {attempt}/{OPENAI_RETRY_COUNT}: {e}")
-            if attempt < OPENAI_RETRY_COUNT:
-                time.sleep(OPENAI_RETRY_SLEEP)
+            logger.warning(f"Error Gemini intento {attempt}/{GEMINI_RETRY_COUNT}: {e}")
+            if attempt < GEMINI_RETRY_COUNT:
+                time.sleep(GEMINI_RETRY_SLEEP)
     else:
         # Si fallan todos los intentos, conservar título original
-        logger.error(f"OpenAI falló para: {titulo_original[:60]}, conservando original")
+        logger.error(f"Gemini falló para: {titulo_original[:60]}, conservando original")
         noticia["titulo_original"] = titulo_original
         noticia["hashtag_localidad"] = ""
         noticia["rewrite_fallback_used"] = True
@@ -188,11 +213,38 @@ def rewrite_noticia(noticia: dict) -> dict:
     if classification.fallback_used:
         fallbacks_used["category"] = True
 
+    # Score de relevancia (sólo paparazzi): farándula nacional sin curación
+    # local, así que este es el único filtro editorial antes del cupo de IG.
+    if str(noticia.get("source") or "").strip().lower().startswith("paparazzi"):
+        relevance = score_relevance(noticia["titulo"], parrafos)
+        noticia["paparazzi_relevance_score"] = relevance.score
+        if relevance.fallback_used:
+            fallbacks_used["paparazzi_relevance"] = True
+
     # Generar caption estructurado (titulo mayusculas + que paso + lo relevante + el detalle + CTA)
     caption_data = generate_caption(noticia)
     noticia.update(caption_data)
     if caption_data.get("caption_fallback_used"):
         fallbacks_used["caption"] = True
+
+    # Completar localidad/bajada para la card automática de una sola imagen
+    # (AutomaticInstagramCard.tsx) — nunca bloquea la cola si falla: vacío
+    # es un resultado válido, no un error de publicación.
+    shared_visual_style = automatic_manual_visual_style_enabled()
+    locality_deck_data = generate_locality_and_deck(
+        noticia,
+        include_highlight=shared_visual_style,
+    )
+    noticia["locality"] = locality_deck_data["locality"]
+    noticia["deck"] = locality_deck_data["deck"]
+    if shared_visual_style and locality_deck_data.get("highlight_phrase"):
+        noticia["highlight_terms"] = [locality_deck_data["highlight_phrase"]]
+    else:
+        # Mantiene el flag reversible incluso si se reprocesa una entrada
+        # creada mientras la paridad visual estaba activa.
+        noticia.pop("highlight_terms", None)
+    if locality_deck_data.get("locality_deck_fallback_used"):
+        fallbacks_used["locality_deck"] = True
 
     noticia.setdefault("queued_at", int(time.time()))
     noticia["fallbacks_used"] = fallbacks_used
@@ -402,6 +454,29 @@ def _expiry_reason(noticia: dict) -> str:
     return f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d"
 
 
+def _find_early_duplicate(noticia: dict) -> str | None:
+    """Duplicado cross-fuente detectado ANTES de pagar las llamadas de IA
+    (reescritura, clasificación, caption, localidad).
+
+    Usa sólo campos del scraping original (titulo/canonical_url/url) contra
+    lo que ya está en las colas de salida — la misma noción de "duplicado"
+    que ya aplicaba `_append_unique` después de la reescritura, adelantada
+    para no gastar Gemini en una nota que de todos modos se iba a descartar
+    por ser la misma historia que ya cubrió otra fuente.
+    """
+    probe = {
+        "titulo": noticia.get("titulo"),
+        "canonical_url": noticia.get("canonical_url"),
+        "url": noticia.get("url"),
+    }
+    for path in (META_OUTPUT, WEB_OUTPUT):
+        existing = load_json(path, [], expected_type=list)
+        reason = duplicate_reason(probe, existing, key_fields=("canonical_url", "url"))
+        if reason:
+            return f"{os.path.basename(path)}:{reason}"
+    return None
+
+
 def _append_output(path: str, item: dict, key_field: str) -> bool:
     added = False
 
@@ -470,6 +545,10 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
     meta_added = 0
     web_added = 0
     fallback_count = 0
+    duplicates_avoided = 0
+    # Cargado una sola vez por corrida (no por noticia) — ver
+    # utils/category_performance.py y docs/DECISIONS.md.
+    category_performance = load_category_performance()
 
     while True:
         job = queue.claim_one()
@@ -500,6 +579,20 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
                 item=noticia,
             )
             expired += 1
+            succeeded += 1
+            continue
+
+        early_duplicate = _find_early_duplicate(noticia)
+        if early_duplicate:
+            reason = f"duplicate_before_rewrite:{early_duplicate}"
+            queue.dead_letter(item_id, reason)
+            record_queue_event(
+                stage="rewrite",
+                status="dead_letter",
+                reason=reason,
+                item=noticia,
+            )
+            duplicates_avoided += 1
             succeeded += 1
             continue
 
@@ -546,7 +639,7 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
         # y resiliente: un fallo acá nunca reintenta la reescritura ni la
         # llamada a OpenAI; se conserva "automatic" por omisión.
         try:
-            routing_decision = apply_routing(rewritten)
+            routing_decision = apply_routing(rewritten, category_performance=category_performance)
             rewritten.update(routing_decision.to_dict())
         except (JsonStateError, ValueError) as exc:
             logger.warning("Router editorial falló, se conserva comportamiento actual: %s", exc)
@@ -605,6 +698,7 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             "meta_added": meta_added,
             "web_added": web_added,
             "fallback_count": fallback_count,
+            "duplicates_avoided": duplicates_avoided,
             "state_path": REWRITE_STATE,
         },
     )

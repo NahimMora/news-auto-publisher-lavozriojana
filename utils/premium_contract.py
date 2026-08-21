@@ -22,6 +22,8 @@ SLIDE_TYPES = {
     "quote",
     "number",
     "closing",
+    "context",  # ampliación editorial sin imagen — ver docs/DECISIONS.md
+    "impact",  # impacto local / próximos pasos sin imagen
     "video",  # reservado a futuro; bloqueado en publish() de esta versión
 }
 IMAGE_REQUIRED_SLIDE_TYPES = {"cover", "image_text", "full_image"}
@@ -41,6 +43,10 @@ class SlideLimitError(ValueError):
     pass
 
 
+class DuplicateSlideTypeError(ValueError):
+    pass
+
+
 def _ascii_lower(text: Any) -> str:
     normalized = unicodedata.normalize("NFKD", str(text or ""))
     return normalized.encode("ascii", "ignore").decode("ascii").lower()
@@ -56,6 +62,10 @@ def new_slide(slide_type: str, **fields: Any) -> dict:
         "highlights": [],
         "asset_id": "",
         "source_ids": [],
+        # Metadata de localidad para el chip de portada (cover) — nunca un
+        # highlight del titular. Vacío por defecto: nunca se inventa un
+        # lugar que el texto de origen no nombre.
+        "locality": "",
     }
     slide.update(fields)
     return slide
@@ -161,6 +171,7 @@ def validate_package(package: dict) -> tuple[list[str], list[str]]:
         warnings.append(f"cantidad_de_slides_fuera_del_rango_principal:{count} (recomendado 3-5)")
 
     seen_ids = set()
+    seen_types = set()
     for index, slide in enumerate(slides):
         if not isinstance(slide, dict):
             errors.append(f"slide_{index}_invalido")
@@ -168,6 +179,10 @@ def validate_package(package: dict) -> tuple[list[str], list[str]]:
         slide_type = slide.get("type")
         if slide_type not in SLIDE_TYPES:
             errors.append(f"slide_{index}_tipo_invalido:{slide_type}")
+        elif slide_type in seen_types:
+            errors.append(f"slide_{index}_tipo_duplicado:{slide_type}")
+        else:
+            seen_types.add(slide_type)
         if slide_type == "video":
             warnings.append(f"slide_{index}_tipo_video_no_soportado_en_esta_version")
         slide_id = slide.get("id")
@@ -196,10 +211,28 @@ def _find_slide_index(package: dict, slide_id: str) -> int:
     raise KeyError(f"slide no encontrada: {slide_id}")
 
 
+def _ensure_slide_type_available(
+    package: dict,
+    slide_type: str,
+    *,
+    exclude_slide_id: str | None = None,
+) -> None:
+    for slide in package.get("slides") or []:
+        if not isinstance(slide, dict) or slide.get("id") == exclude_slide_id:
+            continue
+        if slide.get("type") == slide_type:
+            raise DuplicateSlideTypeError(
+                f"el tipo de slide ya está usado en este carrusel: {slide_type}"
+            )
+
+
 def add_slide(package: dict, slide_type: str, **fields: Any) -> dict:
+    if slide_type not in SLIDE_TYPES:
+        raise ValueError(f"tipo de slide inválido: {slide_type}")
     slides = package.setdefault("slides", [])
     if len(slides) >= MAX_SLIDES:
         raise SlideLimitError(f"no se pueden superar {MAX_SLIDES} slides")
+    _ensure_slide_type_available(package, slide_type)
     slides.append(new_slide(slide_type, **fields))
     package["updated_at_ts"] = int(time.time())
     return package
@@ -216,15 +249,11 @@ def remove_slide(package: dict, slide_id: str) -> dict:
 
 
 def duplicate_slide(package: dict, slide_id: str) -> dict:
-    slides = package.setdefault("slides", [])
-    if len(slides) >= MAX_SLIDES:
-        raise SlideLimitError(f"no se pueden superar {MAX_SLIDES} slides")
     index = _find_slide_index(package, slide_id)
-    clone = dict(slides[index])
-    clone["id"] = f"slide_{uuid.uuid4().hex}"
-    slides.insert(index + 1, clone)
-    package["updated_at_ts"] = int(time.time())
-    return package
+    slide_type = str(package["slides"][index].get("type") or "")
+    raise DuplicateSlideTypeError(
+        f"no se puede duplicar el slide porque el tipo quedaría repetido: {slide_type}"
+    )
 
 
 def move_slide_up(package: dict, slide_id: str) -> dict:
@@ -249,6 +278,11 @@ def change_slide_type(package: dict, slide_id: str, new_type: str) -> dict:
     if new_type not in SLIDE_TYPES:
         raise ValueError(f"tipo de slide inválido: {new_type}")
     index = _find_slide_index(package, slide_id)
-    package["slides"][index]["type"] = new_type
+    slide = package["slides"][index]
+    _ensure_slide_type_available(package, new_type, exclude_slide_id=slide_id)
+    slide["type"] = new_type
+    if new_type not in IMAGE_REQUIRED_SLIDE_TYPES:
+        slide["asset_id"] = ""
+        slide.pop("asset_label", None)
     package["updated_at_ts"] = int(time.time())
     return package

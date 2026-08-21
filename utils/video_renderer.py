@@ -2,13 +2,14 @@
 Genera video MP4 9:16 (1080×1920) para Reels de Instagram/Facebook.
 
 Arquitectura de composición:
-  1. Camino normal: todo el reel (bloque superior, panel de video/imagen que crece y se
-     compacta, blur-fill, caption animado, footer, logo) se renderiza en una sola pasada
-     con la composición "Main" de Remotion — ver _render_remotion_main().
+  1. Camino normal: Remotion renderiza el reel completo. El flag seguro
+     REEL_CINEMATIC_VISUAL_STYLE_ENABLED selecciona la composición profesional
+     "EditorialReel"; apagado conserva la composición histórica "Main".
   2. Fallback si Remotion/Node no está disponible o falla: layout estático clásico
      (overlay PNG con PIL) compuesto con ffmpeg filter_complex — ver
      _ffmpeg_compose_video/_ffmpeg_compose_image/_ffmpeg_overlay_only.
-  3. Outro de branding (Remotion, cacheado) concatenado al final — ver _append_outro().
+  3. EditorialReel integra su cierre. El camino histórico concatena el outro cacheado
+     al final — ver _append_outro().
 
 Resultado: el video/imagen queda DENTRO del layout, con branding aplicado encima.
 
@@ -35,6 +36,7 @@ from utils.operation_result import OperationResult
 from utils.paths import output_dir
 from utils.safe_http import safe_get, validate_public_http_url
 from utils.stage_result import StageStatus
+from utils.visual_style import reel_cinematic_visual_style_enabled
 
 logger = setup_logger("video_renderer", "video_renderer.log")
 
@@ -803,6 +805,7 @@ def _append_outro(main_path: str, video_id: str) -> bool:
 def _render_remotion_main(
     item: dict, video_id: str, duration: int,
     asset_path: str | None, asset_type: str, ken_burns_variant: int,
+    *, cinematic_style: bool = False,
 ) -> str | None:
     """
     Renderiza la composición "Main" de Remotion, que reemplaza todo el compositing de
@@ -823,6 +826,21 @@ def _render_remotion_main(
     titulo = str(item.get("titulo_reel") or item.get("titulo") or "").upper()
     seccion = str(item.get("seccion") or "sociedad").upper()
     frames = max(1, duration * 30)
+    composition = "EditorialReel" if cinematic_style else "Main"
+
+    highlight_terms = item.get("highlight_terms") or item.get("highlightTerms") or []
+    if isinstance(highlight_terms, str):
+        highlight_terms = [highlight_terms]
+    if not isinstance(highlight_terms, list):
+        highlight_terms = []
+    highlight_terms = [str(term).strip() for term in highlight_terms if str(term).strip()][:2]
+    if cinematic_style and not highlight_terms:
+        # Misma regla verificable de las publicaciones estáticas, sin una
+        # llamada adicional a IA y sin inventar palabras fuera del título.
+        from openIA.caption_generator import select_highlight_phrase
+
+        selected = select_highlight_phrase(titulo)
+        highlight_terms = [selected] if selected else []
 
     asset_file = ""
     tmp_asset_path: str | None = None
@@ -847,20 +865,21 @@ def _render_remotion_main(
                 "assetFile": asset_file,
                 "kenBurnsVariant": ken_burns_variant,
                 "durationInFrames": frames,
+                "highlightTerms": highlight_terms,
             }, f)
         result = subprocess.run(
             _npx_args([
-                "remotion", "render", "Main", output_path,
-                "--codec=h264", f"--props={props_path}",
+                "remotion", "render", composition, output_path,
+                "--codec=h264", "--crf=18", f"--props={props_path}",
             ]),
             cwd=REMOTION_DIR, capture_output=True, text=True, timeout=600,
         )
         if result.returncode == 0 and os.path.isfile(output_path):
             return output_path
-        logger.warning("No se pudo renderizar Main con Remotion: %s", result.stderr[-500:])
+        logger.warning("No se pudo renderizar %s con Remotion: %s", composition, result.stderr[-500:])
         return None
     except Exception as exc:
-        logger.warning("Error renderizando Main con Remotion: %s", exc)
+        logger.warning("Error renderizando %s con Remotion: %s", composition, exc)
         return None
     finally:
         try:
@@ -883,10 +902,10 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
       2a. Si hay video: usa su duración real
       2b. Si hay imagen del artículo: Ken Burns con esa duración
       2c. Sin ninguno: solo el layout de branding, sin panel de video/imagen
-      3. Renderiza todo con Remotion (composición "Main" — panel de video/imagen que
-         crece, caption animado, blur-fill, footer, logo). Si Remotion/Node no está
-         disponible o falla, cae al pipeline clásico (overlay estático PIL + ffmpeg).
-      4. Concatena el outro de branding al final.
+      3. Renderiza con Remotion (`EditorialReel` si su flag está activo; `Main` en el
+         camino histórico). Si Remotion/Node falla, cae a PIL + ffmpeg.
+      4. EditorialReel integra el cierre; los caminos legacy/fallback concatenan el
+         outro histórico.
 
     Retorna (ruta_mp4, video_id, duracion_segundos, info) donde `info` incluye
     `source_used` ("video" | "image_fallback" | "overlay_only"), `engine`
@@ -903,6 +922,7 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
         )
 
     fallback_duration = max(3, min(90, int(item.get("duration_seconds") or 15)))
+    cinematic_style = reel_cinematic_visual_style_enabled()
     os.makedirs(RENDERS_DIR, exist_ok=True)
 
     video_id = new_render_id()
@@ -967,12 +987,24 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
                 info["source_used"] = "overlay_only"
 
         logger.info("Renderizando reel (%ds, asset=%s)…", duration, asset_type)
-        main_path = _render_remotion_main(item, video_id, duration, asset_path, asset_type, ken_burns_variant)
+        main_path = _render_remotion_main(
+            item,
+            video_id,
+            duration,
+            asset_path,
+            asset_type,
+            ken_burns_variant,
+            cinematic_style=cinematic_style,
+        )
 
         if main_path:
             os.replace(main_path, output_path)
             info["engine"] = "remotion"
-            logger.info("Reel renderizado con Remotion (Main)")
+            info["visual_style"] = "editorial_cinematic_v2" if cinematic_style else "legacy"
+            logger.info(
+                "Reel renderizado con Remotion (%s)",
+                "EditorialReel" if cinematic_style else "Main",
+            )
         else:
             info["engine"] = "ffmpeg_fallback"
             logger.info("Remotion no disponible/falló — usando pipeline clásico (PIL + ffmpeg)")
@@ -990,7 +1022,12 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
                 logger.info("Sin imagen ni video — generando solo overlay sobre negro")
                 _ffmpeg_overlay_only(overlay_path, output_path, duration)
 
-        info["outro_added"] = _append_outro(output_path, video_id)
+        if main_path and cinematic_style:
+            # EditorialReel incorpora su propio cierre dentro de la misma
+            # composición para que timing, tipografía y color sean continuos.
+            info["outro_added"] = True
+        else:
+            info["outro_added"] = _append_outro(output_path, video_id)
 
         size_mb = os.path.getsize(output_path) / 1_048_576
         logger.info("Video renderizado: %s (%.1f MB, %ds)", output_path, size_mb, duration)
@@ -1001,4 +1038,260 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
             try:
                 os.unlink(f)
             except Exception:
+                pass
+
+
+# ── Clip corto para el carrusel paparazzi (imagen+video) ───────
+# A diferencia de render_video() (Reel 9:16 completo, con outro), este clip
+# es 4:5 — mismo aspect-ratio que la portada (AutomaticInstagramCard, ver
+# remotion/src/AutomaticInstagramCard.tsx) — porque ambos son hijos del mismo
+# carrusel de Instagram. Sin outro ni Ken Burns, ni título propio: es siempre
+# un recorte de un video fuente real (entrevistas de paparazzi.com.ar),
+# marcado con la composición Remotion "PaparazziClip" (mismo masthead/footer
+# "Editorial Cinemática Riojana" que la portada — ver
+# remotion/src/PaparazziClip.tsx y _render_remotion_paparazzi_clip). El
+# overlay PIL/ffmpeg de acá abajo es sólo el fallback cuando Remotion/Node no
+# está disponible en este entorno — igual que render_video() con Main/EditorialReel.
+
+_PAPARAZZI_CLIP_W, _PAPARAZZI_CLIP_H = 1080, 1350
+_PAPARAZZI_BRAND_COLOR = (139, 26, 26)  # mismo rojo que SECTION_COLORS["espectaculos"] en layout/image_generator.py
+
+
+def _paparazzi_overlay(width: int, height: int) -> Image.Image:
+    """Overlay transparente (fallback sin Remotion) con logo/color de marca."""
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    bar_h = int(height * 0.014)
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle([(0, height - bar_h), (width, height)], fill=(*_PAPARAZZI_BRAND_COLOR, 255))
+    try:
+        logo_full = Image.open(LOGO_PATH).convert("RGBA")
+        lw = int(width * 0.16)
+        lh = int(logo_full.height * lw / logo_full.width)
+        logo_img = logo_full.resize((lw, lh), Image.LANCZOS)
+        inset = int(width * 0.022)
+        overlay.paste(logo_img, (inset, inset), logo_img)
+    except (OSError, FileNotFoundError):
+        pass
+    return overlay
+
+
+def _ffmpeg_trim_clip(source_video: str, output: str, start: int, duration: int) -> None:
+    """Recorta `duration`s desde el segundo `start`, sin marca — insumo tanto
+    para el render Remotion (PaparazziClip la marca encima) como para el
+    fallback PIL/ffmpeg (_ffmpeg_compose_paparazzi_clip la marca encima)."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-i", source_video,
+        "-t", str(duration),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "128k",
+        output,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg error (recorte paparazzi): {result.stderr[-800:]}")
+
+
+def _ffmpeg_compose_paparazzi_clip(trimmed_video: str, overlay_png: str, output: str) -> None:
+    """Encuadra 4:5 y aplica el overlay PIL sobre un clip YA recortado.
+    Fallback cuando Remotion/Node no está disponible — ver
+    _render_remotion_paparazzi_clip."""
+    filter_complex = (
+        f"[0:v]scale={_PAPARAZZI_CLIP_W}:{_PAPARAZZI_CLIP_H}:force_original_aspect_ratio=increase,"
+        f"crop={_PAPARAZZI_CLIP_W}:{_PAPARAZZI_CLIP_H}[vid];"
+        "[vid][1:v]overlay=0:0:format=auto[out]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", trimmed_video,
+        "-loop", "1", "-i", overlay_png,
+        "-filter_complex", filter_complex,
+        "-map", "[out]", "-map", "0:a?",
+        "-shortest",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        output,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg error (clip paparazzi): {result.stderr[-800:]}")
+
+
+def _render_remotion_paparazzi_clip(trimmed_video: str, seccion: str, duration_seconds: int) -> str | None:
+    """Marca un clip ya recortado con la composición Remotion "PaparazziClip"
+    (mismo masthead/footer "Editorial Cinemática Riojana" que la portada del
+    carrusel, ``AutomaticInstagramCard`` — ver remotion/src/PaparazziClip.tsx).
+    None si Remotion/Node no está disponible o el render falla; el llamador
+    debe caer a ``_ffmpeg_compose_paparazzi_clip`` (PIL/ffmpeg) en ese caso.
+    """
+    if not os.path.isdir(REMOTION_DIR):
+        return None
+
+    render_id = new_render_id()
+    frames = max(1, int(round(duration_seconds * 30)))
+    asset_file = f"tmp/{render_id}.mp4"
+    tmp_asset_path = os.path.join(REMOTION_DIR, "public", "tmp", f"{render_id}.mp4")
+    os.makedirs(os.path.dirname(tmp_asset_path), exist_ok=True)
+    shutil.copy2(trimmed_video, tmp_asset_path)
+
+    props_path = os.path.join(RENDERS_DIR, f"_ppzprops_{render_id}.json")
+    output_path = os.path.join(RENDERS_DIR, f"_ppzremotion_{render_id}.mp4")
+    try:
+        with open(props_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"seccion": seccion, "assetFile": asset_file, "durationInFrames": frames}, f
+            )
+        result = subprocess.run(
+            _npx_args(
+                [
+                    "remotion", "render", "PaparazziClip", output_path,
+                    "--codec=h264", "--crf=18", f"--props={props_path}",
+                ]
+            ),
+            cwd=REMOTION_DIR,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0 and os.path.isfile(output_path):
+            return output_path
+        logger.warning(
+            "Remotion (PaparazziClip) falló (code %s): %s",
+            result.returncode,
+            (result.stderr or "")[-500:],
+        )
+        return None
+    except Exception as exc:
+        logger.warning("Error renderizando PaparazziClip con Remotion: %s", exc)
+        return None
+    finally:
+        try:
+            os.remove(props_path)
+        except Exception:
+            pass
+        try:
+            os.remove(tmp_asset_path)
+        except Exception:
+            pass
+
+
+def render_paparazzi_clips(
+    item: dict,
+    *,
+    total_max_seconds: int | None = None,
+    part_max_seconds: int | None = None,
+    split: bool = True,
+) -> tuple[list[str], dict]:
+    """
+    Genera clips cortos (mp4, 1080×1350) marcados con la composición Remotion
+    "PaparazziClip" (mismo masthead/footer que la portada del carrusel; cae a
+    un overlay PIL/ffmpeg equivalente si Remotion/Node no está disponible),
+    a partir del video fuente scrapeado (``item["video_url"]``, típicamente
+    una entrevista larga — ver scraping/base_paparazzi.py). Nunca es apto
+    publicar la entrevista completa sin recortar.
+
+    Usa como máximo los primeros ``total_max_seconds`` del video real
+    (default 120s — PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS).
+
+    Con ``split=True`` (default — carrusel de Instagram, que exige video
+    corto por hijo): si eso supera ``part_max_seconds`` (default 60s, límite
+    de Instagram por hijo de video en un carrusel —
+    PAPARAZZI_CAROUSEL_VIDEO_PART_MAX_SECONDS), lo divide en 2 partes
+    consecutivas, cada una de a lo sumo ``part_max_seconds``.
+
+    Con ``split=False`` (ej. video nativo de Facebook, que no tiene ese
+    límite por hijo) siempre devuelve un único clip de hasta
+    ``total_max_seconds``, sin dividir.
+
+    Retorna (lista_de_rutas_mp4, info). Lista vacía cuando no hay video
+    fuente o falla la descarga/edición — el llamador debe caer al post
+    estándar (imagen/link) en vez de forzar video.
+    """
+    info: dict = {}
+    if not check_ffmpeg():
+        info["error_type"] = "ffmpeg_unavailable"
+        return [], info
+
+    total_cap = max(
+        3,
+        min(120, int(total_max_seconds or os.getenv("PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS", "120"))),
+    )
+    if split:
+        part_cap = max(
+            3,
+            min(60, int(part_max_seconds or os.getenv("PAPARAZZI_CAROUSEL_VIDEO_PART_MAX_SECONDS", "60"))),
+        )
+    else:
+        part_cap = total_cap
+    os.makedirs(RENDERS_DIR, exist_ok=True)
+    source_video, source_result = get_source_video(item)
+    if not source_video:
+        info["error_type"] = source_result.error_type or "no_source_video"
+        info["details"] = source_result.details
+        return [], info
+
+    temp_files: list[str] = []
+    if (
+        os.path.dirname(os.path.realpath(source_video)) == os.path.realpath(RENDERS_DIR)
+        and os.path.basename(source_video).startswith("_src_")
+    ):
+        temp_files.append(source_video)
+
+    real_dur = get_video_duration(source_video)
+    total_duration = max(3, min(total_cap, int(real_dur))) if real_dur else total_cap
+    if total_duration <= part_cap:
+        segments = [(0, total_duration)]
+    else:
+        segments = [(0, part_cap), (part_cap, total_duration - part_cap)]
+
+    seccion = str(item.get("seccion") or "espectaculos")
+    use_remotion = os.path.isdir(REMOTION_DIR)
+    overlay_path: str | None = None
+    if not use_remotion:
+        overlay_path = os.path.join(RENDERS_DIR, f"_ppz_ovl_{new_render_id()}.png")
+        temp_files.append(overlay_path)
+        overlay = _paparazzi_overlay(_PAPARAZZI_CLIP_W, _PAPARAZZI_CLIP_H)
+        overlay.save(overlay_path, "PNG")
+
+    output_paths: list[str] = []
+    engine_used = "remotion" if use_remotion else "ffmpeg_fallback"
+
+    try:
+        for start, duration in segments:
+            trimmed_path = os.path.join(RENDERS_DIR, f"_ppztrim_{new_render_id()}.mp4")
+            temp_files.append(trimmed_path)
+            _ffmpeg_trim_clip(source_video, trimmed_path, start, duration)
+
+            clip_path = _render_remotion_paparazzi_clip(trimmed_path, seccion, duration) if use_remotion else None
+            if not clip_path:
+                engine_used = "ffmpeg_fallback"
+                if overlay_path is None:
+                    overlay_path = os.path.join(RENDERS_DIR, f"_ppz_ovl_{new_render_id()}.png")
+                    temp_files.append(overlay_path)
+                    _paparazzi_overlay(_PAPARAZZI_CLIP_W, _PAPARAZZI_CLIP_H).save(overlay_path, "PNG")
+                clip_path = os.path.join(RENDERS_DIR, f"ppz_{new_render_id()}.mp4")
+                _ffmpeg_compose_paparazzi_clip(trimmed_path, overlay_path, clip_path)
+            output_paths.append(clip_path)
+        info["parts"] = len(segments)
+        info["segments_seconds"] = [duration for _, duration in segments]
+        info["source_duration_seconds"] = real_dur
+        info["engine"] = engine_used
+        return output_paths, info
+    except Exception as exc:
+        logger.warning("No se pudo generar clip(s) paparazzi: %s", exc)
+        for path in output_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        info["error_type"] = "clip_render_error"
+        info["message"] = str(exc)
+        return [], info
+    finally:
+        for f in temp_files:
+            try:
+                os.unlink(f)
+            except OSError:
                 pass

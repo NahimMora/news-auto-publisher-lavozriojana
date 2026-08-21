@@ -151,6 +151,70 @@ class RewriteRecoveryTests(unittest.TestCase):
         self.assertEqual([], load_json(module.WEB_OUTPUT, [], expected_type=list))
         self.assertEqual(1, result.failed)
 
+    def test_cross_source_duplicate_skips_processor_before_ai_calls(self):
+        """La misma historia ya publicada por otra fuente no debe pagar
+        reescritura/clasificación/caption/localidad (llamadas de IA) — se
+        descarta ANTES de invocar el processor."""
+        from utils.file_manager import load_json, save_json
+
+        module = self._module()
+        source = self.root / "noticias_norewrite_locales.json"
+        item = self._items()[0]
+        save_json(str(source), [item])
+        module.INPUT_FILES = [str(source)]
+        module.META_OUTPUT = str(self.root / "noticias_meta.json")
+        module.WEB_OUTPUT = str(self.root / "noticias_web_pending.json")
+        module.REWRITE_STATE = str(self.root / "rewrite_queue_state.json")
+
+        save_json(
+            module.WEB_OUTPUT,
+            [
+                {
+                    "titulo": item["titulo"],
+                    "titulo_original": item["titulo"],
+                    "canonical_url": "https://otra-fuente.com/misma-noticia",
+                    "url": "https://otra-fuente.com/misma-noticia",
+                    "web_queue_key": "existing-key",
+                }
+            ],
+        )
+
+        calls = 0
+
+        def counting(payload):
+            nonlocal calls
+            calls += 1
+            return self._rewritten(payload)
+
+        result = module.run_rewrite_pipeline(processor=counting)
+
+        self.assertEqual(
+            0, calls, "no debe invocar al processor (IA) para un duplicado detectado antes de reescribir"
+        )
+        self.assertEqual(1, result.details["duplicates_avoided"])
+        self.assertEqual(1, result.succeeded)
+        state = load_json(module.REWRITE_STATE, {}, expected_type=dict)
+        self.assertEqual(1, len(state["dead_letter"]))
+        self.assertEqual([], load_json(module.META_OUTPUT, [], expected_type=list))
+
+    def test_distinct_stories_are_not_treated_as_duplicates(self):
+        """Control: notas realmente distintas sí llegan al processor."""
+        from utils.file_manager import load_json, save_json
+
+        module = self._module()
+        source = self.root / "noticias_norewrite_locales.json"
+        save_json(str(source), self._items()[:3])
+        module.INPUT_FILES = [str(source)]
+        module.META_OUTPUT = str(self.root / "noticias_meta.json")
+        module.WEB_OUTPUT = str(self.root / "noticias_web_pending.json")
+        module.REWRITE_STATE = str(self.root / "rewrite_queue_state.json")
+
+        result = module.run_rewrite_pipeline(processor=self._rewritten)
+
+        self.assertEqual(0, result.details["duplicates_avoided"])
+        self.assertEqual(3, result.succeeded)
+        self.assertEqual(3, len(load_json(module.META_OUTPUT, [], expected_type=list)))
+
 
 if __name__ == "__main__":
     unittest.main()

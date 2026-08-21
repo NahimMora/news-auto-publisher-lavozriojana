@@ -32,6 +32,12 @@ IG_VIDEO_PROCESSING_TIMEOUT_SECONDS = int(
     os.getenv("IG_VIDEO_PROCESSING_TIMEOUT_SECONDS", "300")
 )
 IG_VIDEO_PROCESSING_POLL_SECONDS = int(os.getenv("IG_VIDEO_PROCESSING_POLL_SECONDS", "10"))
+PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS = int(
+    os.getenv("PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS", "90")
+)
+PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS = int(
+    os.getenv("PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS", "2")
+)
 IG_POSTED_DEDUP_THRESHOLD = float(
     os.getenv(
         "IG_POSTED_DEDUP_THRESHOLD",
@@ -529,6 +535,72 @@ def post_to_instagram(noticia: dict) -> bool:
     return result.ok
 
 
+# ── Reel independiente de paparazzi (video solo, sin carrusel) ────────────
+# Publica un video ya hosteado en R2 como Reel. A diferencia de
+# post_to_instagram_detailed, no hace dedup propio ni chequea publicaciones
+# similares previas: el llamador (utils/paparazzi_reels.py) es dueño de la
+# idempotencia con su propio estado, a propósito, porque esta publicación es
+# intencionalmente una segunda publicación de la misma nota (distinto
+# formato) y no debe chocar con el dedup del carrusel/post estándar.
+
+
+def post_reel_video_to_instagram(item: dict) -> OperationResult:
+    if not IG_ACCOUNT_ID or IG_ACCOUNT_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if not IG_ACCESS_TOKEN or IG_ACCESS_TOKEN == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        until = rate_limit_until()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+
+    video_url = _video_url(item)
+    if not video_url:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_video_url")
+    payload = {
+        "media_type": "REELS",
+        "video_url": video_url,
+        "caption": _build_caption(item),
+        "access_token": IG_ACCESS_TOKEN,
+    }
+    if str(item.get("share_to_feed", True)).lower() not in {"0", "false", "no", "off"}:
+        payload["share_to_feed"] = "true"
+    # cover_url tiene prioridad sobre thumb_offset si ambos están presentes
+    # (ver docs de Meta) — por eso sólo cae a la foto original de la noticia
+    # cuando no hay un offset de frame del video explícito.
+    cover_url = str(item.get("cover_url") or "").strip()
+    thumb_offset_ms = item.get("thumb_offset_ms")
+    if _is_http_url(cover_url):
+        payload["cover_url"] = cover_url
+    elif thumb_offset_ms is not None:
+        payload["thumb_offset"] = str(int(thumb_offset_ms))
+    else:
+        fallback_cover = str(item.get("imagen_url") or "").strip()
+        if _is_http_url(fallback_cover):
+            payload["cover_url"] = fallback_cover
+
+    created = _create_container(payload)
+    if not created.ok:
+        return created
+    ready = _wait_video_container(created.external_id)
+    if not ready.ok:
+        return ready
+    published = _publish_container(created.external_id)
+    if published.ok:
+        logger.info(
+            "Reel de paparazzi publicado en Instagram: %s",
+            str(item.get("titulo_reel") or item.get("titulo") or "")[:70],
+        )
+    return published
+
+
 # ── Carrusel premium (Fase 3): flujo social-only, dedup y cola propias ────
 # Reutiliza el mismo backoff de rate limit (misma cuenta de Meta), pero un
 # estado de publicados independiente de ``ig_posted.json`` para no mezclar
@@ -536,6 +608,98 @@ def post_to_instagram(noticia: dict) -> bool:
 PREMIUM_IG_STATE_PATH = str(data_dir() / "premium_ig_posted.json")
 PREMIUM_CAROUSEL_MIN_SLIDES = 2
 PREMIUM_CAROUSEL_MAX_SLIDES = 10
+
+
+def _premium_failure_context(
+    result: OperationResult,
+    *,
+    stage: str,
+    container_index: int | None = None,
+) -> OperationResult:
+    """Agrega contexto seguro y logueable a un fallo del carrusel."""
+    if result.ok:
+        return result
+    result.details.setdefault("stage", stage)
+    if container_index is not None:
+        result.details.setdefault("container_index", container_index)
+    logger.error(
+        "Carrusel premium de Instagram rechazado stage=%s item=%s metadata=%s",
+        stage,
+        container_index if container_index is not None else "-",
+        result.failure_metadata(),
+    )
+    return result
+
+
+def _wait_premium_container(
+    container_id: str,
+    *,
+    stage: str,
+    container_index: int | None = None,
+) -> OperationResult:
+    """Espera que Meta termine de procesar un contenedor del carrusel."""
+    timeout_seconds = max(1, PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS)
+    poll_seconds = max(1, PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS)
+    deadline = time.time() + timeout_seconds
+    last_network_error = ""
+
+    while time.time() < deadline:
+        try:
+            response = requests.get(
+                f"{GRAPH_API}/{container_id}",
+                params={
+                    "fields": "status_code,status",
+                    "access_token": IG_ACCESS_TOKEN,
+                },
+                timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")),
+            )
+        except requests.RequestException as exc:
+            last_network_error = type(exc).__name__
+            time.sleep(poll_seconds)
+            continue
+
+        data = _safe_json(response)
+        if response.status_code not in {200, 201}:
+            return _premium_failure_context(
+                _error_result(response, outcome="not_published"),
+                stage=stage,
+                container_index=container_index,
+            )
+        status = str(data.get("status_code") or "").upper()
+        if status in {"FINISHED", "PUBLISHED"}:
+            return OperationResult(
+                StageStatus.SUCCESS,
+                external_id=container_id,
+                response=data,
+                details={"stage": stage, "container_index": container_index},
+            )
+        if status in {"ERROR", "EXPIRED"}:
+            return _premium_failure_context(
+                OperationResult(
+                    StageStatus.FAILED,
+                    error_type="media_processing_error",
+                    response=data,
+                    details={
+                        "publication_outcome": "not_published",
+                        "container_status": status,
+                    },
+                ),
+                stage=stage,
+                container_index=container_index,
+            )
+        time.sleep(poll_seconds)
+
+    return _premium_failure_context(
+        OperationResult(
+            StageStatus.DEGRADED,
+            error_type="media_processing_timeout",
+            error_code=last_network_error or None,
+            retryable=True,
+            details={"publication_outcome": "not_published"},
+        ),
+        stage=stage,
+        container_index=container_index,
+    )
 
 
 def _load_premium_state() -> dict:
@@ -645,7 +809,7 @@ def post_premium_carousel_to_instagram(package: dict, slide_images: list[bytes])
         )
 
     child_ids: list[str] = []
-    for public_url, _ in uploaded:
+    for container_index, (public_url, _) in enumerate(uploaded, start=1):
         created = _create_container(
             {
                 "image_url": public_url,
@@ -656,10 +820,23 @@ def post_premium_carousel_to_instagram(package: dict, slide_images: list[bytes])
         if not created.ok:
             for _, key in uploaded:
                 r2_storage.delete(key)
-            return created
+            return _premium_failure_context(
+                created,
+                stage="carousel_child_create",
+                container_index=container_index,
+            )
+        ready = _wait_premium_container(
+            created.external_id,
+            stage="carousel_child_processing",
+            container_index=container_index,
+        )
+        if not ready.ok:
+            for _, key in uploaded:
+                r2_storage.delete(key)
+            return ready
         child_ids.append(created.external_id)
 
-    # Instagram ya descargó cada imagen al crear su contenedor hijo.
+    # FINISHED confirma que Instagram descargó y procesó cada imagen.
     for _, key in uploaded:
         r2_storage.delete(key)
 
@@ -672,11 +849,18 @@ def post_premium_carousel_to_instagram(package: dict, slide_images: list[bytes])
         }
     )
     if not parent.ok:
-        return parent
+        return _premium_failure_context(parent, stage="carousel_parent_create")
+
+    parent_ready = _wait_premium_container(
+        parent.external_id,
+        stage="carousel_parent_processing",
+    )
+    if not parent_ready.ok:
+        return parent_ready
 
     published = _publish_container(parent.external_id)
     if not published.ok:
-        return published
+        return _premium_failure_context(published, stage="carousel_publish")
     try:
         _mark_premium_posted(dedup_key, package, published.external_id)
     except JsonStateError as exc:
@@ -689,3 +873,177 @@ def post_premium_carousel_to_instagram(package: dict, slide_images: list[bytes])
         )
     logger.info("Carrusel premium publicado en Instagram: %s", str(package.get("title") or "")[:70])
     return published
+
+
+# ── Carrusel paparazzi (fuente automática, imagen+video) ──────────────────
+# A diferencia del carrusel premium (manual, social-only, estado propio), las
+# notas de paparazzi.com.ar SÍ pasan por la cola social estándar
+# (utils/social_queue.py) igual que el resto de fuentes automáticas — por eso
+# reutiliza el mismo estado ig_posted.json y el mismo dedup que
+# post_to_instagram_detailed en vez de PREMIUM_IG_STATE_PATH.
+
+
+def post_paparazzi_carousel_to_instagram(noticia: dict) -> OperationResult:
+    """Publica una nota de paparazzi.com.ar.
+
+    Si hay un video fuente utilizable (recortado y editado por
+    ``utils.video_renderer.render_paparazzi_clips`` — nunca la entrevista
+    completa sin recortar), publica un carrusel: portada + 1 o 2 slides de
+    video (hasta 120s reales del video fuente, divididos en partes de máximo
+    60s cada una — límite de Instagram para video en hijos de carrusel). Si
+    no hay video, o el recorte falla, cae al post estándar de imagen sola
+    (``post_to_instagram_detailed``), nunca fuerza un carrusel.
+    """
+    if not IG_ACCOUNT_ID or IG_ACCOUNT_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if not IG_ACCESS_TOKEN or IG_ACCESS_TOKEN == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        until = rate_limit_until()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="rate_limit",
+            retryable=True,
+            next_retry_at=until,
+        )
+    try:
+        state = _load_state()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+
+    dedup_key = str(
+        noticia.get("dedup_key")
+        or f"link:{url_hash(noticia.get('canonical_url') or noticia.get('url', ''))}"
+    )
+    existing = state.get("posted", {}).get(dedup_key)
+    if existing is not None:
+        external_id = str(existing.get("external_id") or "") if isinstance(existing, dict) else ""
+        return OperationResult(StageStatus.SUCCESS, external_id=external_id, deduplicated=True)
+    duplicate = _posted_duplicate_reason(state, noticia)
+    if duplicate:
+        logger.warning("Instagram (paparazzi) omitido por publicación similar previa: %s", duplicate)
+        return OperationResult(
+            StageStatus.SUCCESS,
+            deduplicated=True,
+            details={"duplicate_reason": duplicate},
+        )
+
+    def _as_image_only() -> OperationResult:
+        image_only = {
+            key: value
+            for key, value in noticia.items()
+            if key not in ("video_url", "video_duration_seconds", "media_type")
+        }
+        return post_to_instagram_detailed(image_only)
+
+    if not noticia.get("video_url"):
+        return _as_image_only()
+
+    from utils.video_renderer import render_paparazzi_clips
+
+    clip_paths, clip_info = render_paparazzi_clips(noticia)
+    if not clip_paths:
+        logger.info(
+            "Sin clip de video utilizable para paparazzi (%s); publicando solo imagen",
+            clip_info.get("error_type"),
+        )
+        return _as_image_only()
+
+    r2_image_key: str | None = None
+    r2_video_keys: list[str] = []
+    try:
+        prepared, image_url, r2_image_key = _prepare_image(noticia)
+        if not prepared.ok:
+            return prepared
+
+        video_urls: list[str] = []
+        try:
+            for clip_path in clip_paths:
+                video_url, r2_video_key = r2_storage.upload_temp(clip_path, ttl_hint="ig")
+                video_urls.append(video_url)
+                r2_video_keys.append(r2_video_key)
+        except RuntimeError as exc:
+            return OperationResult(
+                StageStatus.FAILED,
+                error_type="r2_upload_error",
+                details={"message": str(exc)},
+            )
+
+        img_child = _create_container(
+            {"image_url": image_url, "is_carousel_item": "true", "access_token": IG_ACCESS_TOKEN}
+        )
+        if not img_child.ok:
+            return img_child
+
+        child_ids = [img_child.external_id]
+        for part_index, video_url in enumerate(video_urls, start=1):
+            vid_child = _create_container(
+                {
+                    "video_url": video_url,
+                    "media_type": "VIDEO",
+                    "is_carousel_item": "true",
+                    "access_token": IG_ACCESS_TOKEN,
+                }
+            )
+            if not vid_child.ok:
+                return vid_child
+            vid_ready = _wait_premium_container(
+                vid_child.external_id,
+                stage="paparazzi_video_processing",
+                container_index=part_index,
+            )
+            if not vid_ready.ok:
+                return vid_ready
+            child_ids.append(vid_child.external_id)
+
+        parent = _create_container(
+            {
+                "media_type": "CAROUSEL",
+                "children": ",".join(child_ids),
+                "caption": _build_caption(noticia),
+                "access_token": IG_ACCESS_TOKEN,
+            }
+        )
+        if not parent.ok:
+            return parent
+        parent_ready = _wait_premium_container(
+            parent.external_id, stage="paparazzi_carousel_processing"
+        )
+        if not parent_ready.ok:
+            return parent_ready
+
+        published = _publish_container(parent.external_id)
+        if not published.ok:
+            return published
+        try:
+            _mark_posted(dedup_key, noticia, published.external_id)
+        except JsonStateError as exc:
+            logger.error(
+                "Instagram (paparazzi) publicó pero no se persistió la evidencia: %s", exc
+            )
+            return OperationResult(
+                StageStatus.DEGRADED,
+                error_type="published_state_write_error",
+                external_id=published.external_id,
+                response=published.response,
+                details={"publication_outcome": "confirmed", "container_id": parent.external_id},
+            )
+        logger.info(
+            "Carrusel paparazzi publicado en Instagram (%s partes de video): %s",
+            len(video_urls),
+            str(noticia.get("titulo") or "")[:70],
+        )
+        return published
+    finally:
+        if r2_image_key:
+            r2_storage.delete(r2_image_key)
+        for r2_video_key in r2_video_keys:
+            r2_storage.delete(r2_video_key)
+        for clip_path in clip_paths:
+            try:
+                os.unlink(clip_path)
+            except OSError:
+                pass

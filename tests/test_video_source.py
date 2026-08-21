@@ -167,6 +167,52 @@ class RenderIdContractTests(unittest.TestCase):
             )
 
 
+class ReelCinematicStyleTests(unittest.TestCase):
+    def test_flag_is_off_by_default_and_accepts_explicit_true(self):
+        from utils.visual_style import reel_cinematic_visual_style_enabled
+
+        self.assertFalse(reel_cinematic_visual_style_enabled({}))
+        self.assertTrue(
+            reel_cinematic_visual_style_enabled(
+                {"REEL_CINEMATIC_VISUAL_STYLE_ENABLED": "true"}
+            )
+        )
+
+    def test_cinematic_render_selects_editorial_composition_and_highlight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = {}
+
+            def fake_run(cmd, **kwargs):
+                captured["cmd"] = cmd
+                props_arg = next(part for part in cmd if part.startswith("--props="))
+                props = Path(props_arg.split("=", 1)[1])
+                captured["props"] = props.read_text(encoding="utf-8")
+                output = Path(cmd[cmd.index("EditorialReel") + 1])
+                output.write_bytes(b"fake-video")
+                return FakeCompletedProcess(returncode=0)
+
+            remotion_dir = Path(tmp) / "remotion"
+            (remotion_dir / "public" / "tmp").mkdir(parents=True)
+            renders_dir = Path(tmp) / "renders"
+            renders_dir.mkdir()
+            with patch.object(video_renderer, "REMOTION_DIR", str(remotion_dir)), patch.object(
+                video_renderer, "RENDERS_DIR", str(renders_dir)
+            ), patch.object(video_renderer.subprocess, "run", side_effect=fake_run):
+                result = video_renderer._render_remotion_main(
+                    {"titulo": "La Legislatura aprobó el presupuesto 2026", "seccion": "politica"},
+                    "a" * 32,
+                    8,
+                    None,
+                    "none",
+                    0,
+                    cinematic_style=True,
+                )
+
+        self.assertIsNotNone(result)
+        self.assertIn("EditorialReel", captured["cmd"])
+        self.assertIn('"highlightTerms": [', captured["props"])
+
+
 class DetectPlatformTests(unittest.TestCase):
     def test_tiktok_is_recognized(self):
         self.assertEqual(

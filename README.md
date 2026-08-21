@@ -9,6 +9,18 @@ controlado el 2026-07-27, con una publicación como máximo por canal y ciclo. E
 equivale a merge, release oficial ni declaración de todos los gates como completos:
 el PR sigue en borrador y el CMS todavía no ofrece un preflight read-only seguro.
 
+## Dónde corre esto (2026-08-21)
+
+**El servicio corre exclusivamente en una PC de producción dedicada** (`PC@192.168.1.150`,
+`C:\LVR`), nunca en una máquina de desarrollo. Cualquier otra copia de este repo —
+incluida esta— es sólo para escribir código, correr tests y validar renders; **jamás**
+`python cli.py start`, `python run_24x7.py`, `python video_reel_manager.py`, ni
+registrar `scripts/register_scheduled_tasks.bat` fuera de esa PC. El flujo de cambios
+es: desarrollar y probar acá → commit/push → PR con CI verde → merge → `git pull` +
+reinicio del backend por SSH en la PC de producción. Ver el procedimiento completo en
+`docs/RUNBOOK.md` (sección "Entorno: desarrollo vs. producción") y el incidente que
+motivó esta regla en `docs/KNOWN_ISSUES.md` #84.
+
 ## Instalación
 
 Requiere Python 3.10 o posterior. `ffmpeg` y `ffprobe` son dependencias del sistema

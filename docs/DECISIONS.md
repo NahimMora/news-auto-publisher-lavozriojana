@@ -493,7 +493,10 @@ como tal podría demover silenciosamente algo que ya se publicó.
 siguiente ciclo de bootstrap (lee `noticias_meta.json` de nuevo cada vez). Una
 noticia demovida mientras ya estaba en `noticias_sociales_pendientes.json` con
 `instagram_state="pending"` queda `excluded` inmediatamente — no espera al próximo
-bootstrap para dejar de ser seleccionable.
+bootstrap para dejar de ser seleccionable. La pestaña `Candidatas` representa estas
+mismas transiciones sin crear estados nuevos: lista sólo `status="candidate"`,
+diferencia la publicación reutilizada de la candidata todavía promovible y mantiene
+el formulario por identidad como operación secundaria.
 
 **Revisar nuevamente cuando**: se agregue una UI de búsqueda/browse de noticias
 automáticas (hoy el operador debe conocer la `identity` — `meta_queue_key`/
@@ -571,6 +574,16 @@ para el futuro pero `publish_package` los bloquea en esta versión (sólo carrus
 imágenes). El renderer (`utils/premium_renderer.py`) es Pillow interino; la Fase 4 lo
 reemplaza con Remotion sin cambiar su firma pública, así que preview y publicación
 siguen usando exactamente la misma función.
+
+Desde el incidente reproducido el 2026-07-31, Instagram no considera suficiente que
+`POST /media` devuelva un ID: el flujo Premium consulta `status_code,status` y exige
+`FINISHED` para cada hijo antes de crear el padre, y para el padre antes de llamar a
+`media_publish`. Los límites de espera son exclusivos de este workflow
+(`PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS` y
+`PREMIUM_IG_CONTAINER_PROCESSING_POLL_SECONDS`). Un timeout ocurre antes de publicar,
+queda como `not_published` reintentable y nunca habilita un reintento de Facebook.
+Además, el resultado por canal persiste sólo diagnóstico seguro de Meta (HTTP,
+código/subcódigo, tipo y etapa), no el cuerpo o mensaje externo arbitrario.
 
 **Revisar nuevamente cuando**: se implemente el tipo de slide `video` end-to-end, o el
 volumen de publicaciones premium justifique separar también el backoff del automático.
@@ -707,6 +720,73 @@ también terminan en la misma biblioteca deduplicada.
 verificación factual automática; cualquiera de esos cambios requiere una decisión
 editorial y de seguridad nueva.
 
+### 2026-07-31 — Contrato editorial verificable para la generación Premium
+
+**Decisión**: hacer verificables las pautas de redacción del JSON generado por IA,
+sin endurecer el contrato general de los borradores manuales. El prompt y el gate de
+`openIA/premium_package_generator.py` exigen títulos de 60 a 80 caracteres,
+informativos, naturales y prudentes en hechos policiales o judiciales; 3 o 4 slides
+sustantivos que permiten entender qué pasó, dónde, por qué importa y qué sigue; y
+captions con apertura periodística local, emojis pertinentes, fuente sólo si consta
+en la entrada y de 3 a 6 hashtags relevantes, siempre con `#LaRioja`. La generación
+automática no usa slides de cierre porque cada lugar del carrusel debe aportar hechos.
+
+**Motivo**: una pauta escrita solamente en el prompt no garantiza consistencia. El
+operador necesita que el resultado tenga cuerpo y funcione en redes, pero también que
+las 3 o 4 placas sean autosuficientes y mantengan atribuciones, incertidumbre judicial
+y vínculo riojano sin caer en clickbait ni morbo.
+
+**Consecuencias**: cada respuesta se valida antes de aceptarse. Ante un título corto,
+slides demasiado delgados, caption sin emojis/hashtags u otra infracción medible, el
+siguiente intento conserva el texto original, recibe el JSON erróneo como respuesta
+anterior del asistente y los errores como feedback separado. La corrección debe usar
+exclusivamente el texto original. Si se agotan los intentos y existe al menos un JSON
+parseable, el endpoint importa el último y muestra los incumplimientos como avisos para
+revisión manual; no fabrica ni modifica esa respuesta. Si nunca hubo JSON parseable,
+el fallo sigue siendo visible y bloqueante. Los borradores importados o editados
+manualmente conservan el contrato compatible existente.
+
+**Revisar nuevamente cuando**: cambie la estrategia editorial de redes, se quiera
+validar automáticamente nombres propios o se incorporen fuentes verificadas externas.
+
+### 2026-07-31 — Tipos únicos y escala móvil del carrusel Premium
+
+**Decisión**: cada carrusel Premium puede usar una sola vez cada tipo de slide. La
+restricción vive en el selector de la UI, los helpers de edición, la validación del
+contrato y el gate de generación por IA. `duplicate_slide` queda rechazado porque su
+resultado violaría necesariamente la regla. Los imports con repeticiones se conservan
+como borrador inválido para permitir recuperar y reasignar el contenido, pero
+`publish_package` no los publica.
+
+Se incorpora el tipo aditivo `impact`, textual y sin imagen, para separar antecedentes
+(`context`) de impacto local, aplicación práctica o próximos pasos. En la generación
+automática únicamente, un segundo `context` se normaliza a `impact` preservando todo
+su contenido y vaciando sólo `asset_hint`; otras repeticiones siguen siendo errores.
+Los imports manuales no se corrigen de forma implícita. La extensión es compatible con
+paquetes existentes y no requiere migración del `schema_version` 1.
+
+La legibilidad móvil se mejora con una escala exclusiva de `PremiumSlide`: titulares
+aproximadamente 6% mayores y cuerpos/módulos entre 10% y 14% mayores, incluyendo
+puntos clave, citas, cifras, chips y firma. La cabecera y el footer Premium reservan
+además más alto real y escalan 18% el logo, la sección, la señal de deslizamiento y
+la numeración; la tarjeta modular de contexto usa 82% del ancho útil. `StillLayout`
+y `HeadlineBlock` aceptan escalas opcionales con default 1;
+`AutomaticInstagramCard` no las activa y conserva su salida actual.
+
+**Motivo**: dos placas `context` (o de cualquier otro tipo) producen un carrusel
+repetitivo y dificultan asignar una función narrativa clara a cada pantalla. A la vez,
+los pisos tipográficos anteriores perdían presencia al reducir la pieza 1080x1350 al
+ancho habitual de un teléfono.
+
+**Consecuencias**: un borrador viejo o un import manual con tipos duplicados exige
+corrección antes de publicar. La salida automática ya no queda en estado fallido por
+dos `context`: conserva uno como contexto y presenta el otro como impacto local. No
+hay migración ni pérdida automática de contenido. La ampliación visual no altera el
+renderer automático, las colas, el CMS ni los contratos de Meta.
+
+**Revisar nuevamente cuando**: se agregue un tipo nuevo, vuelva una acción de
+duplicación con conversión explícita a otro tipo o cambie el formato del lienzo.
+
 ### 2026-07-31 — Editorial Cinemática Riojana: sistema visual compartido + servidor de render persistente
 
 **Decisión**: rediseñar el sistema visual de las dos piezas estáticas (carrusel premium y
@@ -814,3 +894,942 @@ los Reels (`Main.tsx`/`Outro.tsx`); o se agregue algún mecanismo de invalidaci�
 automática del bundle cacheado si el código de `remotion/src/` cambia mientras el
 servidor sigue corriendo (hoy requiere reiniciar el proceso manualmente, documentado en
 `remotion/README.md`).
+
+### 2026-07-31 — Las piezas de una sola imagen adoptan la escala premium
+
+**Decisión**: se revierte la exclusividad decidida en "Tipos únicos y escala móvil del
+carrusel Premium" (más arriba, mismo día). `AutomaticInstagramCard.tsx` — que renderiza
+tanto las publicaciones automáticas del scraper (`meta/ig_client.py`,
+`preview_pipeline.py`) como las publicaciones personalizadas manuales
+(`pipeline/custom_post.py`, mismo componente, ver comentario "reusando el mismo
+pipeline del autopublicador" en ese archivo) — ahora importa y usa exactamente las
+mismas constantes que `PremiumSlide.tsx`: `PREMIUM_MASTHEAD_H` (108), `PREMIUM_FOOTER_H`
+(96), `PREMIUM_CHROME_SCALE` (1.18) y `PREMIUM_HEADLINE_SCALE` (1.06, vía un wrapper
+`AutoHeadlineBlock` local). Estas constantes pasan a exportarse desde `PremiumSlide.tsx`
+en vez de vivir sólo ahí. La pieza sigue sin `showSwipeCue`/`total`: es una sola imagen,
+no un carrusel, así que nunca hubo ni hay señal de deslizamiento ni numeración.
+
+**Motivo**: pedido explícito — las publicaciones (manuales) y autopublicaciones de una
+sola imagen deben verse con el mismo peso editorial que una placa del carrusel premium,
+no con el masthead/footer/tipografía más chicos heredados de la v1.
+
+**Consecuencias**: `CONTENT_H`, `PHOTO_H`→`panelTop` y todo el resto de la geometría de
+`AutomaticInstagramCard.tsx` se recalculan automáticamente contra el masthead/footer más
+altos (mismo patrón que ya usa `CoverSlide` en `PremiumSlide.tsx`). No cambia
+`FacebookOgCard.tsx` (sigue en `LegacyStillLayout`, workflow `og`, fuera de alcance) ni
+ningún contrato de datos/props públicos de `AutomaticInstagramCardSchema`. El test
+`tests/test_remotion_visual.py::PremiumSlideSchemaTests` se actualizó para verificar la
+paridad en vez de la exclusividad anterior.
+
+**Revisar nuevamente cuando**: se quiera volver a diferenciar visualmente la pieza
+automática/manual de la premium, o se decida extender esta misma escala a
+`FacebookOgCard.tsx`.
+
+### 2026-07-31 — FacebookOgCard adopta el sistema visual nuevo y se wirea a Remotion
+
+**Decisión**: se revierte también el "fuera de alcance" repetido de `FacebookOgCard.tsx`
+(tarjeta Open Graph que Facebook/WhatsApp/etc. muestran al compartir el link del
+artículo web, generada por
+`pipeline/node_webapp/media.py::generate_og_image`). `FacebookOgCard.tsx` deja de usar
+`shared/LegacyStillLayout.tsx` (Arial, `AZUL`/`WHITE` fijos, `HighlightedTitle` con wrap
+del navegador) y pasa al mismo sistema de `AutomaticInstagramCard.tsx`/`PremiumSlide.tsx`:
+`StillLayout` con `EditorialMasthead`, `HeroMedia` (full_bleed) y `HeadlineBlock`
+(auto-fit real), modo por sección (`modeFromSection`). El lienzo (1200x630) es mucho más
+bajo que el de las otras dos piezas (1080x1350), así que usa constantes propias
+`OG_MASTHEAD_H`/`OG_FOOTER_H`/`OG_CHROME_SCALE` (76/64/0.82) en vez de las `PREMIUM_*` —
+reusar esas literalmente habría dejado casi sin aire la foto y el panel. El titular se
+acota a 2 líneas (con imagen) o 3 (sin imagen, panel más alto disponible), sin activar
+`fontScale`. Sigue sin `showSwipeCue`/`total`.
+
+Además, `resolve_engine("og")` pasa de default `"pillow"` a `"auto"` (mismo criterio que
+`"automatic"` en la entrada anterior de este mismo día): se agregan
+`layout/image_generator.py::_generate_facebook_remotion`/`generate_facebook_with_engine`
+(mismo patrón que sus pares de Instagram) y `generate_og_image` los usa en vez de llamar
+`generate_post` directo. `preview_pipeline.py` también se actualizó para generar el FB de
+preview con el motor real, igual que ya hacía con el IG.
+
+**Motivo**: pedido explícito de aplicar el mismo rediseño a la pieza de Facebook/OG.
+Dejar sólo la composición Remotion redibujada sin wirearla habría sido un cambio
+invisible: la imagen OG real seguía saliendo de `generate_post` (Pillow, diseño viejo).
+
+**Consecuencias**: la tarjeta OG de cada artículo publicado en la web pasa a Remotion
+cuando está disponible, con la misma red de seguridad que "automatic" — si el servidor
+de render tiene un problema puntual, cae a Pillow en silencio (logueado) y la
+publicación web nunca se bloquea por esto. No cambia el contrato de
+`FacebookOgCardSchema` ni el de `generate_og_image`/`upload_og_image`. Facebook/Instagram
+en sí no reciben esta imagen directo (`post_to_facebook_detailed` comparte un link y usa
+el OG de la página web, ver comentario en `pipeline/custom_post.py`), así que el cambio
+sólo se ve al visitar o compartir la URL pública del artículo, no en un botón de vista
+previa dentro de la UI de `video_reel_manager.py`.
+
+**Revisar nuevamente cuando**: se acumule evidencia real de volumen/latencia del
+workflow `og` bajo Remotion (hoy es 1 render por artículo publicado, no un flujo de alto
+volumen); o se quiera compartir constantes de masthead/footer entre los tres lienzos en
+vez de mantener `OG_*` separadas de `PREMIUM_*`.
+
+### 2026-07-31 — Ajuste fino de AutomaticInstagramCard: ancho/posición del título, chip de lugar, bajada y footer social
+
+**Decisión**: feedback puntual sobre la card de una sola imagen ya rediseñada
+(`AutomaticInstagramCard.tsx`), verificado con renders reales y en vivo contra la UI de
+`http://127.0.0.1:8765/`:
+
+1. **Ancho/alineación del título**: el modo Editorial (`mode.grid === "column"`, la
+   mayoría de las secciones) reducía el título a 80% del ancho y lo alineaba a la
+   derecha — sin motivo real, ya que `CoverSlide` en `PremiumSlide.tsx` (la referencia
+   de este rediseño) siempre usa el ancho completo y alineación a la izquierda, en
+   cualquier modo. `FullBleedBody`/`NoImageBody` ahora hacen lo mismo.
+2. **Posición del título**: `maxHeight` restaba un valor fijo (`panelH - 60`) menor que
+   el padding real del panel (`pad`, 64 o 80 según el modo). Con títulos largos, el
+   bloque de texto podía desbordar el margen superior del panel y quedar pegado contra
+   el borde de la foto ("el título está muy arriba"). Ahora resta el padding real de
+   ambos lados (`panelH - pad * 2`), y el modo Editorial además centra verticalmente
+   (mismo criterio que `CoverSlide`) en vez de anclar arriba.
+3. **Localidad y bajada completadas por IA**: nueva función
+   `openIA/caption_generator.py::generate_locality_and_deck` (esquema/prompt propio,
+   no toca `generate_caption`) — `locality` (chip de lugar, p.ej. "Chilecito") vacío si
+   el texto no nombra una localidad riojana concreta, y `deck` (bajada corta ANTES del
+   título, nunca repite el título) igual de vacío si no hay contexto claro. Fallback
+   silencioso si OpenAI no está disponible o falla: ambos quedan vacíos, la imagen se
+   genera igual sin chip ni bajada — nunca bloquea una publicación. Se llama desde
+   `openIA/rewrite_news.py::rewrite_noticia` (automático, junto a `generate_caption`) y
+   desde `pipeline/custom_post.py::build_custom_noticia` (manual, nuevo). Ambos campos
+   viajan por `AutomaticInstagramCardSchema` (`locality`/`deck`, default `""`) y se
+   renderizan con `ContextChip`/`HeadlineBlock.deck` — mismos componentes que ya usa
+   `CoverSlide`.
+4. **Footer con firma social**: `StillLayout` gana un prop opcional
+   `showSocialFooter` que, cuando está activo, reemplaza el crédito de fuente por
+   íconos FB/IG + `lavozriojana.com` (`shared/editorial/SocialFooter.tsx`, reusa
+   `SocialMark` — extraído de `BrandSignature.tsx` para no duplicar el ícono
+   enmascarado). `AutomaticInstagramCard`/`FacebookOgCard` lo activan;
+   `PremiumSlide` nunca lo activa (su footer sigue siendo crédito + deslizamiento +
+   numeración).
+
+**Motivo**: feedback directo sobre el resultado ya en producción — el ancho/posición
+del título eran regresiones respecto de la referencia real de Premium (no un cambio de
+diseño nuevo), y localidad/bajada/footer social son piezas que sí tiene el sistema
+Premium (chip de `CoverSlide`, marca de `BrandSignature`) y que la card automática
+todavía no había adoptado.
+
+**Consecuencias**: `pipeline/custom_post.py::build_custom_noticia` ahora hace una
+llamada a OpenAI adicional (además de la que ya hacía `openIA/rewrite_news.py` para el
+flujo automático); dado que "Vista previa" y "Publicar" llaman a
+`build_custom_noticia` por separado, un mismo posteo manual puede disparar la llamada
+dos veces — aceptado por simplicidad (mismo orden de magnitud que ya acepta el Estudio
+Premium al generar contenido con IA de forma interactiva). `FacebookOgCard` no recibe
+`locality`/`deck` (fuera de este pedido); sólo gana el footer social. No cambia
+ningún contrato público existente: `locality`/`deck` tienen default `""` y son
+compatibles hacia atrás con cualquier caller que no los envíe.
+
+**Revisar nuevamente cuando**: el volumen de publicaciones manuales justifique cachear
+`generate_locality_and_deck` entre preview y publish en vez de llamarlo dos veces; o se
+decida extender `locality`/`deck` a `FacebookOgCard.tsx`.
+
+### 2026-08-01 — Corrige título superpuesto al footer y sube el chrome de FacebookOgCard
+
+**Decisión**: feedback directo, verificado con renders reales:
+
+1. **Título superpuesto al footer**: `FacebookOgCard.tsx` reusaba el padding de marca
+   (`mode.pad`, 64/80px, pensado para el lienzo 1080x1350 de Premium/Automatic) y un
+   `maxHeight` fijo (`panelH - 36`) muy por encima del alto real disponible en su
+   panel — mucho más bajo al ser un lienzo 1200x630. El título podía necesitar hasta
+   ~140px cuando el panel con padding real sólo tenía ~15-45px, desbordando la foto
+   arriba y el footer abajo. Corrección: escala tipográfica propia
+   (`OG_HEADLINE_SCALE = 0.62` sobre `TYPE.titleBody`, en vez de heredar la de
+   Premium/Automatic, que no entra en un panel tan bajo), padding comprimido al 75%
+   de `mode.pad`, `maxHeight` recalculado contra ese padding real, y `overflow:
+   hidden` como red de seguridad final. También afectaba a `AutomaticInstagramCard`
+   en un caso más acotado: cuando había chip de localidad, su alto + el `gap` no se
+   restaban del presupuesto del título (`CHIP_H` + `chipReserve`, ahora sí), y el modo
+   Editorial centraba el título en un contenedor sin padding vertical real (ahora
+   tiene, y su `maxHeight` lo descuenta). `maxLines` de `FullBleedBody` baja de 4 a 3
+   como margen adicional.
+2. **Chrome de FacebookOgCard "que se vea como las de Estudio Premium"**: subir
+   `OG_CHROME_SCALE` de 0.82 a 1.05 y `OG_MASTHEAD_H`/`OG_FOOTER_H` de 76/64 a 92/78 —
+   el logo, la sección y el footer social se ven notoriamente más grandes y en línea
+   con el resto del sistema, sin llegar a los valores de Premium (108/96/1.18), que en
+   un lienzo de 630px de alto dejarían casi sin panel disponible.
+3. **Componentes del footer social un poco más grandes**: `SocialFooter.tsx` sube sus
+   tamaños base (íconos 24→28px, texto 22→25px, gap 12→14px) — afecta tanto a
+   `AutomaticInstagramCard` como a `FacebookOgCard` (ambos usan el mismo componente).
+
+**Motivo**: el desborde era un bug real de geometría (no una preferencia de diseño) —
+el panel de OG simplemente no tenía el alto que el cálculo de `maxHeight` asumía. El
+chrome más grande es un pedido explícito de que la pieza de Facebook/OG se sienta
+igual de sólida que el resto del sistema "Editorial Cinemática Riojana".
+
+**Consecuencias**: títulos muy largos en modo Editorial + chip de localidad pueden
+truncarse a 3 líneas con elipsis antes de lo que truncaban antes (a 4) — degradación
+aceptada frente a la alternativa (desborde visible). `FacebookOgCard` nunca alcanza el
+tamaño de fuente de `TYPE.titleBody` sin escalar (`OG_HEADLINE_SCALE` siempre reduce);
+esto es intencional, el lienzo de 630px de alto no lo soporta. No cambia ningún
+contrato de props: `FacebookOgCardSchema`/`AutomaticInstagramCardSchema` no ganan
+campos nuevos en esta entrada.
+
+**Revisar nuevamente cuando**: se rediseñe el lienzo de OG (p.ej. cuadrado en vez de
+1.91:1) de forma que sobre alto real para el panel sin comprimir tanto el padding ni
+la tipografía.
+
+### 2026-08-02 — Publicaciones conserva el título y deriva un único destaque verificable
+
+**Decisión**: la pestaña `Publicaciones` acepta títulos de 8 a 120 caracteres tanto
+en HTML como en `pipeline/custom_post.py`. Para el origen `manual_custom_post`, el
+prop explícito `publicationStyle=manual_publication` hace que `AutomaticInstagramCard`
+mida el título con Canvas/fuente real y calcule un panel degradado de 260–554 px según
+líneas, localidad y bajada. El margen vertical es proporcional (7,5%, acotado a
+36–48 px por lado), admite hasta cinco líneas y puede bajar a 32 px; no se recorta el
+contenido en la web ni se reemplaza el final por `...` dentro de ese contrato. La
+sección fuerza la misma bandera/recuadro del masthead Premium: rojo
+Crónica y el token exclusivo `SECTION_BLUE_DARK=#0B2F4F` para Editorial. El azul más
+luminoso de `mode.accent` queda reservado al destaque dentro del título. El default
+`automatic` conserva la geometría, cantidad de líneas y masthead previos.
+
+La llamada existente `generate_locality_and_deck`, invocada con
+`include_highlight=True` sólo desde Publicaciones, agrega `highlight_phrase`: una sola
+frase relevante de 2 a 4 palabras contiguas copiadas literalmente del título. Las
+reglas priorizan el núcleo informativo (acción + objeto, sujeto + decisión o resultado)
+y la primera mitad; rechazan bordes funcionales, lugar/fecha aislados y cierres
+genéricos. Una frase ubicada en el último 35% sólo pasa si contiene una acción o
+resultado concreto. El backend valida la secuencia y las reglas; una propuesta ajena
+se descarta. Si falta OpenAI o falla, el selector determinístico aplica la misma
+política sin inventar datos, armas, personas ni hechos. El valor viaja como
+`highlight_terms` y `FittedTitle` lo colorea con el acento de la card.
+
+**Motivo**: el límite anterior de 240 caracteres era incompatible con un panel de
+tres líneas y producía elipsis o riesgo de superposición. La card manual tampoco
+alimentaba el contrato de highlights que Remotion ya soportaba, y el tratamiento de
+sección variaba entre modos pese a la referencia visual del Estudio Premium.
+
+**Alternativas rechazadas**: truncar silenciosamente el título antes de renderizar
+(pierde información editorial); dejar 240 caracteres y reducir la fuente sin piso
+(degrada legibilidad); hacer otra llamada a OpenAI sólo para el highlight (costo y
+latencia innecesarios); aceptar una paráfrasis del modelo (podría introducir palabras
+no escritas por el operador).
+
+**Consecuencias**: los borradores manuales viejos con más de 120 caracteres deben
+editarse antes de previsualizar o publicar; nunca se truncan automáticamente. Preview
+y publicación siguen usando el mismo renderer real. El flujo automático no recibe
+`highlight_terms` ni modifica su prompt o su composición por esta decisión. No cambia
+el contrato JSON durable ni los publicadores de CMS/Meta.
+
+**Revisar nuevamente cuando**: títulos reales dentro de 120 caracteres obliguen a
+bajar de 32 px o cuando el equipo editorial prefiera que el operador elija manualmente
+la frase destacada.
+
+### 2026-08-02 — Publicaciones manuales renderiza a 2× y conserva crominancia 4:4:4
+
+**Decisión**: `utils.remotion_renderer.render_still` acepta una escala explícita,
+validada entre 0.1 y 4, y la transmite por igual al servidor persistente y a
+`npx remotion still`. `layout.image_generator` pide escala 2 sólo cuando el origen es
+`manual_custom_post`: la composición conserva su sistema lógico 1080×1350 y produce
+un archivo 2160×2700. Ese PNG se convierte a JPEG calidad 95, `subsampling=0` (4:4:4)
+y `optimize=True`. El fallback Pillow manual genera directamente con las mismas
+dimensiones y opciones JPEG. El workflow automático sigue en escala 1 y JPEG calidad
+90.
+
+**Motivo**: la card estaba diseñada para el tamaño de feed, pero la UI permite verla
+y ampliarla en un monitor. A 1080 px de ancho, el zoom hacía visible tanto la grilla
+de píxeles como el submuestreo de color alrededor de texto azul/rojo. Duplicar la
+densidad mejora esos bordes sin tocar medidas, auto-fit, footer ni proporción 4:5.
+
+**Alternativas rechazadas**: escalar el JPEG 1080 después del render (interpola
+píxeles pero no agrega detalle); usar PNG como artefacto social (archivo mucho mayor
+y cambio de contrato); aplicar 2× al lote automático completo (duplica costo de
+render y transferencia en el flujo de mayor volumen sin un pedido operativo).
+
+**Consecuencias**: preview y publicación manual generan archivos más grandes y el
+render consume más memoria/tiempo. La imagen original no gana detalle si ya llega en
+baja resolución, pero texto, vectores, gradientes y composición sí se rasterizan a
+2160×2700 reales. Un servidor persistente anterior que ignore `scale` no se acepta
+para un pedido 2×: la ausencia del header de confirmación activa el CLI de respaldo.
+
+**Revisar nuevamente cuando**: el tamaño de los JPEG manuales afecte tiempos de
+subida, Meta imponga un límite más estricto o se quiera exponer una opción editorial
+de resolución en vez del valor fijo 2×.
+
+### 2026-08-02 — El automático adopta el paquete visual de Publicaciones detrás de un flag
+
+**Decisión**: `AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED` controla únicamente la paridad
+visual del workflow automático y tiene default seguro `false`. Cuando vale `true`, la
+card automática de Instagram usa `publicationStyle=manual_publication`: panel
+adaptativo sin elipsis dentro del contrato de 120 caracteres, sección en recuadro,
+destaque relevante y salida JPEG 2160×2700, calidad 95 y crominancia 4:4:4. El
+fallback Pillow conserva la misma resolución y codificación. La tarjeta OG recibe el
+mismo estilo de sección y destaque dentro de su proporción propia 1200×630; no se la
+deforma para copiar la geometría 4:5 de Instagram.
+
+Las noticias nuevas obtienen `highlight_terms` en la llamada ya existente de
+`generate_locality_and_deck`, sin sumar otro request a OpenAI. El prompt y el
+validador exigen una frase contigua de 2 a 4 palabras tomada literalmente del título,
+sin inventar datos, armas, personas ni hechos. Las entradas antiguas de las colas que
+no tienen ese campo usan al renderizar el mismo selector local determinístico. El
+campo se incorpora de forma opcional a la metadata; no exige migración ni modifica la
+forma de los estados durables.
+
+**Motivo**: el operador pidió que lo generado por autopublicación sea visualmente
+igual a lo creado desde `Publicaciones`, incluidos legibilidad al ampliar, recuadro de
+sección y palabra o frase relevante con el color de la card.
+
+**Alternativas rechazadas**: cambiar el automático sin interruptor (riesgo operativo
+en el workflow de volumen); hacer una segunda llamada de IA sólo para el destaque
+(costo y latencia sin beneficio); dejar las entradas ya encoladas sin destaque
+(resultado inconsistente); escalar el JPEG después de renderizar (no agrega detalle
+real en tipografía ni vectores).
+
+**Consecuencias**: con el flag activo aumentan el tiempo de render, el uso de memoria
+y el tamaño de los archivos automáticos. El rollback visual es inmediato poniendo el
+flag en `false`, sin tocar colas. Este host lo activa por pedido explícito, pero la
+tarea productiva permanece detenida durante el QA y no se ejecuta ningún publicador.
+Los flujos Premium y Reels conservan sus colas, contadores y renderers separados.
+
+**Revisar nuevamente cuando**: el costo de 2× afecte el ciclo automático, Meta cambie
+sus límites de imagen o se necesite seleccionar el destaque manualmente en lugar de
+derivarlo con reglas verificables.
+
+### 2026-08-02 — Reactivar 24/7 desde una línea de base fresca de 20 noticias
+
+**Decisión**: ante la autorización explícita del operador, refrescar primero las
+fuentes con los tres publicadores forzados a `off`, crear backup y aplicar
+`queue-cutover --keep-latest 20` sólo con `unknown_order=0`. Después, validar el
+perfil productivo mediante `scripts/start_24x7_production.ps1 -ValidateOnly`, habilitar
+la tarea `LaVozRiojana-24x7` y arrancar en modo `all`. El canary permanece apagado.
+
+**Motivo**: las primeras 20 entradas durables eran del 30/07 y no representaban las
+últimas noticias disponibles. La ingesta previa evitó arrancar con ese lote antiguo;
+el segundo corte dejó 20 identidades del 01/08, las más recientes expuestas por las
+fuentes al momento de la activación.
+
+**Condición conocida**: `preflight_cms` sigue `blocked` por falta de un endpoint GET
+autenticado de capacidades. No se convierte en éxito. Se conserva la excepción
+operativa del 27/07 —publicación CMS con evidencia de ID/URL, kill switch y rollback—
+porque el operador volvió a autorizar explícitamente la activación. Fuentes, OpenAI,
+R2, Facebook, Instagram y filesystem sí pasaron sus preflights.
+
+**Consecuencias**: el primer ciclo publicó 17 notas Web, 5 Facebook y 2 Instagram;
+tres Web eran duplicados y cinco publicaciones Web quedaron degradadas por el sexto
+intento seguro, sin warnings factuales, judiciales ni de HTML. No hubo fallos externos
+ni resultados ambiguos. La tarea programada queda habilitada de forma permanente y
+el supervisor procesa ciclos horarios con watchdog cada cinco minutos. Los pendientes
+sociales se conservan para ciclos siguientes y no se reintentan por fuera de la cola.
+
+**Revisar nuevamente cuando**: el CMS incorpore `WEBAPP_PREFLIGHT_PATH`, el heartbeat
+quede stale, aparezca un outcome ambiguo o cambien los límites de Meta.
+
+### 2026-08-02 — EditorialReel extiende el sistema visual al video detrás de un flag manual
+
+**Decisión**: agregar `EditorialReel` como composición Remotion aditiva 1080×1920 y
+mantener `Main` sin cambios como rollback. La composición nueva reutiliza el esquema
+de props existente (`titulo`, `seccion`, asset, variante, duración y
+`highlightTerms`), suma 90 frames de cierre dentro del mismo render y adopta Archivo,
+Source Serif 4, modos Crónica/Editorial y los tokens de color de las publicaciones.
+El movimiento se construye exclusivamente desde el frame: reveal del medio,
+Ken Burns/parallax, entrada del masthead y badge, título escalonado, sweep de luz,
+textura, progreso, compactación y outro de marca.
+
+El caller elige la composición únicamente cuando
+`REEL_CINEMATIC_VISUAL_STYLE_ENABLED=true`. El default de código y `.env.example` es
+`false`; este host lo activa por pedido explícito para la UI manual. Si el título no
+trae `highlight_terms`, se usa `select_highlight_phrase`, el mismo selector verificable
+de Publicaciones: copia una frase literal y no suma una llamada a OpenAI. Si Remotion
+falla, el camino ffmpeg y el outro legacy siguen disponibles.
+
+**Motivo**: Reels había quedado fuera de la dirección de arte "Editorial Cinemática
+Riojana": todavía usaba Arial, menos capas de movimiento y un cierre independiente,
+mientras las piezas estáticas ya compartían una identidad mucho más sólida. El pedido
+explícito fue hacer la generación de videos más pulida, animada y profesional tomando
+como base esos estilos.
+
+**Alternativas rechazadas**: reemplazar `Main` en forma irreversible (elimina el
+rollback y cambia comportamiento al desplegar); activar el cambio dentro del lote
+automático o las colas Premium (son workflows separados); usar animaciones CSS
+temporales (no son deterministas en render); sumar una llamada de IA sólo para elegir
+el destaque; reusar el MP4 de outro cacheado, que mantendría el lenguaje visual viejo.
+
+**Consecuencias**: un render cinemático dura tres segundos más que el contenido, igual
+que el flujo anterior que concatenaba el outro, pero ahora la transición visual es
+continua. La respuesta informa `visual_style=editorial_cinematic_v2`. El cambio no
+publica, no consume cupos externos y no altera CMS, Meta, autopublicadores ni sus
+colas. El costo de render es mayor que el layout legacy por las capas y efectos;
+queda acotado al flujo manual y conserva fallback.
+
+**Revisar nuevamente cuando**: haya métricas de tiempo/tamaño con videos fuente largos,
+se quiera habilitar esta estética en otro workflow o haga falta exponer variantes de
+movimiento elegibles por el operador.
+
+### 2026-08-02 — El chrome del Reel usa reservas grandes de lectura móvil
+
+**Decisión**: ampliar en `EditorialReel` la cabecera, la bandera de sección y el footer
+como bloques completos, no sólo sus fuentes. La cabecera queda en 164 px con logo de
+74 px; la sección en 78 px con etiqueta de 31 px; y el footer en 104 px con texto de
+33 px e íconos de 38 px. El medio empieza en y=150, el panel termina en y=1784 y el
+presupuesto del titular descuenta la nueva altura de sección.
+
+**Motivo**: al reducir 1080×1920 al tamaño habitual de un teléfono, la escala anterior
+perdía jerarquía y no permitía identificar claramente marca, sección ni firma social.
+
+**Alternativas rechazadas**: escalar sólo texto e íconos (produce colisiones dentro de
+franjas chicas); agrandar el chrome sin recalcular medio/panel (invade el titular);
+cambiar la resolución del Reel (no corrige la proporción visual y altera el contrato).
+
+**Consecuencias**: el medio cede 38 px superiores y 20 px inferiores, mientras el panel
+inicial gana altura al comenzar antes. Títulos largos conservan auto-fit y safe area.
+El cambio sólo afecta `EditorialReel`; `Main`, cards estáticas y publicadores no cambian.
+
+**Revisar nuevamente cuando**: cambie el lienzo 9:16, el logo o el tamaño de reproducción
+objetivo en la UI.
+
+### 2026-08-02 — La fase compacta recompone sección y titular como un solo grupo
+
+**Decisión**: usar dos layouts tipográficos: el grande de hasta 88 px y uno compacto
+de hasta 72 px que vuelve a envolver el texto sobre 800 px seguros. Ambos cruzan su
+opacidad mediante `compactProgress`; no hay animaciones CSS. El alto real del layout
+compacto determina la posición final del panel completo. La sección conserva su
+posición relativa a 18 px estructurales del titular y el bloque termina con safe area
+antes del footer. Los renglones de `fitText` no pueden partirse otra vez dentro de los
+spans de color.
+
+**Motivo**: escalar con origen superior conservaba un vacío negro bajo el titular. El
+primer ajuste trasladó sólo el texto y movió ese vacío al espacio entre sección y
+título. Mover el panel corrigió el eje vertical, pero la escala uniforme todavía
+encogía el ancho y desaprovechaba espacio donde podían entrar más palabras. La unidad
+visual correcta es el panel completo con una composición tipográfica propia.
+
+**Alternativas rechazadas**: rellenar la franja con otra capa (oculta el error de
+layout); trasladar sólo el titular (separa la sección); mantener escala uniforme
+(reduce también el ancho); cambiar los renglones en caliente en un único nodo (salta
+durante el wrap); posicionar por cantidad de caracteres (no respeta métricas reales).
+
+**Consecuencias**: sección, títulos cortos o largos y footer mantienen una composición
+compacta equilibrada sin alterar la entrada escalonada ni la duración. Es un cambio
+exclusivo de `EditorialReel`; no publica ni modifica colas o workflows automáticos.
+
+**Revisar nuevamente cuando**: cambie la tipografía, el máximo de renglones, el ancho
+seguro o la geometría del panel/footer.
+
+### 2026-08-03 — La promoción manual a automática prevalece sobre filtros previos de Instagram
+
+**Decisión**: una transición explícita `candidate→automatic` hecha por el operador es
+autoritativa para la selección editorial de Instagram. `run_ig` cruza las identidades
+de `noticias_meta.json` con `manual_override_history` en
+`editorial_candidates.json`; si la noticia conserva ruta `automatic`, puede superar
+`IG_ALLOWED_CATEGORIES`, la condición `breaking` y, sólo para Instagram, la espera de
+URL Web. El cliente de Instagram no usa esa URL en el payload; sí conserva el gate de
+imagen pública. No se agrega un campo ni una migración: se reutiliza evidencia durable
+que ya existe. `published_reuse` no participa
+porque esa candidata representa una publicación confirmada que sólo se reutiliza en
+Premium.
+
+**Motivo**: el operador confirmó que “Enviar a automática” significa publicar esa
+noticia, no sólo cambiar una etiqueta interna. Antes, la UI ocultaba la candidata pero
+el bootstrap podía omitirla por categoría, creando una falsa expectativa y dejando la
+decisión sin efecto.
+
+**Alternativas rechazadas**: tratar cualquier `route_by_channel.instagram=automatic`
+como override (ampliaría silenciosamente todas las decisiones automáticas del router);
+agregar un segundo marcador al JSON y migrar el estado (duplica la evidencia existente);
+revivir `processing` o `dead_letter` (podría duplicar una publicación con outcome
+ambiguo).
+
+**Consecuencias**: las promociones existentes y futuras entran a la cola de Instagram
+en el próximo ciclo, incluso si la publicación Web quedó pendiente o ausente. La
+cola Meta activa tampoco es la única fuente: si el ítem rotó antes del bootstrap, se
+recupera el payload que ya conserva `editorial_candidates.json`, con la identidad
+original y sin migrar el formato. La
+excepción no se extiende a Facebook ni al ruteo automático normal. Se conserva
+validación de imagen, deduplicación, `completed`, claims, backoff, rate limit, kill
+switch y dead-letter. El bootstrap expone `included_by_manual_override` y
+`manual_override_without_web_url`, además de `restored_from_candidate_store`; la UI
+confirma el efecto externo antes de guardar.
+
+**Revisar nuevamente cuando**: se agreguen destinos manuales distintos de Instagram o
+se quiera que el operador pueda revivir explícitamente un dead-letter después de una
+conciliación externa.
+
+### 2026-08-05 — Fuente paparazzi.com.ar: cupo reservado 8+2 en Instagram y carrusel imagen+video
+
+**Decisión**: se agrega paparazzi.com.ar (farándula/espectáculos) como fuente de
+scraping (`scraping/base_paparazzi.py`, `main_paparazzi.py`), apagada por defecto
+(`SCRAPER_PAPARAZZI_ENABLED=0`). A diferencia de las demás fuentes, sus notas de
+Instagram no compiten por `IG_MAX_PER_RUN` (8): `meta/run_ig.py` selecciona dos pools
+independientes vía `utils.social_queue.get_pending(..., source_prefix=/exclude_source_prefix=)`
+— hasta 8 generales (excluyendo paparazzi) + hasta `IG_PAPARAZZI_MAX_PER_RUN` (2) de
+paparazzi — y los concatena. `_allowed_for_instagram` deja pasar cualquier ítem de esa
+fuente sin depender de `IG_ALLOWED_CATEGORIES` (su categoría, `espectaculos`, no está en
+la lista general por defecto).
+
+Cuando la nota tiene video (la mayoría — el sitio embebe JWPlayer;
+`scraping/base_paparazzi.py` resuelve el `media_id` contra el endpoint público
+`cdn.jwplayer.com/v2/media/{id}` para obtener una URL mp4 directa y la duración real,
+sin headless browser), se publica un carrusel — portada (mismo generador que el resto
+del automático, `layout/image_generator.py`) + 1 o 2 slides de video editados con la
+misma marca (`utils.video_renderer.render_paparazzi_clips`, nuevo, 1080×1350 igual
+aspect-ratio que la portada). Usa como máximo `PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS`
+(120s) reales del video fuente — las notas fuente son entrevistas de varios minutos,
+nunca aptas para publicar completas — y si eso supera
+`PAPARAZZI_CAROUSEL_VIDEO_PART_MAX_SECONDS` (60s, límite de Instagram por hijo de video
+en un carrusel), lo divide en 2 partes consecutivas de a lo sumo 60s cada una (carrusel
+de 3 slides: portada + parte 1 + parte 2). Sin video utilizable, cae al post estándar de
+imagen sola — nunca fuerza un carrusel de una sola imagen.
+`meta/ig_client.post_paparazzi_carousel_to_instagram` es la función nueva; reutiliza el
+mismo `ig_posted.json`/dedup que el flujo automático normal (a diferencia del carrusel
+Premium, que es social-only con estado propio), porque estos ítems sí pasan por la cola
+social estándar.
+
+**Corrección post-activación (mismo día)**: al activar en producción, el primer ciclo
+real mostró que ninguna nota de paparazzi llegaba a Instagram pese al cupo 8+2 — el
+gate del router editorial (`EDITORIAL_ROUTER_ENABLED=true`, `_routed_for_instagram` en
+`meta/run_ig.py`) es *independiente* del gate de categoría y bloqueaba todo por no
+tener vínculo riojano (`gate:no_riojan_link`), algo que farándula nacional nunca va a
+tener por diseño. `_routed_for_instagram` ahora bypassa "candidate" específicamente
+para la fuente paparazzi (su propio cupo 8+2 + carrusel ES su política editorial, no
+necesita también aprobar la del router), pero sigue respetando "suppressed"
+(duplicado técnico real — protección que no depende de localidad).
+
+**Corrección #2 (mismo día)**: Facebook no tenía ninguna lógica específica para
+paparazzi — `meta/run_fb.py` llamaba `post_to_facebook_detailed` para todo, que sube
+video nativo cuando hay `video_url` sin distinguir la fuente. Como el scraper deja el
+`video_url` crudo del sitio (la entrevista completa, sin recortar ni marca — ver
+`scraping/base_paparazzi.py`), varias notas salieron a Facebook con el video original
+sin editar. Nueva función `meta/fb_client.py::post_paparazzi_video_to_facebook`
+(dispatchada desde `meta/run_fb.py` igual que en Instagram): sube un único clip
+editado vía `utils.video_renderer.render_paparazzi_clips(noticia, split=False)` —
+Facebook no tiene el límite de 60s por hijo que sí tiene el carrusel de Instagram, así
+que no hace falta dividir en partes; usa el mismo tope de
+`PAPARAZZI_CAROUSEL_VIDEO_TOTAL_MAX_SECONDS` (120s) y el mismo branding que la
+portada. Sin video utilizable, cae al post estándar (link/imagen), igual que del lado
+de Instagram. `render_paparazzi_clips` ganó el parámetro `split` (default `True`) para
+que Instagram y Facebook reutilicen exactamente la misma lógica de descarga/recorte/marca
+sin duplicar código.
+
+Se validó contra la Graph API real antes de construir el pipeline (spike de un solo
+uso, no versionado): un carrusel con hijo `image_url` + hijo `video_url`+`media_type:
+"VIDEO"` (ambos `is_carousel_item: "true"`) fue aceptado y publicado con éxito, mismo
+aspect-ratio 4:5 en ambos hijos.
+
+**Motivo**: el operador pidió sumar farándula sin diluir el cupo curado de Instagram
+que ya tienen las categorías locales (`interior`, `sociedad`, `politica` + breaking), y
+pidió específicamente que el video acompañe a la imagen "con el mismo estilo" en vez de
+sólo texto.
+
+**Alternativas rechazadas**: subir `IG_MAX_PER_RUN` a 10 y agregar `espectaculos` a
+`IG_ALLOWED_CATEGORIES` (dejaría que ambos pools compitan por el mismo cupo sin
+garantizar el reparto 8+2); reusar el carrusel Premium tal cual (es social-only, con su
+propio estado y sin conexión a la cola/dedup automática que necesitan estas notas
+scrapeadas); publicar el video completo de la entrevista sin recortar (excede el límite
+de duración de Instagram para hijos de carrusel).
+
+**Consecuencias**: `utils.editorial_priority.item_source()` y los parámetros
+`source_prefix`/`exclude_source_prefix` de `get_pending` quedan disponibles como
+mecanismo genérico de cupo reservado por fuente — cualquier fuente futura con la misma
+necesidad puede reusarlos sin tocar `split_priority_batch`. paparazzi.com.ar
+rate-limitea (429) sin pausa entre requests; el scraper aplica su propio
+`PAPARAZZI_REQUEST_DELAY_SECONDS` (2.5s), a diferencia de las demás fuentes.
+
+**Revisar nuevamente cuando**: Meta cambie los límites de duración/aspect-ratio para
+video en hijos de carrusel, o se quiera un cupo reservado por fuente para más de una
+fuente a la vez (hoy el mecanismo soporta N fuentes vía prefijo, pero sólo paparazzi lo
+usa).
+
+### 2026-08-05 — Estadísticas de Instagram promueven candidatas de buen rendimiento
+
+**Decisión**: nueva etapa `meta/ig_insights.py` (agregada a `CYCLE_STEPS` en
+`run_24x7.py` y `CYCLE_SCRIPTS` en `cli.py`, tag de canal `instagram`), apagada por
+`IG_STATS_ENABLED`. Cada ciclo trae `reach`/`total_interactions` de hasta
+`IG_STATS_MAX_POSTS_PER_RUN` (30) publicaciones recientes de `ig_posted.json`
+(usando el campo `seccion` que cada publicación ya guarda) y agrega una tasa de
+interacción (`total_interactions / reach`) por categoría normalizada, persistida en
+`data/ig_category_performance.json`. Sólo hace `GET`; nunca publica ni toca colas.
+
+El router editorial (`utils/editorial_router.py::evaluate_routing`) gana un segundo
+camino para pasar el gate de localidad: si la nota no tiene vínculo riojano
+confirmado (`detect_riojan_link`) pero su categoría tiene rendimiento fuerte
+(`utils.category_performance.is_strong_performing_category` — tasa de interacción de
+la categoría ≥ tasa promedio de la cuenta × `IG_STATS_PROMOTION_THRESHOLD_RATIO`
+(1.0), con al menos `IG_STATS_MIN_SAMPLE_SIZE` (5) publicaciones de muestra), pasa
+igual que si tuviera vínculo riojano confirmado. Deliberadamente **no** bypassa nada
+más: breaking, material_update y sobre todo `TOPIC_AUTOMATIC_CAP` (el tope por tema)
+se evalúan exactamente igual después — el rendimiento histórico decide si una
+categoría entera merece confianza, no si un tema puntual puede saturar el feed.
+`evaluate_routing` sigue siendo pura (recibe `category_performance` ya cargado por el
+llamador, `utils.category_performance.load_category_performance()`, que devuelve `{}`
+— mismo efecto que sin datos — si `IG_STATS_PROMOTION_ENABLED` está apagado o el
+archivo no existe todavía). `openIA/rewrite_news.py` lo carga una sola vez por
+corrida, no por noticia.
+
+**Motivo**: el operador reportó ver demasiadas candidatas pendientes de revisión
+manual (181 al momento de esta decisión — Deportes 53, Política 38, Policiales 36,
+etc.), producto de que `detect_riojan_link` es puramente determinístico
+(hashtag/categoría "interior"/keyword de localidad) y no tiene forma de reconocer que
+una categoría entera viene funcionando bien en Instagram aunque una nota puntual no
+mencione una localidad riojana. Pidió explícitamente usar las estadísticas reales de
+Instagram como señal para no exigir revisión manual en esos casos.
+
+**Alternativas rechazadas**: ampliar `IG_ALLOWED_CATEGORIES` estáticamente según
+rendimiento (se discutió pero se descartó — mezclar un gate estático con una señal que
+cambia con el tiempo es más confuso que extender el router, que ya es el lugar
+correcto para decisiones caso-por-caso); usar alcance (`reach`) solo en vez de tasa de
+interacción (el operador pidió específicamente la tasa, que normaliza por alcance en
+vez de premiar posts que simplemente llegaron a más cuentas sin generar reacción).
+
+**Consecuencias**: con la cuenta todavía joven (pocas publicaciones, historial de
+horas no de meses), la mayoría de las categorías no van a alcanzar
+`IG_STATS_MIN_SAMPLE_SIZE` todavía — el efecto práctico crece a medida que
+`ig_posted.json` acumula más publicaciones con estadísticas reales. `IG_STATS_ENABLED`
+y `IG_STATS_PROMOTION_ENABLED` son flags independientes: se puede recolectar
+estadísticas sin que cambien las decisiones de ruteo (útil para observar antes de
+confiar), o apagar solo la promoción sin perder la recolección.
+
+**Revisar nuevamente cuando**: haya suficiente historial (semanas, no días) para
+evaluar si `IG_STATS_PROMOTION_THRESHOLD_RATIO=1.0` es el punto justo, o si conviene
+diferenciar el umbral por categoría en vez de un único ratio global.
+
+### 2026-08-05 — El clip de video paparazzi se marca con Remotion, no PIL/ffmpeg
+
+**Decisión**: nueva composición Remotion `PaparazziClip` (1080×1350,
+`remotion/src/PaparazziClip.tsx`, registrada en `Root.tsx`) reemplaza el overlay
+PIL/ffmpeg simple (barra de color + logo) que marcaba el clip del carrusel paparazzi
+hasta ahora. La composición reusa exactamente el mismo chrome de marca que
+`AutomaticInstagramCard` (la portada del mismo carrusel): `StillLayout` +
+`EditorialMasthead` (logo, "La Voz Riojana", sección con color de `mode.accent`) +
+`SocialFooter` (íconos FB/IG + `lavozriojana.com`), sin título propio (el titular ya
+vive en la portada). El video fuente se compone con el mismo truco que
+`EditorialReel` para material que no es nativamente 4:5 (entrevistas sueles ser
+16:9): fondo blureado a pantalla completa (`@remotion/media` `&lt;Video&gt;` con
+`objectFit="cover"` + `blur(50px)`) + copia nítida encima en `objectFit="contain"`,
+sin recorte feo.
+
+Del lado Python, `utils.video_renderer.render_paparazzi_clips` ahora recorta el
+segmento con ffmpeg puro (`_ffmpeg_trim_clip`, sin marca) y se lo pasa a
+`_render_remotion_paparazzi_clip` (mismo patrón que `_render_remotion_main`: copia el
+asset a `remotion/public/tmp/`, escribe props a JSON, `npx remotion render
+PaparazziClip ... --props=...`). Si Remotion/Node no está disponible o el render
+falla, cae al overlay PIL/ffmpeg anterior (`_paparazzi_overlay` +
+`_ffmpeg_compose_paparazzi_clip`, ahora operando sobre el clip ya recortado en vez de
+recortar+marcar en un solo paso) — mismo patrón de fallback que `render_video()` con
+`Main`/`EditorialReel`. No hay flag nuevo: la disponibilidad de Remotion es el gate,
+igual que en el resto del sistema.
+
+**Motivo**: el operador pidió explícitamente que la edición de video use el mismo
+sistema Remotion/"Editorial Cinemática Riojana" que ya se ve en la UI manual de Reels
+(127.0.0.1:8765) en vez del overlay simple — el video del carrusel quedaba visualmente
+desprolijo al lado de una portada ya renderizada con el sistema de diseño completo.
+
+**Hallazgo durante la investigación**: el sistema de diseño Remotion
+(`designSystem.ts::SECTION_MODE`) mapea `espectaculos` al modo `"editorial"` (acento
+azul), mientras que `layout/image_generator.py::SECTION_COLORS` lo mapea a rojo. El
+overlay PIL de fallback sigue usando el rojo de `layout/image_generator.py` (no se
+tocó, es sólo el camino degradado) — si se quiere reconciliar, hay que decidir cuál de
+los dos sistemas es la fuente de verdad para esa categoría.
+
+**Alternativas rechazadas**: reescribir `_paparazzi_overlay` en PIL para que se vea
+más parecido a mano (no logra paridad real con el sistema de diseño — tipografía,
+gradientes y el truco de blur-backdrop para video no-4:5 son mucho más simples de
+mantener en React/Remotion, que ya es la fuente de verdad visual del resto del
+sistema); renderizar el video completo con `EditorialReel` y recortarlo a 4:5 después
+(esa composición es 9:16 con outro/título pensados para Reels independientes, no para
+un slide de carrusel — recortar post-render pierde el control fino del encuadre).
+
+**Consecuencias**: cada segmento ahora pasa por un recorte ffmpeg previo (sin marca)
+antes del render Remotion — un paso más que antes, pero necesario porque
+`&lt;Video&gt;` de Remotion reproduce el archivo completo tal cual (no hay trim por
+props en esta composición); es más simple recortar antes que sumar lógica de offset
+de frames a la composición. Los renders Remotion de video (a diferencia de los
+stills) siempre son un subprocess fresco (`npx remotion render`), sin servidor
+persistente — mismo costo por render que ya tenían `Main`/`EditorialReel`.
+
+**Revisar nuevamente cuando**: se quiera evitar el recorte ffmpeg previo agregando
+soporte de `startFrom`/duración por props directamente en `PaparazziClip`, o se
+decida reconciliar el color de "espectaculos" entre `designSystem.ts` y
+`layout/image_generator.py`.
+
+### 2026-08-10 — Reel independiente de paparazzi (video solo), motor 127.0.0.1:8765
+
+**Decisión**: cuando una nota de paparazzi.com.ar con video fuente ya se publicó con
+éxito como carrusel/video estándar (`meta.ig_client.post_paparazzi_carousel_to_instagram`,
+que dispara internamente el video nativo de Facebook también — ver decisión
+2026-08-05), `meta/run_ig.py` dispara además, best-effort,
+`utils.paparazzi_reels.publish_paparazzi_reel(noticia)`: renderiza un Reel con el
+mismo motor que la UI manual (`utils.video_renderer.render_video` — Remotion
+`EditorialReel`/`Main` con título superpuesto, distinto del clip de marca simple sin
+título que usa el carrusel, `PaparazziClip`) a partir del mismo `video_url` crudo del
+scraper, lo sube a R2 y lo publica como **segunda publicación independiente** en
+Instagram (`media_type: REELS`) y Facebook (`/videos`).
+
+Nuevas funciones "tontas" sin dedup propio —
+`meta.ig_client.post_reel_video_to_instagram` y
+`meta.fb_client.post_reel_video_to_facebook`, ambas toman un `item` con `video_url` ya
+hosteado en R2 y publican sin chequear duplicados. La idempotencia vive enteramente en
+`utils/paparazzi_reels.py`, con estado propio (`data/paparazzi_reels_posted.json`,
+dedup_key `reel:{hash}` derivado de la misma identidad que el carrusel) — a propósito
+separado de `ig_posted.json`/`fb_posted.json`: si reusara ese estado, el chequeo de
+"publicación similar previa" (`_posted_duplicate_reason`, mismo `canonical_url`/`url`
+que el carrusel ya publicado) bloquearía el Reel pensando que es un duplicado técnico,
+cuando en realidad es una segunda publicación intencional en otro formato. Mismo
+patrón que el carrusel premium (`premium_ig_posted.json`) para el mismo problema.
+
+Apagado por defecto (`PAPARAZZI_REEL_ENABLED=false`) — no cambia el comportamiento
+actual hasta activación explícita, siguiendo el mismo patrón que el resto de los kill
+switches del proyecto. Con el flag encendido, cada plataforma respeta además su propio
+switch (`IG_PUBLISH_ENABLED`/`FB_PUBLISH_ENABLED`): si sólo una está prendida, el Reel
+se publica sólo ahí, nunca bypassa el switch de la otra. Si el video fuente no se
+puede descargar al momento de renderizar (`render_info["source_used"] != "video"` —
+cayó a Ken Burns/overlay), no se publica nada: este flujo es explícitamente "el video
+solo", no un Reel de imagen.
+
+**Motivo**: el operador pidió que las notas de paparazzi que ya salen con video en el
+carrusel/nativo también salgan como Reel independiente (mejor alcance orgánico que un
+hijo de carrusel), usando el mismo generador con título superpuesto que ya usa a mano
+en la UI de Reels (127.0.0.1:8765) en vez del branding sin título del clip de
+carrusel.
+
+**Alternativas rechazadas**: reusar `ig_posted.json`/`fb_posted.json` con un
+`dedup_key` distinto (el `dedup_key` exacto sí es único, pero
+`_posted_duplicate_reason`/`_is_posted` de esos estados igual comparan por
+`canonical_url`/`url` contra registros ya existentes, bloqueando el Reel); armar un
+nuevo stage/script (`meta/run_paparazzi_reels.py`) con su propio canal en
+`run_24x7.py`/`cli.py`/`utils/deployment.py` (más superficie para una función que
+sólo aplica a un subconjunto de una sola fuente ya gateada por su propio flag; el
+punto natural para generar el Reel es el mismo lugar donde ya se conoce el `noticia`
+completo recién publicado, sin tener que releer ningún estado); recortar el video
+fuente antes de pasarlo a `render_video` (innecesario — `render_video` ya limita a
+90s reales del inicio del video, igual que si un operador pegara la misma URL larga en
+la UI manual).
+
+**Consecuencias**: una nota de paparazzi con video puede terminar publicada hasta 3
+veces (carrusel IG, video nativo FB, Reel IG+FB) — intencional, no es un bug de dedup.
+El renderizado ocurre síncronamente dentro del loop de `run_ig.py` (mismo patrón que
+ya tenía el recorte del carrusel), agregando latencia por nota paparazzi cuando el
+flag está activo. Cualquier fallo del Reel (render, R2, Graph API) se loguea pero
+nunca afecta el resultado/contadores de la etapa `instagram` ni la publicación ya
+confirmada del carrusel.
+
+**Revisar nuevamente cuando**: se quiera medir el Reel independiente con estadísticas
+propias (hoy `meta/ig_insights.py` sólo lee de `ig_posted.json`, no de
+`paparazzi_reels_posted.json`), o se decida que el recorte de duración deba usar una
+ventana distinta a "los primeros 90s" (por ejemplo, el mismo criterio de
+`render_paparazzi_clips`).
+
+### 2026-08-15 — Fuente infobae.com/sociedad/policiales/ y lote único de publicación (3 baldes) para Web/Facebook/Instagram
+
+**Decisión**: se agrega infobae.com/sociedad/policiales/ (`scraping/base_infobae.py`,
+`main_infobae_policiales.py`, apagada por defecto hasta probarse, luego habilitada) como
+segunda fuente de policiales nacional/video, junto a paparazzi.com.ar. A diferencia de
+TN.com.ar (evaluado y descartado: su player vodgc/Genoa resuelve el video con JS
+ofuscado, sin endpoint público), Infobae embebe JWPlayer estándar — el JSON-LD
+`VideoObject.contentUrl` de la nota ya trae la URL mp4 directa
+(`cdn.jwplayer.com/videos/{id}.mp4`), sin resolver nada contra una API ni headless
+browser. Política propia de la fuente: sólo se guarda una nota si tiene video o vínculo
+riojano (`utils.editorial_router.detect_riojan_link`, reutilizado tal cual) — el resto
+se descarta en el scraping mismo, antes de gastar reescritura, vía un nuevo parámetro
+`extra_discard` en `scraping/runner.py::run_section` (opcional, `None` por defecto —
+aditivo, no cambia el comportamiento de ninguna otra fuente).
+
+Al mismo tiempo se reemplazó por completo el criterio de qué se publica en cada canal.
+Antes: Web publicaba casi todo (sólo tope de Deportes=1/corrida), Facebook publicaba
+literalmente todo lo que tuviera `web_url` (sin ningún filtro), e Instagram era el único
+canal con curación real — un gate de categoría (`IG_ALLOWED_CATEGORIES`) más el router
+editorial (`detect_riojan_link`, candidate/automatic), y paparazzi tenía además un cupo
+reservado propio (`IG_PAPARAZZI_MAX_PER_RUN=2`) que bypassaba ese gate por completo. El
+resultado observable: Instagram se llenaba de espectáculo (paparazzi, vía reservado sin
+gate) mientras notas locales/policiales de La Rioja genuinas quedaban en `"candidate"`
+sin publicarse — el gate de vínculo riojano exige mencionar literalmente una de ~20
+localidades en el texto, algo que un medio riojano no siempre repite porque el contexto
+ya es local.
+
+Se reemplaza todo eso por un único cálculo de lote (`utils/publish_selection.py`,
+`select_publish_batch.py` — nueva etapa en `run_all.py`, después de
+`openIA/rewrite_news.py`) que decide qué se publica una sola vez por ciclo y lo marca
+(`selected_for_publish`, `publish_batch_id`, `publish_bucket`) en ambas colas de salida
+de la reescritura (`noticias_meta.json` y `noticias_web_pending.json`, correlacionadas
+por `canonical_url`/`url`) — Web, Facebook e Instagram terminan publicando exactamente
+el mismo lote, en vez de cada uno decidir por su cuenta. Tres baldes por corrida:
+- **Local** (`PUBLISH_LOCAL_MAX_PER_RUN=6`): cualquier fuente que no sea paparazzi ni
+  infobae, en el orden de prioridad editorial ya existente
+  (`utils.editorial_priority.priority_interleave`, que ya prioriza
+  policiales/interior por delante de política/sociedad/deportes) — sin código nuevo
+  para el orden. Al excluir paparazzi/infobae por fuente (no por categoría ni por
+  texto), el gate de vínculo riojano deja de ser necesario para este balde: todo lo
+  que entra ya es de un medio riojano por construcción.
+- **Paparazzi** (`PUBLISH_PAPARAZZI_MAX_PER_RUN=2`): video primero, después por el
+  score de relevancia que ya calculaba la reescritura (`paparazzi_relevance_score`) —
+  sin llamadas de IA nuevas.
+- **Infobae** (`PUBLISH_INFOBAE_MAX_PER_RUN=2`): video primero, después por intensidad
+  de `BREAKING_KEYWORDS` en el título (proxy gratuito de "fuerte/polémica", sin IA) —
+  se evaluó agregar un score con IA como el de paparazzi y se descartó para no sumar
+  llamadas por nota.
+
+`meta/run_ig.py` y `meta/run_fb.py` ahora sólo encolan lo marcado `selected_for_publish`
+(más `web_url` verificado); `pipeline/node_webapp/publisher.py::publish_pending` hace lo
+mismo en vez de `split_priority_batch` con cap de Deportes. Se retiraron por completo
+(código y variables): `IG_ALLOWED_CATEGORIES`, `_allowed_for_instagram`,
+`_routed_for_instagram`, `IG_PAPARAZZI_MAX_PER_RUN`, `EDITORIAL_ROUTER_ENABLED` (el
+router seguía corriendo igual sin el flag — sólo controlaba si `run_ig.py` lo
+consultaba), `WEB_PUBLISH_MAX_PER_RUN`/`WEB_MAX_DEPORTES_PER_RUN`/`MAX_DEPORTES_PER_RUN`/
+`SOCIAL_MAX_DEPORTES_PER_RUN` y `utils.paparazzi_relevance.passes_relevance_gate` (el
+score en sí, `score_relevance`, se conserva — ahora alimenta el orden del balde en vez
+de un gate booleano). Lo único del router que sigue gateando Instagram es
+`route_by_channel.instagram == "suppressed"` (duplicado técnico real), igual que antes
+sólo aplicaba a paparazzi — ahora aplica parejo a cualquier fuente.
+
+**Corrección post-activación (mismo día)**: al reescribir `_matches_manual_automatic`
+para depender sólo de `not suppressed` (en vez de exigir además
+`route_by_channel.instagram == "automatic"`), un backlog de 50 candidatas que un
+operador había promovido manualmente vía UI en días previos — nunca publicadas porque
+el gate viejo las mantenía bloqueadas pese a la promoción — entraron todas de una sola
+corrida de `run_ig.py`. Varias con video de paparazzi (minutos de procesamiento cada
+una) hicieron que la etapa superara el timeout de 1200s dos ciclos seguidos
+(`error_type: timeout`, `exit_code: 1`, cero publicadas). Se agregó
+`IG_MANUAL_OVERRIDE_MAX_PER_RUN` (default 3): tope combinado entre los dos caminos de
+restauración manual de `_bootstrap_queue` (encontradas en `noticias_meta.json` +
+recuperadas desde `editorial_candidates.json`), pacea el drenaje del backlog a través
+de varias corridas en vez de intentarlo todo junto. Lo no procesado por falta de cupo
+no se pierde — sigue en `editorial_candidates.json`, elegible en la próxima corrida.
+
+**Corrección post-activación #2 (mismo día) — la causa real de por qué casi nada
+llegaba a Facebook/Instagram**: con el lote nuevo corriendo, `noticias_meta.json`
+mostraba **0 de 952 notas con `web_url`** — incluidas las 8 recién seleccionadas por el
+lote. El gate que exige `web_url` antes de publicar en redes es intencional (ver
+KNOWN_ISSUES #52), pero no debería fallar para casi todo. Dos bugs distintos, ambos
+preexistentes a este cambio:
+
+1. `openIA/rewrite_news.py::normalize_meta_queue()` reconstruye **cada ítem** de
+   `noticias_meta.json` vía `build_meta_item()` en **cada corrida** del pipeline (no
+   sólo la primera vez — corre sin condición alguna dentro de
+   `run_rewrite_pipeline()`), y `build_meta_item()` sólo conserva los campos listados
+   en `META_FIELDS`. `web_url` (escrito por
+   `pipeline.node_webapp.publisher.sync_meta_web_link` justo después de publicar en
+   Web) nunca estuvo en esa lista — se borraba en silencio en el ciclo siguiente. Esto
+   también amenazaba los campos nuevos de esta misma decisión
+   (`selected_for_publish`/`publish_batch_id`/`publish_batch_at`/`publish_bucket`).
+   Corrección: se agregaron `web_url`, `noticia_url`, `web_published_at`, `web_slug`,
+   `web_post_id` y los 4 campos del lote a `META_FIELDS`. Test de regresión:
+   `tests.test_node_webapp_publisher::test_normalize_meta_queue_preserves_fields_written_after_the_fact`.
+2. `utils/publish_selection.py::compute_next_batch()` armaba el pool de candidatas
+   sólo desde `noticias_meta.json` (952 ítems, un histórico que crece y se poda por su
+   propio TTL) sin verificar que el ítem siguiera vivo en `noticias_web_pending.json`
+   (29 ítems — se vacía al publicar y se poda por su propio TTL, independiente del de
+   meta). Resultado: el lote podía seleccionar notas cuya entrada en la cola web ya
+   había expirado semanas atrás, que nunca iban a conseguir `web_url` sin importar
+   cuántas veces se recalculara el lote — de las primeras 8 seleccionadas, 7 eran así.
+   Corrección: el pool ahora filtra a ítems que ya tienen `web_url` (publicados antes)
+   O siguen presentes en `noticias_web_pending.json` (van a publicarse este ciclo o uno
+   próximo). Test de regresión:
+   `tests.test_publish_selection::test_excludes_meta_items_whose_web_queue_entry_already_expired`.
+
+Reparación de datos (una vez, sobre producción): se restauraron desde backup las 29
+entradas de `noticias_meta.json` correspondientes a notas que seguían vivas en
+`noticias_web_pending.json` y que un cleanup manual previo había borrado por error (por
+tener el mismo síntoma — sin `web_url` — que el backlog genuinamente muerto); se
+recuperó `web_url` desde `noticias_web_publicadas.json` para una nota que sí se había
+publicado antes; se eliminaron 7 notas sin salida posible (ni `web_url` ni presencia en
+la cola web). Validado end-to-end contra producción real tras el fix: Web publicó 7/7,
+Facebook 7/7 (incluye video paparazzi editado), Instagram 8/8 (incluye carrusel + reel
+de una nota que vino del lote nuevo, no de un override manual) — la cadena
+scraping→reescritura→lote→Web→sync→Facebook/Instagram quedó confirmada funcionando de
+punta a punta, no sólo en tests.
+
+**Motivo**: el operador pidió sumar policiales/video nacional sin caer en ninguno de los
+dos extremos — ni "se publica todo en todos lados" (Web/Facebook de antes) ni "casi
+nada local llega a Instagram" (el gate de vínculo riojano de antes) — y que el criterio
+de selección sea el mismo en los 3 canales, coherente con un medio local que también
+publica espectáculo y policiales/video nacional pero de forma acotada, no dominante.
+
+**Alternativas rechazadas**: TN.com.ar como fuente de policiales/video nacional (video
+sin resolver, ver arriba); mantener el gate de vínculo riojano por texto y sólo ampliar
+la lista de localidades (no ataca la causa real — un medio riojano no necesita nombrar
+la provincia en cada nota); cupo reservado propio para infobae igual que paparazzi
+(hubiera mantenido dos mecanismos de selección distintos en vez de uno solo aplicado
+parejo).
+
+**Consecuencias**: Web y Facebook dejan de ser un espejo 1:1 de todo lo scrapeado — sólo
+publican el lote curado. Cualquier fuente nueva que se agregue en el futuro entra
+automáticamente en el balde "local" (no necesita código nuevo) salvo que se le quiera
+dar su propio balde nacional, como paparazzi/infobae.
+
+**Revisar nuevamente cuando**: se quiera que el lote sea literalmente idéntico
+ítem-por-ítem entre los 3 canales en vez de "mismo criterio, misma marca, cada canal
+publica a su propio ritmo" (hoy Web/Facebook/Instagram pueden desfasarse si alguno
+falla o queda pendiente); se agregue una tercera fuente nacional (definir si comparte
+cupo con paparazzi/infobae o necesita balde propio); o el backlog de candidatas
+manuales (`IG_MANUAL_OVERRIDE_MAX_PER_RUN`) se drene por completo y el tope pueda
+subirse sin riesgo de timeout.
+
+### 2026-08-15 — El balde local no completa con Deportes/Espectáculos; el cupo libre pasa a paparazzi/infobae
+
+**Decisión**: el operador reportó que se estaba publicando mucho Deportes. Causa:
+`utils.publish_selection.select_batch` llenaba el balde local (`PUBLISH_LOCAL_MAX_PER_RUN=6`)
+recorriendo todo el orden de prioridad editorial cuando no había 6 candidatas de
+policiales/interior — bajando hasta política, sociedad, y finalmente deportes, la
+categoría de menor prioridad. Se agrega `PUBLISH_LOCAL_EXCLUDED_CATEGORIES` (default
+`deportes,espectaculos`): estas categorías quedan afuera del balde local por completo,
+nunca completan aunque no haya nada más disponible esa corrida. La capacidad que el
+local deja sin usar (`shortfall = PUBLISH_LOCAL_MAX_PER_RUN - len(local_selected)`) se
+reparte entre paparazzi e infobae — mitad y mitad, redondeando a favor de paparazzi —
+en vez de perderse; si uno de los dos no tiene candidatas suficientes para usar su
+extra, el remanente pasa al otro (`select_batch`, ver docstring).
+
+**Motivo**: Deportes es la categoría de menor prioridad editorial por diseño
+(`DEFAULT_CATEGORY_PRIORITY["deportes"] = 9`, la más alta) — llegaba a publicarse sólo
+porque completaba el cupo, no porque compitiera bien. El operador prefiere que ese
+espacio lo ocupe contenido ya curado (paparazzi con score de relevancia, infobae con
+video/intensidad) antes que relleno deportivo de bajo impacto. `espectaculos` se excluye
+también porque paparazzi ya cubre esa categoría a nivel nacional con su propio criterio
+de selección — no hace falta que el balde local la duplique con contenido local de menor
+alcance.
+
+**Alternativas rechazadas**: bajar `PUBLISH_LOCAL_MAX_PER_RUN` (reduciría también
+policiales/interior genuino, no sólo el relleno); excluir deportes/espectaculos del todo
+el sistema en vez de sólo del balde local (deportes/espectaculos locales fuertes
+igual pueden competir si alguna vez se les da un balde propio — acá sólo se les quita
+el rol de "relleno automático").
+
+**Consecuencias**: en una corrida sin suficiente policiales/interior/política/sociedad
+local, paparazzi e infobae pueden superar su cupo nominal (hasta duplicarlo) esa
+corrida puntual — es intencional, no un bug de cupo.
+
+**Revisar nuevamente cuando**: se quiera un balde propio para deportes/espectaculos
+local en vez de excluirlos sin más; o `PUBLISH_LOCAL_EXCLUDED_CATEGORIES` necesite
+categorías adicionales según cómo evolucione el volumen por fuente.
+
+---
+
+### 2026-08-21 — El servicio corre exclusivamente en una PC de producción dedicada
+
+**Decisión**: `AutoPublicador_LaVozRiojana` sólo se ejecuta 24/7 (supervisor + UI
+manual + tareas programadas) en una PC de producción dedicada
+(`PC@192.168.1.150`, `C:\LVR`), accedida por SSH con clave. Cualquier otra copia del
+repo, incluida la máquina de desarrollo (`pc10`), es exclusivamente para escribir
+código, correr tests y validar renders — nunca para correr el servicio real, ni
+siquiera temporalmente. El flujo de cambios es: desarrollar/probar en dev → commit →
+push → PR con CI (`reliability-windows`) verde → merge a `main` → `git pull` +
+reinicio del backend por SSH en la PC de producción.
+
+**Motivo**: la máquina de desarrollo conservaba tareas programadas
+(`LaVozRiojana-24x7`, `LaVozRiojana-ManualUI`) del arranque productivo original del
+2026-07-27. Al migrar el servicio a la PC dedicada se detuvieron los procesos en dev
+pero no se borraron esas tareas, que lo relanzaron solas cada 5 minutos con
+credenciales productivas reales — dos instancias vivas, con las mismas credenciales
+de Facebook/Instagram/OpenAI/R2/CMS, sin compartir estado de deduplicación entre sí.
+Ver el incidente completo en `docs/KNOWN_ISSUES.md` #84.
+
+**Alternativas rechazadas**:
+- Dejar ambas máquinas capaces de correr el servicio y confiar en que el operador
+  recuerde apagar una antes de encender la otra: rechazada porque ya falló una vez
+  de esta forma exacta, y el costo de un error (publicación duplicada en redes con
+  cuentas reales) es alto y visible públicamente.
+- Compartir un único `.env`/`data/` entre ambas máquinas (por ejemplo, por una
+  carpeta de red): rechazada porque el bloqueo de archivos (`FileLock`) protege
+  contra corrupción de un JSON individual, pero no fue diseñado ni probado para dos
+  supervisores completos compitiendo por las mismas colas desde dos hosts.
+
+**Consecuencias**: todo cambio de código tarda un paso más en llegar a producción
+(push + PR + merge + pull + restart por SSH, en vez de simplemente reiniciar en el
+lugar donde se editó). A cambio, dev puede tener `.env` de pruebas, credenciales
+apagadas o `PIPELINE_DEPLOYMENT_MODE=observe` sin ningún riesgo de que eso se
+confunda con producción real. El procedimiento de despliegue queda documentado en
+`docs/RUNBOOK.md` ("Entorno: desarrollo vs. producción").
+
+**Revisar nuevamente cuando**: se decida automatizar el despliegue (CI/CD real hacia
+la PC de producción) en vez de `git pull` manual por SSH; o se agregue una segunda
+PC de producción, caso que `Ops\docs\ARCHITECTURE.md` (proyecto hermano HolaSalta)
+ya advierte que requiere asignar capacidades/recursos explícitos, no asumir un
+segundo agente con todo habilitado por default.

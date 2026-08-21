@@ -102,6 +102,22 @@ AUTOMATIC_FIXTURES = [
     },
 ]
 
+# Fixture explícita de dirección de arte v2: mismo caso "política_horizontal"
+# pero forzando `imageTreatment=branded_poster` — simula una captura/flyer
+# con logo o texto propio (no hay un asset real de ese tipo en FotosLVR;
+# el punto es validar que el tratamiento contiene la imagen en un marco y
+# separa el titular, en vez de usarla como fondo completo). No tiene
+# equivalente en el diseño "actual" (Pillow no distingue tratamientos), así
+# que sólo se renderiza con el motor nuevo.
+POSTER_FIXTURE = {
+    "id": "politica_poster_screenshot",
+    "label": "Política · screenshot/flyer con logo propio (branded_poster)",
+    "titulo": "El municipio difundió el cronograma oficial de la Fiesta de la Vendimia 2026",
+    "seccion": "cultura",
+    "imagen": _photo("nuevarioja_politica_b23fe4887997f1e6bfe91538bf019d72fe21d4ba_opt.jpg"),
+    "highlight_terms": [],
+}
+
 
 def _orientation(path: str | None) -> str | None:
     if not path:
@@ -121,7 +137,7 @@ def _render_automatic_old(fixture: dict) -> Image.Image:
     return generate_post(article, IG_W, IG_H, preloaded_img=preloaded)
 
 
-def _render_automatic_new(fixture: dict) -> Image.Image:
+def _render_automatic_new(fixture: dict, *, image_treatment: str = "auto") -> Image.Image:
     from utils.remotion_renderer import render_still
 
     props = {
@@ -129,6 +145,7 @@ def _render_automatic_new(fixture: dict) -> Image.Image:
         "seccion": fixture["seccion"],
         "assetFile": "",
         "highlightTerms": fixture["highlight_terms"],
+        "imageTreatment": image_treatment,
     }
     orientation = _orientation(fixture["imagen"])
     if orientation:
@@ -160,6 +177,12 @@ def _build_premium_package(template: str) -> dict:
         "key_points",
         title="Puntos clave",
         items=["Aumenta la obra pública", "Sube el presupuesto educativo", "Se crea un fondo de emergencia"],
+    )
+    add_slide(
+        package,
+        "quote",
+        title="El presidente de la Legislatura",
+        text="Fue un debate largo pero necesario para llegar a un presupuesto responsable",
     )
     add_slide(package, "number", items=["10"], text="horas duró el debate en el recinto")
     add_slide(package, "closing", text="Seguí la cobertura completa en nuestras redes")
@@ -256,9 +279,14 @@ def main() -> int:
     auto_sheet.save(auto_sheet_path)
     print("Guardado:", auto_sheet_path)
 
+    print("Renderizando fixture branded_poster (screenshot/flyer con logo propio)...")
+    poster_img = _render_automatic_new(POSTER_FIXTURE, image_treatment="branded_poster")
+    poster_img.save(os.path.join(BEFORE_AFTER_DIR, f"{POSTER_FIXTURE['id']}_nuevo.jpg"), "JPEG", quality=92)
+    print("Guardado:", os.path.join(BEFORE_AFTER_DIR, f"{POSTER_FIXTURE['id']}_nuevo.jpg"))
+
     print("Renderizando carrusel premium en los 3 modos (Crónica/Editorial/Datos)...")
     modes = [("lvr_cronica", "Crónica"), ("lvr_visual", "Editorial"), ("lvr_datos", "Datos")]
-    slide_labels = ["cover", "image_text", "key_points", "number", "closing"]
+    slide_labels = ["cover", "image_text", "key_points", "quote", "number", "closing"]
     mode_slides = {}
     for template, label in modes:
         mode_slides[label] = _render_premium_new(template)

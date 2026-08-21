@@ -274,21 +274,8 @@ class EditorialTests(unittest.TestCase):
         self.assertIn("culpabilidad", feedback.lower())
         self.assertIn("cambios materiales", feedback.lower())
 
-    def test_openai_payload_contains_feedback_and_previous_attempt(self):
-        create = Mock(
-            return_value=SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(content='{"quality_score": 0.9}')
-                    )
-                ]
-            )
-        )
-        client = SimpleNamespace(
-            chat=SimpleNamespace(
-                completions=SimpleNamespace(create=create),
-            )
-        )
+    def test_gemini_payload_contains_feedback_and_previous_attempt(self):
+        mock_chat = Mock(return_value='{"quality_score": 0.9}')
         previous = {
             "title": "Intento anterior",
             "lead": "Texto anterior",
@@ -298,24 +285,24 @@ class EditorialTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENAI_API_KEY": "test-only",
-                "OPENAI_RETRY_COUNT": "1",
+                "GEMINI_API_KEY": "test-only",
+                "GEMINI_RETRY_COUNT": "1",
             },
             clear=False,
-        ), patch("openai.OpenAI", return_value=client):
+        ), patch("utils.ai_client.chat_completion", mock_chat):
             editorial._call_ai_enricher(
                 sample_news(),
                 feedback="Cambiar estructura y titulo",
                 previous_attempt=previous,
             )
 
-        user_payload = json.loads(create.call_args.kwargs["messages"][1]["content"])
+        user_payload = json.loads(mock_chat.call_args.kwargs["messages"][1]["content"])
         self.assertEqual(
             user_payload["revision_feedback"],
             "Cambiar estructura y titulo",
         )
         self.assertEqual(user_payload["previous_attempt"], previous)
-        self.assertEqual(create.call_args.kwargs["temperature"], 0.55)
+        self.assertEqual(mock_chat.call_args.kwargs["temperature"], 0.55)
 
     def test_identical_revision_receives_explicit_no_change_feedback(self):
         noticia = sample_news()
@@ -1204,8 +1191,8 @@ class ManualVideoQueueTests(unittest.TestCase):
 class QueueTests(unittest.TestCase):
     def test_publish_pending_removes_only_successful_items(self):
         noticias = [
-            {"titulo": "A", "web_queue_key": "link:a"},
-            {"titulo": "B", "web_queue_key": "link:b"},
+            {"titulo": "A", "web_queue_key": "link:a", "selected_for_publish": True},
+            {"titulo": "B", "web_queue_key": "link:b", "selected_for_publish": True},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             queue = Path(tmpdir) / "noticias_web_pending.json"
@@ -1234,9 +1221,9 @@ class QueueTests(unittest.TestCase):
 
     def test_publish_pending_stops_batch_on_401_and_keeps_rest(self):
         noticias = [
-            {"titulo": "A", "web_queue_key": "link:a"},
-            {"titulo": "B", "web_queue_key": "link:b"},
-            {"titulo": "C", "web_queue_key": "link:c"},
+            {"titulo": "A", "web_queue_key": "link:a", "selected_for_publish": True},
+            {"titulo": "B", "web_queue_key": "link:b", "selected_for_publish": True},
+            {"titulo": "C", "web_queue_key": "link:c", "selected_for_publish": True},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             queue = Path(tmpdir) / "noticias_web_pending.json"
@@ -1259,8 +1246,8 @@ class QueueTests(unittest.TestCase):
 
     def test_publish_pending_reports_rate_limit_as_degraded_and_defers_rest(self):
         noticias = [
-            {"titulo": "A", "web_queue_key": "link:a"},
-            {"titulo": "B", "web_queue_key": "link:b"},
+            {"titulo": "A", "web_queue_key": "link:a", "selected_for_publish": True},
+            {"titulo": "B", "web_queue_key": "link:b", "selected_for_publish": True},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             queue = Path(tmpdir) / "noticias_web_pending.json"
@@ -1287,12 +1274,30 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(result.next_retry_at, 9999999999)
         self.assertEqual([item["titulo"] for item in saved], ["A", "B"])
 
-    def test_publish_pending_prioritizes_sections_and_defers_extra_deportes(self):
+    def test_publish_pending_only_publishes_selected_for_publish_in_priority_order(self):
+        """select_publish_batch.py decide qué se publica (selected_for_publish);
+        publish_pending() sólo ordena lo ya seleccionado por prioridad editorial
+        y deja el resto en cola para un próximo lote."""
         noticias = [
-            {"titulo": "dep1", "web_queue_key": "link:dep1", "categoria": "Deportes"},
+            {
+                "titulo": "dep1",
+                "web_queue_key": "link:dep1",
+                "categoria": "Deportes",
+                "selected_for_publish": True,
+            },
             {"titulo": "dep2", "web_queue_key": "link:dep2", "categoria": "Deportes"},
-            {"titulo": "pol1", "web_queue_key": "link:pol1", "categoria": "Policiales"},
-            {"titulo": "int1", "web_queue_key": "link:int1", "categoria": "Interior"},
+            {
+                "titulo": "pol1",
+                "web_queue_key": "link:pol1",
+                "categoria": "Policiales",
+                "selected_for_publish": True,
+            },
+            {
+                "titulo": "int1",
+                "web_queue_key": "link:int1",
+                "categoria": "Interior",
+                "selected_for_publish": True,
+            },
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             queue = Path(tmpdir) / "noticias_web_pending.json"
@@ -1301,10 +1306,6 @@ class QueueTests(unittest.TestCase):
             with patch("pipeline.node_webapp.publisher.INPUT", str(queue)), patch(
                 "pipeline.node_webapp.publisher.PUBLISHED_HISTORY",
                 str(history),
-            ), patch.dict(
-                os.environ,
-                {"WEB_MAX_DEPORTES_PER_RUN": "1", "WEB_PUBLISH_MAX_PER_RUN": "0"},
-                clear=False,
             ), patch(
                 "pipeline.node_webapp.publisher.publish_one_detailed",
                 return_value={"published": True, "featured": False, "error": None},
@@ -1377,7 +1378,11 @@ class SocialQueueTests(unittest.TestCase):
             ["pol1", "int1", "soc1", "dep1", "pol2", "dep2", "dep3", "dep4"],
         )
 
-    def test_get_pending_applies_social_deportes_cap(self):
+    def test_get_pending_applies_max_items_in_priority_order_without_category_cap(self):
+        """La curación editorial (qué se publica) la hace select_publish_batch.py
+        antes de que el ítem llegue acá — get_pending sólo pacea cuántos de
+        los ya seleccionados se intentan subir en esta corrida, en el orden
+        de prioridad existente, sin ningún tope de categoría propio."""
         now = int(time.time())
         items = [
             {"titulo": "dep1", "seccion": "Deportes", "social_queued_at": now},
@@ -1388,12 +1393,8 @@ class SocialQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             queue_path = Path(tmpdir) / "noticias_sociales_pendientes.json"
             queue_path.write_text(json.dumps(items), encoding="utf-8")
-            with patch("utils.social_queue.QUEUE_PATH", str(queue_path)), patch.dict(
-                os.environ,
-                {"SOCIAL_MAX_DEPORTES_PER_RUN": "1"},
-                clear=False,
-            ):
-                pending = social_queue.get_pending("instagram", max_items=10)
+            with patch("utils.social_queue.QUEUE_PATH", str(queue_path)):
+                pending = social_queue.get_pending("instagram", max_items=3)
 
         self.assertEqual([item["titulo"] for item in pending], ["pol1", "int1", "dep1"])
 
@@ -1616,6 +1617,44 @@ class RewriteQueueTests(unittest.TestCase):
         self.assertNotIn("parrafos", saved_meta[0])
         self.assertEqual(saved_web[0]["parrafos"], legacy["parrafos"])
         self.assertEqual(saved_web[0]["imagen_optimizada"], "C:/local/opt.jpg")
+
+    def test_normalize_meta_queue_preserves_fields_written_after_the_fact(self):
+        """Regresión: sync_meta_web_link (tras publicar en Web) y
+        select_publish_batch.py escriben campos en noticias_meta.json DESPUÉS
+        de que la nota ya está ahí. normalize_meta_queue() reconstruye cada
+        ítem en cada corrida (no sólo la primera vez) — si esos campos no
+        están en META_FIELDS, se pierden en el ciclo siguiente."""
+        item = sample_news(
+            web_url="https://lavozriojana.com/noticias/una-nota",
+            noticia_url="https://lavozriojana.com/noticias/una-nota",
+            web_published_at="2026-08-15T00:00:00Z",
+            web_slug="una-nota",
+            web_post_id="post-123",
+            selected_for_publish=True,
+            publish_batch_id="batch-abc",
+            publish_batch_at=1786760000,
+            publish_bucket="local",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_path = Path(tmpdir) / "noticias_meta.json"
+            web_path = Path(tmpdir) / "noticias_web_pending.json"
+            meta_path.write_text(json.dumps([item]), encoding="utf-8")
+            web_path.write_text("[]", encoding="utf-8")
+
+            with patch("openIA.rewrite_news.META_OUTPUT", str(meta_path)), patch(
+                "openIA.rewrite_news.WEB_OUTPUT",
+                str(web_path),
+            ):
+                rewrite_news.normalize_meta_queue()
+
+            saved_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+        saved = saved_meta[0]
+        self.assertEqual("https://lavozriojana.com/noticias/una-nota", saved["web_url"])
+        self.assertEqual("post-123", saved["web_post_id"])
+        self.assertTrue(saved["selected_for_publish"])
+        self.assertEqual("batch-abc", saved["publish_batch_id"])
+        self.assertEqual("local", saved["publish_bucket"])
 
 
 if __name__ == "__main__":

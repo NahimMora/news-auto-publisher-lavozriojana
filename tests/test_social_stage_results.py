@@ -14,11 +14,12 @@ def news(key):
 class FacebookStageTests(unittest.TestCase):
     def test_bootstrap_only_enqueues_items_with_verified_web_url(self):
         items = [
-            {"dedup_key": "without-web", "titulo": "Sin web"},
+            {"dedup_key": "without-web", "titulo": "Sin web", "selected_for_publish": True},
             {
                 "dedup_key": "with-web",
                 "titulo": "Con web",
                 "web_url": "https://lavozriojana.com/noticias/con-web",
+                "selected_for_publish": True,
             },
         ]
         with patch.object(run_fb, "load_json", return_value=items), patch.object(
@@ -121,20 +122,41 @@ class InstagramStageTests(unittest.TestCase):
                 "dedup_key": "without-web",
                 "titulo": "Sin web",
                 "categoria": "sociedad",
+                "selected_for_publish": True,
             },
             {
                 "dedup_key": "with-web",
                 "titulo": "Con web",
                 "categoria": "sociedad",
                 "web_url": "https://lavozriojana.com/noticias/con-web",
+                "selected_for_publish": True,
             },
         ]
         with patch.object(run_ig, "load_json", return_value=items), patch.object(
+            run_ig, "manual_automatic_candidates", return_value=[]
+        ), patch.object(
             run_ig, "enqueue"
         ) as enqueue:
-            included, omitted_by_policy, missing_web_url = run_ig._bootstrap_queue()
+            (
+                included,
+                omitted_by_policy,
+                missing_web_url,
+                manual,
+                manual_without_web,
+                restored,
+            ) = run_ig._bootstrap_queue()
 
-        self.assertEqual((1, 0, 1), (included, omitted_by_policy, missing_web_url))
+        self.assertEqual(
+            (1, 0, 1, 0, 0, 0),
+            (
+                included,
+                omitted_by_policy,
+                missing_web_url,
+                manual,
+                manual_without_web,
+                restored,
+            ),
+        )
         enqueue.assert_called_once_with(items[1], platform="instagram")
 
     def test_active_rate_limit_is_degraded_even_before_selection(self):
@@ -184,11 +206,11 @@ class InstagramStageTests(unittest.TestCase):
         ), patch.object(
             run_ig, "recover_ambiguous_processing", return_value=0
         ), patch.object(
-            run_ig, "_bootstrap_queue", return_value=(1, 0, 0)
+            run_ig, "_bootstrap_queue", return_value=(1, 0, 0, 0, 0, 0)
         ), patch.object(
             run_ig, "_sync_posted_state", return_value=0
         ), patch.object(
-            run_ig, "get_pending", side_effect=[[item], [item]]
+            run_ig, "get_pending", side_effect=[[item], [item], []]
         ), patch.object(
             run_ig, "claim", return_value=True
         ), patch.object(

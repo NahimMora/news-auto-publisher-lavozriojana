@@ -5,9 +5,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from utils.premium_contract import (
+    DuplicateSlideTypeError,
     add_slide,
     change_slide_type,
     move_slide_down,
@@ -22,8 +23,8 @@ from utils.premium_importer import import_chatgpt_package
 
 def _package(**overrides):
     pkg = new_package(title="Un festival cultural en Chilecito", caption="Caption sin link", section="cultura")
-    for _ in range(2):
-        add_slide(pkg, "image_text", title="Slide", text="texto")
+    add_slide(pkg, "image_text", title="Slide", text="texto")
+    add_slide(pkg, "context", title="Contexto", text="texto")
     pkg.update(overrides)
     return pkg
 
@@ -61,12 +62,14 @@ class PremiumContractTests(unittest.TestCase):
         move_slide_up(pkg, first_id)
         self.assertEqual("primero", pkg["slides"][0]["text"])
 
-    def test_duplicate_and_remove_respect_slide_limits(self):
+    def test_duplicate_is_rejected_and_remove_respects_slide_limits(self):
         pkg = _package()
         from utils.premium_contract import duplicate_slide, MIN_SLIDES
 
         slide_id = pkg["slides"][0]["id"]
-        duplicate_slide(pkg, slide_id)
+        with self.assertRaises(DuplicateSlideTypeError):
+            duplicate_slide(pkg, slide_id)
+        add_slide(pkg, "key_points")
         self.assertEqual(3, len(pkg["slides"]))
         remove_slide(pkg, pkg["slides"][-1]["id"])
         self.assertEqual(MIN_SLIDES, len(pkg["slides"]))
@@ -77,6 +80,33 @@ class PremiumContractTests(unittest.TestCase):
         pkg = _package()
         with self.assertRaises(ValueError):
             change_slide_type(pkg, pkg["slides"][0]["id"], "not_a_type")
+
+    def test_repeated_slide_type_is_rejected_by_editing_and_validation(self):
+        pkg = _package()
+        first = pkg["slides"][0]
+
+        with self.assertRaises(DuplicateSlideTypeError):
+            change_slide_type(pkg, first["id"], "context")
+
+        pkg["slides"].append(
+            {
+                **pkg["slides"][1],
+                "id": "slide_tipo_repetido",
+            }
+        )
+        errors, _warnings = validate_package(pkg)
+        self.assertIn("slide_2_tipo_duplicado:context", errors)
+
+    def test_change_to_text_only_slide_removes_stale_image(self):
+        pkg = _package()
+        slide = pkg["slides"][0]
+        slide["asset_id"] = "asset-1"
+        slide["asset_label"] = "Foto anterior"
+
+        change_slide_type(pkg, slide["id"], "key_points")
+
+        self.assertEqual("", slide["asset_id"])
+        self.assertNotIn("asset_label", slide)
 
 
 class PremiumImporterTests(unittest.TestCase):
@@ -123,6 +153,23 @@ class PremiumImporterTests(unittest.TestCase):
         self.assertIsNotNone(package)  # no se pierde el contenido pegado
         self.assertTrue(any("cantidad_de_slides_fuera_de_rango" in e for e in errors))
 
+    def test_repeated_slide_type_is_imported_only_as_invalid_draft(self):
+        raw = json.dumps(
+            {
+                "title": "Nota con tipos repetidos",
+                "slides": [
+                    {"type": "cover", "text": "Portada"},
+                    {"type": "context", "text": "Primer contexto"},
+                    {"type": "context", "text": "Segundo contexto"},
+                ],
+            }
+        )
+
+        package, errors, _warnings = import_chatgpt_package(raw)
+
+        self.assertIsNotNone(package)
+        self.assertIn("slide_2_tipo_duplicado:context", errors)
+
     def test_unknown_slide_type_falls_back_to_image_text(self):
         raw = json.dumps(
             {
@@ -136,6 +183,47 @@ class PremiumImporterTests(unittest.TestCase):
         package, _errors, warnings = import_chatgpt_package(raw)
         self.assertEqual("image_text", package["slides"][0]["type"])
         self.assertTrue(any("tipo_desconocido" in w for w in warnings))
+
+    def test_text_only_slides_do_not_search_or_keep_image_suggestions(self):
+        raw = json.dumps(
+            {
+                "title": "Nota",
+                "slides": [
+                    {"type": "cover", "asset_hint": "recinto legislativo"},
+                    {"type": "closing", "asset_hint": "logo de cierre"},
+                ],
+            }
+        )
+        with patch(
+            "utils.premium_importer._suggest_assets",
+            return_value=[{"asset_id": "asset-1", "thumbnail": "/thumb.jpg"}],
+        ) as suggest:
+            package, _errors, warnings = import_chatgpt_package(raw)
+
+        suggest.assert_called_once()
+        self.assertEqual([{"asset_id": "asset-1", "thumbnail": "/thumb.jpg"}], package["slides"][0]["suggested_assets"])
+        self.assertEqual([], package["slides"][1]["suggested_assets"])
+        self.assertEqual("", package["slides"][1]["asset_hint"])
+        self.assertFalse(any("slide_1_sin_sugerencia_de_imagen" in warning for warning in warnings))
+
+    def test_impact_is_a_valid_text_only_slide(self):
+        raw = json.dumps(
+            {
+                "title": "Nota",
+                "slides": [
+                    {"type": "cover", "asset_hint": "recinto legislativo"},
+                    {"type": "impact", "title": "Impacto local", "text": "Desarrollo", "asset_hint": "no usar"},
+                ],
+            }
+        )
+        with patch("utils.premium_importer._suggest_assets", return_value=[]) as suggest:
+            package, errors, _warnings = import_chatgpt_package(raw)
+
+        self.assertEqual([], errors)
+        self.assertEqual("impact", package["slides"][1]["type"])
+        self.assertEqual("", package["slides"][1]["asset_hint"])
+        self.assertEqual([], package["slides"][1]["suggested_assets"])
+        suggest.assert_called_once()
 
 
 class PremiumPostQueueTests(unittest.TestCase):
@@ -166,6 +254,41 @@ class PremiumPostQueueTests(unittest.TestCase):
         draft = create_draft(title="Nota", source_item_ids=["news:1", "news:2", "asset:3"])
         recovered = get_package(draft["id"])
         self.assertEqual(["news:1", "news:2", "asset:3"], recovered["source_item_ids"])
+
+    def test_save_removes_images_from_text_only_slides(self):
+        from utils.premium_contract import add_slide, new_package
+        from utils.premium_post_queue import get_package, save_package
+
+        package = new_package(title="Nota")
+        add_slide(package, "cover", asset_id="asset-cover")
+        add_slide(package, "closing", asset_id="asset-stale", asset_label="No corresponde")
+
+        saved = save_package(package)
+        recovered = get_package(saved["id"])
+
+        self.assertEqual("asset-cover", recovered["slides"][0]["asset_id"])
+        self.assertEqual("", recovered["slides"][1]["asset_id"])
+        self.assertNotIn("asset_label", recovered["slides"][1])
+
+
+class PremiumRendererAssetTests(unittest.TestCase):
+    def test_text_only_slide_never_resolves_stale_asset(self):
+        from utils.premium_renderer import render_slide
+
+        resolver = Mock()
+        package = new_package(title="Nota", section="sociedad")
+        slide = {
+            "id": "slide-texto",
+            "type": "key_points",
+            "title": "Puntos clave",
+            "items": ["Primer punto"],
+            "asset_id": "asset-stale",
+        }
+
+        _image, warnings = render_slide(slide, package, asset_resolver=resolver)
+
+        resolver.assert_not_called()
+        self.assertFalse(any("asset" in warning for warning in warnings))
 
 
 if __name__ == "__main__":

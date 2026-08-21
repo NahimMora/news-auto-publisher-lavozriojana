@@ -1,16 +1,16 @@
-// Sistema de diseño "Editorial Cinemática Riojana" — tokens compartidos entre
-// PremiumSlide y AutomaticInstagramCard. Un solo lugar para tipografía, escala,
-// spacing/safe areas, modos de composición y gradientes por capas, en vez de
-// números mágicos repetidos por composición.
-//
-// Paleta de marca: se reimporta de ../constants.ts (fuente única, ver
-// docs/DECISIONS.md "Paleta oficial sin dorado") — este archivo no declara
-// colores nuevos, sólo los organiza en tokens de uso.
+// Sistema de diseño "Editorial Cinemática Riojana" — v2 (dirección de arte).
+// Un solo lugar para tipografía, escala, retícula por modo y color, en vez
+// de números mágicos repetidos por composición. v2 corrige el problema de
+// fondo de v1: los tres modos compartían layout y sólo cambiaban de color.
+// Acá cada modo trae su propia retícula (`grid`) y margen (`pad`), y el kit
+// de componentes en `shared/editorial/` lee esos tokens para construir
+// estructuras realmente distintas — ver docs/DECISIONS.md.
 import { AZUL, BORDO, NEGRO, ROJO, WHITE } from "../constants";
 
 // ── Tipografía ───────────────────────────────────────────────────────────
 // Archivo (variable, wght 100-900) para todo el sistema; Source Serif 4
-// (variable, wght 200-900) como acento de contraste sólo en modo Editorial.
+// (variable, wght 200-900) como acento de contraste, con más presencia que
+// en v1 (Editorial la usa para deck/cita/firma, no sólo una regla fina).
 // Ambas SIL Open Font License, cargadas localmente sin red — ver
 // remotion/src/shared/fonts.ts.
 export const FONT_DISPLAY = "Archivo";
@@ -30,58 +30,86 @@ export const WEIGHT = {
 export const CANVAS = { w: 1080, h: 1350 };
 
 export const SAFE = {
-  pad: 64, // margen editorial estándar a los bordes
+  pad: 72, // margen editorial genérico (usar mode.pad cuando el contexto lo tenga)
   padTight: 48,
-  footerH: 84,
-  accentBarW: 12,
+  footerH: 76,
   badgeRadius: 999,
-  cardRadius: 14,
+  cardRadius: 18,
 };
 
+// Variante exclusiva del recuadro de sección azul. El destaque dentro del
+// título conserva AZUL, más luminoso; separar ambos tokens evita que compitan
+// visualmente y mantiene contraste suficiente con la etiqueta blanca.
+export const SECTION_BLUE_DARK = "#0B2F4F";
+
 // ── Modos de composición ─────────────────────────────────────────────────
+// `grid` es la señal estructural: cada slide type lee `mode.grid` y arma una
+// composición distinta (columnas/diagonal/módulos), no sólo un color
+// distinto sobre el mismo esqueleto.
 export type Mode = "cronica" | "editorial" | "datos";
+export type GridFlavor = "diagonal" | "column" | "modular";
 
 export interface ModeTokens {
   id: Mode;
   label: string;
+  kicker: string; // texto de marca corto para el masthead (no la sección)
   accent: string;
   accentSoft: string;
   ink: string; // negro con tinte sutil de marca, usado como fondo base
   useSerifAccent: boolean;
   photoFilter: string; // tratamiento fotográfico (contraste/saturación)
   scrimStyle: "dramatic" | "airy" | "structured";
+  grid: GridFlavor;
+  pad: number; // margen editorial del modo, 64-84px a 1080 de ancho
+  textureVariant: "ridge" | "rule" | "grid";
+  textureOpacity: number;
 }
 
 export const MODES: Record<Mode, ModeTokens> = {
   cronica: {
     id: "cronica",
     label: "Crónica",
+    kicker: "La Voz Riojana",
     accent: ROJO,
     accentSoft: "#7A0B0B",
     ink: "#130505",
     useSerifAccent: false,
-    photoFilter: "contrast(1.14) saturate(1.1) brightness(0.97)",
+    photoFilter: "contrast(1.16) saturate(1.14) brightness(0.96)",
     scrimStyle: "dramatic",
+    grid: "diagonal",
+    pad: 64,
+    textureVariant: "ridge",
+    textureOpacity: 0.05,
   },
   editorial: {
     id: "editorial",
     label: "Editorial",
+    kicker: "La Voz Riojana",
     accent: AZUL,
     accentSoft: BORDO,
     ink: "#0A0D13",
     useSerifAccent: true,
     photoFilter: "contrast(1.02) saturate(0.95)",
     scrimStyle: "airy",
+    grid: "column",
+    pad: 80,
+    textureVariant: "rule",
+    textureOpacity: 0.04,
   },
   datos: {
     id: "datos",
     label: "Datos",
+    kicker: "La Voz Riojana",
     accent: AZUL,
     accentSoft: "#163A57",
     ink: "#070B10",
     useSerifAccent: false,
-    photoFilter: "contrast(1.06) saturate(0.88) brightness(0.94)",
+    photoFilter: "contrast(1.08) saturate(0.86) brightness(0.93)",
     scrimStyle: "structured",
+    grid: "modular",
+    pad: 68,
+    textureVariant: "grid",
+    textureOpacity: 0.05,
   },
 };
 
@@ -115,15 +143,24 @@ export function modeFromSection(seccion: string): Mode {
 }
 
 // ── Escala tipográfica (tamaños en px a 1080x1350, min/max para fitText) ──
+// Pisos duros (feedback editorial 2026-07-31, segunda ronda — "ESCALA"):
+// titular portada 68, título interior 42, frase principal context 34,
+// cuerpo 28, título de key point 28, detalle de key point 25, metadata 22.
+// El auto-fit nunca debería tocar estos pisos en el uso normal — si lo
+// hace, es señal de que la composición (no el tamaño) tiene que cambiar
+// primero.
 export const TYPE = {
-  eyebrow: { size: 27, weight: WEIGHT.bold, tracking: "0.14em" },
-  titleCover: { min: 44, max: 76, weight: WEIGHT.black, lineHeightRatio: 1.06, tracking: "-0.01em" },
-  titleBody: { min: 34, max: 58, weight: WEIGHT.black, lineHeightRatio: 1.1, tracking: "-0.01em" },
-  bodyText: { size: 33, weight: WEIGHT.regular, lineHeightRatio: 1.42 },
-  quote: { min: 32, max: 50, weight: WEIGHT.medium, lineHeightRatio: 1.32 },
-  number: { size: 220, weight: WEIGHT.black, lineHeightRatio: 0.9 },
-  caption: { size: 25, weight: WEIGHT.medium, lineHeightRatio: 1.3 },
-  footer: { size: 25, weight: WEIGHT.bold },
+  kicker: { size: 27, weight: WEIGHT.bold, tracking: "0.15em" }, // piso metadata 22px
+  deck: { min: 32, max: 40, weight: WEIGHT.medium, lineHeightRatio: 1.34 },
+  titleCover: { min: 68, max: 104, weight: WEIGHT.black, lineHeightRatio: 1.03, tracking: "-0.015em" },
+  titleBody: { min: 58, max: 88, weight: WEIGHT.black, lineHeightRatio: 1.06, tracking: "-0.01em" }, // piso "título interior" 42px
+  bodyText: { size: 31, min: 28, max: 34, weight: WEIGHT.regular, lineHeightRatio: 1.46 },
+  quote: { min: 38, max: 58, weight: WEIGHT.medium, lineHeightRatio: 1.3 },
+  number: { size: 264, unit: 48, weight: WEIGHT.black, lineHeightRatio: 0.88 },
+  caption: { size: 26, weight: WEIGHT.medium, lineHeightRatio: 1.32 },
+  footer: { size: 26, weight: WEIGHT.bold },
+  keyPointTitle: { min: 34, max: 50, weight: WEIGHT.bold, lineHeightRatio: 1.12 },
+  keyPointBody: { size: 30, min: 28, max: 38, weight: WEIGHT.regular, lineHeightRatio: 1.36 },
 };
 
 // ── Helpers de color ─────────────────────────────────────────────────────
@@ -135,10 +172,10 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// ── Gradientes por capas (brief: scrim + color de marca + luz radial + viñeta) ──
+// ── Gradientes por capas (scrim + color de marca + luz radial + viñeta) ──
 export function scrimGradient(mode: ModeTokens): string {
-  const strength = mode.scrimStyle === "dramatic" ? 0.94 : mode.scrimStyle === "structured" ? 0.88 : 0.82;
-  return `linear-gradient(180deg, rgba(6,5,6,0) 0%, rgba(8,5,6,0.32) 42%, rgba(6,4,4,${strength}) 100%)`;
+  const strength = mode.scrimStyle === "dramatic" ? 0.94 : mode.scrimStyle === "structured" ? 0.88 : 0.8;
+  return `linear-gradient(180deg, rgba(6,5,6,0) 0%, rgba(8,5,6,0.3) 40%, rgba(6,4,4,${strength}) 100%)`;
 }
 
 export function brandWash(mode: ModeTokens): string {

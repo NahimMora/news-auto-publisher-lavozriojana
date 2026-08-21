@@ -10,6 +10,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from utils.logging_setup import setup_logger
 from utils.safe_http import safe_get
+from utils.visual_style import uses_manual_publication_visual_style
 
 logger = setup_logger("image_generator", "image_generator.log")
 
@@ -445,6 +446,25 @@ def _materialize_image_for_remotion(
     return tmp_path, orientation, (lambda: os.unlink(tmp_path))
 
 
+def _visual_highlight_terms(article: dict, *, publication_visual_style: bool) -> list[str]:
+    terms = list(article.get("highlight_terms") or article.get("highlightTerms") or [])
+    # El flag debe ser un rollback visual completo también para elementos
+    # encolados mientras estaba activo: sin el paquete compartido no se
+    # reenvían highlights persistidos al renderer automático.
+    if not publication_visual_style:
+        return []
+    if terms:
+        return terms
+
+    # Las entradas que ya estaban en cola antes de activar el flag no traen
+    # metadata visual. El selector usa sólo palabras del título y aplica las
+    # mismas reglas editoriales, sin llamar a IA.
+    from openIA.caption_generator import select_highlight_phrase
+
+    phrase = select_highlight_phrase(str(article.get("titulo") or ""))
+    return [phrase] if phrase else []
+
+
 def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image | None" = None) -> bytes:
     """Renderiza la card automática con la composición Remotion
     ``AutomaticInstagramCard`` (sistema "Editorial Cinemática Riojana", ver
@@ -452,24 +472,56 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
     (``generate_instagram_with_engine``) decide si cae a Pillow."""
     from utils.remotion_renderer import render_still
 
+    publication_visual_style = uses_manual_publication_visual_style(article)
+    highlight_terms = _visual_highlight_terms(
+        article,
+        publication_visual_style=publication_visual_style,
+    )
     local_path, orientation, cleanup = _materialize_image_for_remotion(article, preloaded_img=preloaded_img)
     try:
         props = {
             "titulo": article.get("titulo", ""),
             "seccion": article.get("seccion", ""),
             "assetFile": "",
-            "highlightTerms": list(article.get("highlight_terms") or article.get("highlightTerms") or []),
+            "highlightTerms": highlight_terms,
+            # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
+            # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
+            "locality": str(article.get("locality") or ""),
+            "deck": str(article.get("deck") or ""),
+            # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
+            # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
+            # esto todavía con "image_treatment" seteado; queda disponible
+            # para cuando exista una señal real (p.ej. origen "screenshot"
+            # en media_library.py) sin requerir otro cambio acá.
+            "imageTreatment": str(article.get("image_treatment") or "auto"),
+            # Publicaciones siempre lo activa. El lote automático adopta el
+            # mismo paquete sólo con su flag explícito apagado por default.
+            "publicationStyle": (
+                "manual_publication"
+                if publication_visual_style
+                else "automatic"
+            ),
         }
         if orientation:
             props["assetOrientation"] = orientation
         asset_paths = {"assetFile": local_path} if local_path else {}
-        png_bytes, _metadata = render_still("AutomaticInstagramCard", props, asset_paths=asset_paths)
+        png_bytes, _metadata = render_still(
+            "AutomaticInstagramCard",
+            props,
+            asset_paths=asset_paths,
+            scale=2 if publication_visual_style else 1,
+        )
     finally:
         cleanup()
 
     with Image.open(io.BytesIO(png_bytes)) as opened:
         buffer = io.BytesIO()
-        opened.convert("RGB").save(buffer, format="JPEG", quality=90, optimize=True)
+        jpeg_options = {"quality": 90, "optimize": True}
+        if publication_visual_style:
+            # El paquete visual compartido conserva bordes de texto y color
+            # con alta calidad y 4:4:4, también en el lote automático.
+            jpeg_options.update({"quality": 95, "subsampling": 0})
+        opened.convert("RGB").save(buffer, format="JPEG", **jpeg_options)
         return buffer.getvalue()
 
 
@@ -497,7 +549,82 @@ def generate_instagram_with_engine(
         except RemotionRenderError as exc:
             logger.warning("Remotion falló para la card automática, cae a Pillow: %s", exc)
 
-    img = generate_post(article, IG_W, IG_H, preloaded_img=preloaded_img)
+    publication_visual_style = uses_manual_publication_visual_style(article)
+    render_scale = 2 if publication_visual_style else 1
+    img = generate_post(
+        article,
+        IG_W * render_scale,
+        IG_H * render_scale,
+        preloaded_img=preloaded_img,
+    )
+    buffer = io.BytesIO()
+    jpeg_options = {"quality": 90, "optimize": True}
+    if publication_visual_style:
+        jpeg_options.update({"quality": 95, "subsampling": 0})
+    img.convert("RGB").save(buffer, "JPEG", **jpeg_options)
+    return buffer.getvalue(), "pillow"
+
+
+def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | None" = None) -> bytes:
+    """Renderiza la tarjeta Open Graph con la composición Remotion
+    ``FacebookOgCard`` (mismo sistema visual "Editorial Cinemática Riojana"
+    que la card automática de Instagram, ver docs/DECISIONS.md). Lanza
+    ``RemotionRenderError`` si falla — el llamador (``generate_facebook_with_engine``)
+    decide si cae a Pillow."""
+    from utils.remotion_renderer import render_still
+
+    publication_visual_style = uses_manual_publication_visual_style(article)
+    local_path, _orientation, cleanup = _materialize_image_for_remotion(article, preloaded_img=preloaded_img)
+    try:
+        props = {
+            "titulo": article.get("titulo", ""),
+            "seccion": article.get("seccion", ""),
+            "assetFile": "",
+            "highlightTerms": _visual_highlight_terms(
+                article,
+                publication_visual_style=publication_visual_style,
+            ),
+            "publicationStyle": (
+                "manual_publication" if publication_visual_style else "automatic"
+            ),
+        }
+        asset_paths = {"assetFile": local_path} if local_path else {}
+        png_bytes, _metadata = render_still("FacebookOgCard", props, asset_paths=asset_paths)
+    finally:
+        cleanup()
+
+    with Image.open(io.BytesIO(png_bytes)) as opened:
+        buffer = io.BytesIO()
+        opened.convert("RGB").save(buffer, format="JPEG", quality=90, optimize=True)
+        return buffer.getvalue()
+
+
+def generate_facebook_with_engine(
+    article: dict, preloaded_img: "Image.Image | None" = None,
+) -> tuple[bytes, str]:
+    """Punto de entrada real de la tarjeta Open Graph (imagen que Facebook/
+    WhatsApp/etc. muestran al compartir el link del artículo web, ver
+    ``pipeline/node_webapp/media.py::generate_og_image``). Mismo patrón que
+    ``generate_instagram_with_engine``: resuelve ``resolve_engine("og")``,
+    intenta Remotion primero y cae a ``generate_post``/Pillow (sin tocar esa
+    función) si Remotion no está disponible o el render falla. Nunca en
+    silencio. Devuelve ``(jpeg_bytes, engine_used)``."""
+    from utils.remotion_renderer import RemotionRenderError, resolve_engine
+
+    engine = resolve_engine("og")
+
+    if engine == "remotion_unavailable":
+        raise RemotionRenderError(
+            "el motor de og exige Remotion pero no está disponible en este entorno"
+        )
+
+    if engine == "remotion":
+        try:
+            return _generate_facebook_remotion(article, preloaded_img=preloaded_img), "remotion"
+        except RemotionRenderError as exc:
+            logger.warning("Remotion falló para la tarjeta OG, cae a Pillow: %s", exc)
+
+    img = generate_post(article, FB_W, FB_H, preloaded_img=preloaded_img)
     buffer = io.BytesIO()
     img.convert("RGB").save(buffer, "JPEG", quality=90, optimize=True)
     return buffer.getvalue(), "pillow"
