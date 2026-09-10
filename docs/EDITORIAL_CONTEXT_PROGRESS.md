@@ -64,6 +64,44 @@ sin autorización explícita.
   pasan). Test: `tests/test_ai_client_instrumentation.py`. Verde.
   **Suite completa verificada sin regresiones: 592/592 tests OK después de
   este cambio** (`python -m unittest discover tests`).
+- [x] Fase 6c — `editorial_context/metrics.py` (Partes 54/55): tabla nueva
+  `bundle_events` en `db.py`, `record_bundle_event`/`editorial_metrics_summary`/
+  `source_metrics_summary`.
+- [x] Fase 6d — `editorial_context/bundle.py` (EditorialContextBundle,
+  Partes 34-37): orquesta archive+story+depth+slots, aplica límites de la
+  Parte 35 (`ARCHIVE_CONTEXT_MAX_ITEMS/CHARS`, `RELATED_ARTICLES_MAX_ITEMS`,
+  `TIMELINE_MAX_ITEMS`, `OFFICIAL_CONTEXT_MAX_CHARS`, todos configurables por
+  env), `to_prompt_fragment()` sólo expone lo seleccionado, nunca lanza
+  (degrada a bundle vacío + logea). Test:
+  `tests/test_editorial_context_bundle.py`. Verde.
+- [x] **Fase 10 (adelantada) — Integración real en editorial.py/publisher.py.**
+  - `pipeline/node_webapp/editorial.py`: `_original_text` ahora incluye
+    `factual_basis_text` del bundle (para que el validador de
+    invented_number/date/proper_noun no rechace hechos legítimos del
+    archivo/fuente oficial); `_call_ai_enricher` agrega
+    `archive_context`/`official_context`/`enrichment_hints`/`context_depth`
+    opcionales al `user_payload` y pasa `stage="editorial_enricher"` +
+    `article_id` a `chat_completion` (instrumentación real activada);
+    `_SYSTEM_PROMPT` ganó un párrafo aditivo explicando el uso opcional y
+    atribuido del contexto, sin subtítulos técnicos.
+  - `pipeline/node_webapp/publisher.py`: **corregido el bug de la Parte 61**
+    (`_CATEGORY_AUTHORS` eliminado por completo, ya no se manda `authorName`
+    fijo por categoría — el CMS resuelve Fernando Nahim Mora solo); nueva
+    `_build_editorial_context_bundle(noticia)` arma el bundle ANTES de
+    `prepare_editorial` sin mutar el `noticia` original (usa una copia
+    `noticia_for_editorial` sólo para la llamada editorial, así
+    `_editorial_context_bundle` nunca se filtra a `queue_events.json` ni a
+    ninguna cola JSON); `build_post_payload` acepta `story_key` opcional →
+    `payload["storyKey"]`; nueva `_record_archive_article(...)` ingesta el
+    artículo en el índice derivado en tiempo real tras una publicación
+    exitosa (best-effort, nunca rompe la publicación si falla).
+  - Test nuevo end-to-end: `tests/test_publisher_context_bundle_integration.py`
+    (publish_one_detailed real con HTTP/editorial/media mockeados, confirma
+    que no se manda `authorName` y que el artículo queda indexado en el
+    archivo tras publicar).
+  - Corregido test viejo que afirmaba el comportamiento incorrecto:
+    `tests/test_node_webapp_publisher.py::test_build_post_payload_uses_private_api_contract_fields`.
+  - **Suite completa: 599/599 tests OK, `python -m compileall -q .` limpio.**
 - [ ] Fase 7 — Source Registry + fuentes provinciales/nacionales sembradas.
 - [ ] Fase 8 — Estrategia de scraping por fuente + source-probe CLI.
 - [ ] Fase 9 — SourceSelector (enrichers por categoría) + caché de contenido oficial.

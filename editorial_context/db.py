@@ -163,6 +163,26 @@ _SCHEMA_STATEMENTS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_ai_call_metrics_stage ON ai_call_metrics(stage)",
     "CREATE INDEX IF NOT EXISTS idx_ai_call_metrics_created_at ON ai_call_metrics(created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS bundle_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id TEXT,
+        category TEXT,
+        context_depth TEXT NOT NULL,
+        archive_lookup_count INTEGER NOT NULL DEFAULT 0,
+        archive_match_count INTEGER NOT NULL DEFAULT 0,
+        story_assigned INTEGER NOT NULL DEFAULT 0,
+        timeline_shown INTEGER NOT NULL DEFAULT 0,
+        official_source_lookup_count INTEGER NOT NULL DEFAULT 0,
+        official_source_hit_count INTEGER NOT NULL DEFAULT 0,
+        context_store_hit_count INTEGER NOT NULL DEFAULT 0,
+        context_store_miss_count INTEGER NOT NULL DEFAULT 0,
+        context_chars INTEGER NOT NULL DEFAULT 0,
+        related_articles_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bundle_events_created_at ON bundle_events(created_at)",
 ]
 
 _FALLBACK_FTS_TABLE = """

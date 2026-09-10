@@ -343,6 +343,20 @@ def source_display_name(noticia: dict) -> str:
     return "la fuente original"
 
 
+def _context_bundle_factual_text(noticia: dict) -> str:
+    """Texto de respaldo del EditorialContextBundle (Parte 34), si lo hay.
+
+    Estos fragmentos ya tienen provenance propia (archivo propio o fuente
+    oficial, ver ``editorial_context/bundle.py``): números/fechas/nombres que
+    aparezcan ahí no deben marcarse ``invented_*`` sólo por no estar en el
+    scrapeo original.
+    """
+    bundle = noticia.get("_editorial_context_bundle")
+    if not bundle:
+        return ""
+    return str(bundle.get("factual_basis_text") or "")
+
+
 def _original_text(noticia: dict) -> str:
     parts = [
         str(noticia.get("titulo") or ""),
@@ -351,6 +365,9 @@ def _original_text(noticia: dict) -> str:
         source_display_name(noticia),
     ]
     parts.extend(get_original_paragraphs(noticia))
+    context_text = _context_bundle_factual_text(noticia)
+    if context_text:
+        parts.append(context_text)
     return "\n".join(p for p in parts if p)
 
 
@@ -927,6 +944,20 @@ quality_score, tags.
 sections debe ser una lista de objetos con heading, paragraphs y opcionalmente items.
 Los headings deben ser concretos y estar basados en la noticia.
 key_points y tags deben salir de datos visibles en la noticia.
+
+Si el mensaje incluye "archive_context" y/o "official_context", son antecedentes
+reales ya verificados (archivo propio de La Voz Riojana o una fuente oficial),
+no los inventaste vos. Podes usarlos SOLO si ayudan a entender el hecho actual
+de hoy, con una mencion breve (una oracion, no un parrafo largo) y atribuida
+cuando corresponda (por ejemplo "segun informo la Policia..." o "en junio se
+habia anunciado..."). La noticia actual siempre es el centro: nunca empieces
+la nota por el antecedente ni conviertas la nota en un resumen historico. Si
+"archive_context"/"official_context" no aportan nada util a este hecho
+puntual, ignoralos por completo. "enrichment_hints" (si viene) son datos
+puntuales ya verificados (cifras, proximos pasos): podes citarlos tal cual
+estan si suman, nunca los reformules inventando numeros nuevos. No repitas
+subtitulos tecnicos como "CONTEXTO"/"IMPACTO"/"DATOS": si agregas una seccion
+de antecedente, dale un titulo editorial normal (por ejemplo "Antecedentes").
 """.strip()
 
 
@@ -1068,6 +1099,15 @@ def _call_ai_enricher(
     if previous_attempt:
         user_payload["previous_attempt"] = previous_attempt
 
+    context_bundle = noticia.get("_editorial_context_bundle")
+    if context_bundle:
+        prompt_fragment = context_bundle.get("prompt_fragment") or {}
+        for key in ("archive_context", "official_context", "enrichment_hints", "context_depth"):
+            if prompt_fragment.get(key):
+                user_payload[key] = prompt_fragment[key]
+
+    article_id = str(noticia.get("web_queue_key") or noticia.get("meta_queue_key") or noticia.get("dedup_key") or "")
+
     last_error: Exception | None = None
     for attempt in range(1, retry_count + 1):
         try:
@@ -1084,6 +1124,8 @@ def _call_ai_enricher(
                 max_tokens=1800,
                 timeout=timeout,
                 json_mode=True,
+                stage="editorial_enricher",
+                article_id=article_id,
             )
             return json.loads(content or "{}")
         except Exception as exc:

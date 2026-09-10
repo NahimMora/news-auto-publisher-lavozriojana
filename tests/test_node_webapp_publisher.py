@@ -474,18 +474,20 @@ class PayloadAndApiTests(unittest.TestCase):
             og_image_url="https://media.lavozriojana.com/og/a.jpg",
         )
 
-        with patch.dict(os.environ, {"WEBAPP_DEFAULT_AUTHOR": "Redaccion La Voz Riojana"}, clear=False):
-            payload = publisher.build_post_payload(
-                noticia,
-                result,
-                media_result,
-                published_at="2026-06-30T12:00:00Z",
-            )
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+        )
 
         self.assertEqual(payload["categorySlug"], "interior")
         self.assertEqual(payload["status"], "published")
         self.assertEqual(payload["publishedAt"], "2026-06-30T12:00:00Z")
-        self.assertEqual(payload["authorName"], "Redacción Interior")
+        # No se manda authorName fijo por categoria (Parte 61 del plan de
+        # contexto editorial): el CMS resuelve el autor real (Fernando Nahim
+        # Mora) cuando no viene explicito.
+        self.assertNotIn("authorName", payload)
         self.assertIn("contentHtml", payload)
         self.assertIn("mainImage", payload)
         self.assertEqual(payload["ogImageUrl"], "https://media.lavozriojana.com/og/a.jpg")
