@@ -176,12 +176,33 @@ sin autorización explícita.
   **Suite completa: 671/671 tests OK, sin tocar red.**
 - [ ] Fase 11 — Instrumentación IA (ai_client.py).
 - [ ] Fase 12 — CMS/web: schema Prisma story_key + endpoint + `<StoryTimeline />`.
-- [ ] Fase 13 — Backfill script (--report-only).
-- [ ] Fase 14 — Tests unitarios + fixtures + E2E.
-- [ ] Fase 15 — Validaciones (unittest, compileall, doctor, dry-run, lint/typecheck/build web).
-- [ ] Fase 16 — Documentación (ARCHITECTURE, CURRENT_STATE, DECISIONS, RUNBOOK, OFFICIAL_SOURCES, EDITORIAL_CONTEXT, STORY_ENGINE, COST_MODEL).
-- [ ] Fase 17 — Commits por etapa + dejar PR lista.
-- [ ] Fase 18 — Informe final (Parte 76) para pegar en ChatGPT.
+- [x] Fase 13 — Backfill script (--report-only). Ver Fase 43 más abajo.
+- [x] Fase 14 — Tests unitarios + fixtures + E2E. 695/695 tests OK; 35 casos
+  de la Parte 65 revisados uno por uno (ver Fase 13 más abajo).
+- [x] Fase 15 — Validaciones: `unittest discover` (695/695), `compileall`
+  (limpio), `cli.py doctor --scope core --json` (success), `cli.py
+  run-once --dry-run --json` (17/17, production_calls=false), `git diff
+  --check` (limpio). CMS: `npm run typecheck`/`lint`/`build` (limpios,
+  build verificado DESPUÉS de aplicar la migración real).
+- [x] Fase 16 — Documentación completa: `docs/ARCHITECTURE.md`,
+  `docs/CURRENT_STATE.md`, `docs/DECISIONS.md` (6 entradas nuevas),
+  `docs/RUNBOOK.md`, `AGENTS.md`, más `docs/EDITORIAL_CONTEXT.md`,
+  `docs/STORY_ENGINE.md`, `docs/OFFICIAL_SOURCES.md`,
+  `docs/COST_MODEL.md` nuevos.
+- [x] Fase 17 — 9 commits en el autopublicador, 1 commit en el CMS, ambos
+  en rama `feature/editorial-context-story-engine`. **NO pusheados
+  todavía** — pendiente de autorización explícita del usuario para push/PR.
+- [x] Fase 18 — Informe final: `docs/INFORME_FINAL_CONTEXTO_EDITORIAL.md`
+  (22 secciones, Parte 76 completa).
+
+## ESTADO: TRABAJO COMPLETO, PENDIENTE DE REVISIÓN Y DECISIÓN DE PUSH/PR
+
+Todo el plan de 76 partes está implementado, testeado y documentado en dos
+ramas locales sin pushear. Ver `docs/INFORME_FINAL_CONTEXTO_EDITORIAL.md`
+para el resumen ejecutivo completo (pegable en ChatGPT tal cual pidió el
+plan original). Si esta sesión se retoma después de "resumir", el primer
+paso es preguntarle al usuario si quiere pushear las ramas y abrir los PRs,
+o si prefiere revisar el diff localmente primero.
 
 ## Hallazgos clave de la auditoría (no re-investigar esto)
 
