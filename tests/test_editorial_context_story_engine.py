@@ -84,6 +84,84 @@ class AssignStoryTests(unittest.TestCase):
         self.assertFalse(result.created_new)
         self.assertEqual(result.story_key, "story:existing123")
 
+    def test_creates_story_for_politics_same_measure(self):
+        ai.upsert_article(
+            ai.ArchiveArticle(
+                article_id="prev1",
+                title="La Legislatura de La Rioja aprobo en primera vuelta la ley de emergencia hidrica",
+                category="politica",
+                published_at="2026-07-01T10:00:00Z",
+            ),
+            path=self.db_path,
+        )
+        result = story_engine.assign_story(
+            article_id="new1",
+            title="La Legislatura de La Rioja convirtio en ley la emergencia hidrica",
+            category="politica",
+            published_at="2026-07-15T10:00:00Z",
+            path=self.db_path,
+        )
+        self.assertIsNotNone(result)
+
+    def test_creates_story_for_sports_same_team_and_tournament(self):
+        ai.upsert_article(
+            ai.ArchiveArticle(
+                article_id="prev1",
+                title="Independiente Rivadavia gano el primer partido del torneo regional de futbol",
+                category="deportes",
+                published_at="2026-07-01T10:00:00Z",
+            ),
+            path=self.db_path,
+        )
+        result = story_engine.assign_story(
+            article_id="new1",
+            title="Independiente Rivadavia clasifico a la final del torneo regional de futbol",
+            category="deportes",
+            published_at="2026-07-20T10:00:00Z",
+            path=self.db_path,
+        )
+        self.assertIsNotNone(result)
+
+    def test_creates_story_for_entertainment_same_artist_and_specific_event(self):
+        ai.upsert_article(
+            ai.ArchiveArticle(
+                article_id="prev1",
+                title="Maria Becerra anuncio su separacion en una entrevista exclusiva",
+                category="espectaculos",
+                published_at="2026-07-01T10:00:00Z",
+            ),
+            path=self.db_path,
+        )
+        result = story_engine.assign_story(
+            article_id="new1",
+            title="Maria Becerra volvio a hablar de su separacion en una nueva entrevista",
+            category="espectaculos",
+            published_at="2026-07-05T10:00:00Z",
+            path=self.db_path,
+        )
+        self.assertIsNotNone(result)
+
+    def test_same_celebrity_different_unrelated_events_no_story_even_with_many_notes(self):
+        ai.upsert_article(
+            ai.ArchiveArticle(
+                article_id="prev1", title="Maria Becerra lanzo un nuevo tema musical", category="espectaculos"
+            ),
+            path=self.db_path,
+        )
+        ai.upsert_article(
+            ai.ArchiveArticle(
+                article_id="prev2", title="Maria Becerra participo de un evento solidario", category="espectaculos"
+            ),
+            path=self.db_path,
+        )
+        result = story_engine.assign_story(
+            article_id="new1",
+            title="Maria Becerra fue vista en un restaurante de Buenos Aires",
+            category="espectaculos",
+            path=self.db_path,
+        )
+        self.assertIsNone(result)
+
     def test_does_not_group_by_category_alone(self):
         ai.upsert_article(
             ai.ArchiveArticle(

@@ -417,6 +417,40 @@ autopublicador — no estaba en una feature branch previa).
   inicial: no existe script `test` en `package.json`) — no aplica agregar
   tests unitarios ahí, sólo typecheck/lint/build.
 
+## Fase 13 — sources[] del CMS (Parte 62) + cobertura de tests + bug real corregido
+
+- `EditorialContextBundle.official_sources_used()`: mapea
+  `official_snippets` (ya filtrados por relevancia) a `{name, url, type:
+  "OFICIAL"}` vía `sources.registry.get_source`, dedup por `source_id`.
+  Sólo fuentes que **realmente aportaron** un fragmento usado, nunca las
+  meramente consultadas (regla explícita de la Parte 62).
+- `publisher.py`: `build_post_payload(..., official_sources=...)` →
+  `payload["sources"]`.
+- **Bug real encontrado y corregido mientras se agregaba cobertura de
+  tests** (Parte 65, casos #9/#10 "story deportivo"/"story espectáculo"):
+  `retrieval.significant_terms()` sólo excluía la entidad completa
+  normalizada ("maria becerra") del cálculo de "términos compartidos", pero
+  NO las palabras sueltas que la componen ("maria", "becerra") — el nombre
+  de una persona se filtraba a sí mismo como si fuera un "término temático
+  compartido" independiente, rompiendo la exigencia de evidencia doble en
+  categorías estrictas (policiales/espectáculos/deportes, Parte 10/33). Con
+  el bug, "mismo famoso pero eventos distintos" agrupaba igual una historia
+  falsa. Corregido: se excluyen también las palabras individuales de cada
+  entidad excluida. Test que lo detectó:
+  `test_same_celebrity_different_unrelated_events_no_story_even_with_many_notes`.
+- Tests nuevos cubriendo explícitamente los casos de la Parte 65 que
+  faltaban: story política/deportes/espectáculos (positivos),
+  `official_sources_used()`, `sources[]` en `build_post_payload`, MPF/BCRA
+  en el selector.
+- Revisión completa contra la lista de 35 casos de la Parte 65: todos
+  cubiertos salvo #33 ("attribution policial"), que es una propiedad de
+  calidad de salida de Gemini no determinística — la salvaguarda existente
+  es `_judicial_warnings` en `editorial.py` (ya vigente, no es código
+  nuevo de esta etapa) más el párrafo del `_SYSTEM_PROMPT` sobre
+  atribución; no es unit-testeable de forma determinística sin mockear el
+  modelo, se deja documentado como limitación conocida.
+  **Suite completa: 695/695 tests OK, compileall limpio.**
+
 ## Próximo paso concreto (actualizado)
 
 Pendiente en orden:

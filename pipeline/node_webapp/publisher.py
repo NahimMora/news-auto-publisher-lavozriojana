@@ -209,6 +209,7 @@ def build_post_payload(
     is_featured: bool = False,
     story_key: str = "",
     archive_context: list[dict] | None = None,
+    official_sources: list[dict] | None = None,
 ) -> dict:
     if not media.main_image:
         raise ValueError("mainImage is required")
@@ -274,6 +275,8 @@ def build_post_payload(
         payload["editorialPriority"] = 100
     if story_key:
         payload["storyKey"] = story_key
+    if official_sources:
+        payload["sources"] = official_sources
 
     payload = _drop_empty(payload)
     warnings = validate_post_payload(payload)
@@ -687,6 +690,9 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
         # "En contexto" en la web (Parte 38): sólo cuando NO hay timeline
         # (bundle.archive_context_entries() ya se anula sola si hay story_key).
         "archive_context": bundle.archive_context_entries(),
+        # sources[] del CMS (Parte 62): sólo fuentes oficiales que realmente
+        # aportaron un dato, nunca las consultadas sin resultado.
+        "official_sources": bundle.official_sources_used(),
     }
 
 
@@ -796,6 +802,7 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
             is_featured=is_featured,
             story_key=str((context_bundle or {}).get("story_key") or ""),
             archive_context=(context_bundle or {}).get("archive_context") or None,
+            official_sources=(context_bundle or {}).get("official_sources") or None,
         )
     except ValueError as exc:
         logger.error("No se publica por payload invalido: %s", exc)

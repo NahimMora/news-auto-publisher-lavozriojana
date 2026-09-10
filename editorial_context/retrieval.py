@@ -58,7 +58,16 @@ class RelationScore:
 
 
 def significant_terms(*texts: str, exclude: set[str] | None = None) -> set[str]:
-    exclude_norm = {ec_entities.normalize_entity(term) for term in (exclude or set())}
+    # Excluye tanto la entidad completa normalizada ("maria becerra") como
+    # cada palabra que la compone ("maria", "becerra"): si no se excluyen
+    # las palabras sueltas, el nombre de la entidad se filtra igual como
+    # "término compartido" y rompe la exigencia de evidencia doble en
+    # categorías estrictas (Parte 10/33: mismo famoso no alcanza).
+    exclude_norm: set[str] = set()
+    for term in (exclude or set()):
+        normalized = ec_entities.normalize_entity(term)
+        exclude_norm.add(normalized)
+        exclude_norm.update(normalized.split())
     blob = " ".join(str(t or "") for t in texts)
     tokens = {
         ec_entities.normalize_entity(match.group(0))

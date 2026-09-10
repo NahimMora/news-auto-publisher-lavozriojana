@@ -127,6 +127,31 @@ class BuildContextBundleTests(unittest.TestCase):
         self.assertEqual(summary["context_depth_none"], 1)
 
 
+class OfficialSourcesUsedTests(unittest.TestCase):
+    def test_maps_source_id_to_registry_name_and_dedupes(self):
+        bundle = eb.EditorialContextBundle(
+            official_snippets=[
+                eb.ContextSnippet(text="a", source_type="official_source", source_id="mpf_larioja", source_url="https://x/1"),
+                eb.ContextSnippet(text="b", source_type="official_source", source_id="mpf_larioja", source_url="https://x/2"),
+            ]
+        )
+        entries = bundle.official_sources_used()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["name"], "Ministerio Público Fiscal de La Rioja")
+        self.assertEqual(entries[0]["type"], "OFICIAL")
+
+    def test_empty_when_no_official_snippets(self):
+        bundle = eb.EditorialContextBundle()
+        self.assertEqual(bundle.official_sources_used(), [])
+
+    def test_unknown_source_id_falls_back_to_id_as_name(self):
+        bundle = eb.EditorialContextBundle(
+            official_snippets=[eb.ContextSnippet(text="a", source_type="official_source", source_id="no_existe")]
+        )
+        entries = bundle.official_sources_used()
+        self.assertEqual(entries[0]["name"], "no_existe")
+
+
 class ArchiveContextEntriesTests(unittest.TestCase):
     def test_empty_when_story_key_present(self):
         bundle = eb.EditorialContextBundle(

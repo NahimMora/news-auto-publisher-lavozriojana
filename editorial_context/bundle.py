@@ -127,6 +127,23 @@ class EditorialContextBundle:
             )
         return entries
 
+    def official_sources_used(self) -> list[dict]:
+        """``sources[]`` del CMS (Parte 62): sólo fuentes que realmente
+        aportaron un dato (ya pasaron el filtro de relevancia de
+        ``_gather_official_snippets``), nunca las que sólo se consultaron."""
+        from sources.registry import get_source
+
+        seen: set[str] = set()
+        entries: list[dict] = []
+        for snippet in self.official_snippets:
+            if not snippet.source_id or snippet.source_id in seen:
+                continue
+            seen.add(snippet.source_id)
+            source = get_source(snippet.source_id)
+            name = source.name if source else snippet.source_id
+            entries.append({"name": name, "url": snippet.source_url or None, "type": "OFICIAL"})
+        return entries
+
     def to_dict(self) -> dict:
         return {
             "context_depth": self.context_depth,

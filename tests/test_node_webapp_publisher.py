@@ -522,6 +522,30 @@ class PayloadAndApiTests(unittest.TestCase):
         self.assertEqual(payload["storyKey"], "story:abc123")
         self.assertEqual(payload["metadata"]["archiveContext"], archive_context)
 
+    def test_build_post_payload_includes_official_sources_when_present(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+        official_sources = [{"name": "MPF", "url": "https://mpf.gob.ar/n/1", "type": "OFICIAL"}]
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+            official_sources=official_sources,
+        )
+
+        self.assertEqual(payload["sources"], official_sources)
+
     def test_build_post_payload_omits_story_key_and_archive_context_when_absent(self):
         noticia = sample_news()
         result = editorial.build_fallback_editorial(noticia)
@@ -539,6 +563,7 @@ class PayloadAndApiTests(unittest.TestCase):
 
         self.assertNotIn("storyKey", payload)
         self.assertNotIn("archiveContext", payload["metadata"])
+        self.assertNotIn("sources", payload)
 
     def test_build_post_payload_includes_video_field_when_present(self):
         noticia = sample_news()

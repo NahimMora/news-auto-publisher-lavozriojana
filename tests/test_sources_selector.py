@@ -41,6 +41,22 @@ class SelectSourcesTests(unittest.TestCase):
     def test_unknown_category_returns_empty(self):
         self.assertEqual(selector.select_sources(category="inexistente"), [])
 
+    def test_mpf_selected_for_police_category_always(self):
+        sources = selector.select_sources(category="policiales")
+        self.assertIn("mpf_larioja", {s.source_id for s in sources})
+
+    def test_mpf_not_selected_for_unrelated_category(self):
+        sources = selector.select_sources(category="deportes")
+        self.assertNotIn("mpf_larioja", {s.source_id for s in sources})
+
+    def test_bcra_selected_for_economy_category(self):
+        sources = selector.select_sources(category="economia")
+        self.assertIn("bcra", {s.source_id for s in sources})
+
+    def test_bcra_keyword_adds_bcra_even_outside_economy_category(self):
+        sources = selector.select_sources(category="sociedad", keywords_text="el BCRA subio la tasa de referencia")
+        self.assertIn("bcra", {s.source_id for s in sources})
+
     def test_climate_keyword_adds_smn(self):
         sources = selector.select_sources(category="sociedad", keywords_text="alerta por temporal en la zona")
         ids = {s.source_id for s in sources}
