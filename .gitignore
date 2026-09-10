@@ -1,5 +1,9 @@
 .env
 data/
+data/derived/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 logs/
 output/
 FotosLVR/
