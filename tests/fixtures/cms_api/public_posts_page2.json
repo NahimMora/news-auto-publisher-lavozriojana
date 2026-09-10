@@ -1,0 +1,73 @@
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 103,
+        "slug": "se-lanzo-la-campana-de-vacunacion-antigripal",
+        "title": "Se lanzó la campaña de vacunación antigripal",
+        "excerpt": "El Ministerio de Salud confirmó el cronograma de aplicación en toda la provincia.",
+        "contentHtml": "<p>El Ministerio de Salud confirmó el cronograma.</p>",
+        "contentText": "El Ministerio de Salud confirmó el cronograma.",
+        "categoryId": 5,
+        "authorId": 1,
+        "sourceName": null,
+        "sourceUrl": null,
+        "mainImageUrl": "https://media.lavozriojana.com/noticias/2026/08/c.webp",
+        "mainImageWidth": 1200,
+        "mainImageHeight": 800,
+        "videoUrl": null,
+        "videoPoster": null,
+        "status": "PUBLISHED",
+        "publishedAt": "2026-08-03T11:00:00.000Z",
+        "seoTitle": null,
+        "seoDescription": null,
+        "ogTitle": null,
+        "ogDescription": null,
+        "ogImageUrl": null,
+        "isFeatured": false,
+        "isBreaking": false,
+        "editorialPriority": 0,
+        "metadata": {"externalId": "ghi789"},
+        "storyKey": null,
+        "viewCount": 7,
+        "createdAt": "2026-08-03T10:55:00.000Z",
+        "updatedAt": "2026-08-03T11:05:00.000Z",
+        "category": {
+          "id": 5,
+          "name": "Salud",
+          "slug": "salud",
+          "description": "Noticias de salud.",
+          "color": null,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "author": {
+          "id": 1,
+          "name": "Fernando Nahim Mora",
+          "slug": "fernando-nahim-mora",
+          "bio": null,
+          "avatarUrl": null,
+          "role": "Director periodístico y responsable editorial",
+          "specialty": null,
+          "email": null,
+          "socialLinks": null,
+          "isInstitutional": false,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "tags": [
+          {
+            "postId": 103,
+            "tagId": 6,
+            "tag": {"id": 6, "name": "Salud", "slug": "salud-tag", "createdAt": "2026-06-29T00:00:00.000Z"}
+          }
+        ],
+        "sources": []
+      }
+    ],
+    "pagination": {"page": 2, "perPage": 2, "total": 3}
+  }
+}

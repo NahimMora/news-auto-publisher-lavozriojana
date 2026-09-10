@@ -1,0 +1,152 @@
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": 101,
+        "slug": "comenzo-la-obra-de-repavimentacion-en-chilecito",
+        "title": "Comenzó la obra de repavimentación en Chilecito",
+        "excerpt": "Vialidad provincial confirmó el inicio de los trabajos en la ruta provincial 5.",
+        "contentHtml": "<p>Vialidad provincial confirmó el inicio de los trabajos.</p>",
+        "contentText": "Vialidad provincial confirmó el inicio de los trabajos.",
+        "categoryId": 3,
+        "authorId": 1,
+        "sourceName": null,
+        "sourceUrl": null,
+        "mainImageUrl": "https://media.lavozriojana.com/noticias/2026/08/a.webp",
+        "mainImageWidth": 1200,
+        "mainImageHeight": 800,
+        "videoUrl": null,
+        "videoPoster": null,
+        "status": "PUBLISHED",
+        "publishedAt": "2026-08-01T10:00:00.000Z",
+        "seoTitle": null,
+        "seoDescription": null,
+        "ogTitle": null,
+        "ogDescription": null,
+        "ogImageUrl": null,
+        "isFeatured": false,
+        "isBreaking": false,
+        "editorialPriority": 0,
+        "metadata": {"externalId": "abc123"},
+        "storyKey": null,
+        "viewCount": 12,
+        "createdAt": "2026-08-01T09:55:00.000Z",
+        "updatedAt": "2026-08-01T10:05:00.000Z",
+        "category": {
+          "id": 3,
+          "name": "Interior",
+          "slug": "interior",
+          "description": "Noticias del interior de la provincia.",
+          "color": null,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "author": {
+          "id": 1,
+          "name": "Fernando Nahim Mora",
+          "slug": "fernando-nahim-mora",
+          "bio": null,
+          "avatarUrl": null,
+          "role": "Director periodístico y responsable editorial",
+          "specialty": null,
+          "email": null,
+          "socialLinks": null,
+          "isInstitutional": false,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "tags": [
+          {
+            "postId": 101,
+            "tagId": 5,
+            "tag": {"id": 5, "name": "Vialidad Provincial", "slug": "vialidad-provincial", "createdAt": "2026-06-29T00:00:00.000Z"}
+          }
+        ],
+        "sources": [
+          {
+            "id": 1,
+            "postId": 101,
+            "name": "Vialidad Provincial",
+            "url": "https://vialidad.larioja.gob.ar/obra-ruta-5",
+            "type": "OFICIAL",
+            "order": 0,
+            "createdAt": "2026-08-01T09:55:00.000Z"
+          }
+        ]
+      },
+      {
+        "id": 102,
+        "slug": "el-mpf-confirmo-la-apertura-de-una-causa",
+        "title": "El MPF confirmó la apertura de una causa",
+        "excerpt": "El Ministerio Público Fiscal informó detalles del operativo realizado esta madrugada.",
+        "contentHtml": "<p>El Ministerio Público Fiscal informó detalles del operativo.</p>",
+        "contentText": "El Ministerio Público Fiscal informó detalles del operativo.",
+        "categoryId": 4,
+        "authorId": 1,
+        "sourceName": null,
+        "sourceUrl": null,
+        "mainImageUrl": "https://media.lavozriojana.com/noticias/2026/08/b.webp",
+        "mainImageWidth": 1200,
+        "mainImageHeight": 800,
+        "videoUrl": null,
+        "videoPoster": null,
+        "status": "PUBLISHED",
+        "publishedAt": "2026-08-02T09:00:00.000Z",
+        "seoTitle": null,
+        "seoDescription": null,
+        "ogTitle": null,
+        "ogDescription": null,
+        "ogImageUrl": null,
+        "isFeatured": false,
+        "isBreaking": false,
+        "editorialPriority": 0,
+        "metadata": {"externalId": "def456"},
+        "storyKey": null,
+        "viewCount": 4,
+        "createdAt": "2026-08-02T08:55:00.000Z",
+        "updatedAt": "2026-08-02T09:05:00.000Z",
+        "category": {
+          "id": 4,
+          "name": "Policiales",
+          "slug": "policiales",
+          "description": "Noticias policiales.",
+          "color": null,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "author": {
+          "id": 1,
+          "name": "Fernando Nahim Mora",
+          "slug": "fernando-nahim-mora",
+          "bio": null,
+          "avatarUrl": null,
+          "role": "Director periodístico y responsable editorial",
+          "specialty": null,
+          "email": null,
+          "socialLinks": null,
+          "isInstitutional": false,
+          "isActive": true,
+          "createdAt": "2026-06-29T00:00:00.000Z",
+          "updatedAt": "2026-06-29T00:00:00.000Z"
+        },
+        "tags": [],
+        "sources": [
+          {
+            "id": 2,
+            "postId": 102,
+            "name": "Ministerio Público Fiscal de La Rioja",
+            "url": "https://www.mpflarioja.gob.ar/n/1",
+            "type": "OFICIAL",
+            "order": 0,
+            "createdAt": "2026-08-02T08:55:00.000Z"
+          }
+        ]
+      }
+    ],
+    "pagination": {"page": 1, "perPage": 2, "total": 3}
+  }
+}
