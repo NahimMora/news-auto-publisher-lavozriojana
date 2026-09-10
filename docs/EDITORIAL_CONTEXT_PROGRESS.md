@@ -102,10 +102,54 @@ sin autorización explícita.
   - Corregido test viejo que afirmaba el comportamiento incorrecto:
     `tests/test_node_webapp_publisher.py::test_build_post_payload_uses_private_api_contract_fields`.
   - **Suite completa: 599/599 tests OK, `python -m compileall -q .` limpio.**
-- [ ] Fase 7 — Source Registry + fuentes provinciales/nacionales sembradas.
-- [ ] Fase 8 — Estrategia de scraping por fuente + source-probe CLI.
-- [ ] Fase 9 — SourceSelector (enrichers por categoría) + caché de contenido oficial.
-- [ ] Fase 10 — Integración en `pipeline/node_webapp/editorial.py` (EditorialContextBundle).
+- [x] Fase 7 — Source Registry + fuentes provinciales/nacionales sembradas.
+  `config/official_sources.json` (27 fuentes, datos reales del probe técnico:
+  4 RSS confirmados, ~17 HTML_INDEX confirmados, 6 deshabilitadas con
+  `notes` explicando por qué — Facebook sin alternativa, sitio caído,
+  fetch estático vacío en anses/indec, etc). `sources/registry.py`
+  (`SourceDefinition`, `load_registry`, `enabled_sources`). Test:
+  `tests/test_sources_registry.py`. Verde.
+- [x] Fase 8 — Estrategia de scraping por fuente + source-probe CLI.
+  `sources/http_client.py` (sesión reutilizable + allowlist de host sobre
+  `utils/safe_http.py` + ETag/If-Modified-Since), `sources/contract.py`
+  (`OfficialSourceItem`), `sources/strategies/rss.py` (RSS2+Atom, stdlib),
+  `sources/strategies/html_index.py` (heurística genérica, no un script por
+  sitio), `sources/fetch_state.py` (condicional + `poll_ttl` por fuente),
+  `sources/sync.py` (orquesta fetch→parse→caché→métricas,
+  `force=True` para diagnosticar fuentes deshabilitadas),
+  `sources/probe.py` (read-only, nunca escribe). Tests:
+  `test_sources_http_client.py`, `test_sources_strategies.py` (fixtures en
+  `tests/fixtures/official_sources/`), `test_sources_fetch_state.py`,
+  `test_sources_sync.py`, `test_sources_probe.py`. Todos verdes.
+- [x] Fase 9 — SourceSelector + métricas por fuente + caché/dedup.
+  `sources/selector.py` (categoría+keyword→fuentes, exige localidad riojana
+  para Gendarmería/PFA/Prefectura/Seguridad Nación — Parte 19),
+  `sources/cache.py` (`official_content_cache`, dedup cross-fuente
+  reusando `utils/news_dedup.duplicate_reason`, marca
+  `republished_official_content`), `sources/metrics.py` (escritura de
+  `source_metrics`, acumulado diario). Tests: `test_sources_selector.py`,
+  `test_sources_cache.py`, `test_sources_metrics.py`. Verdes.
+- [x] Fase 9b — `editorial_context/refresh_context.py` (Parte 56): nueva
+  etapa de ciclo, agregada a `run_24x7.py::CYCLE_STEPS` entre `run_all.py` y
+  `pipeline/publish_web.py`, sin canal (no sujeta a kill switches de
+  web/fb/ig). Sólo sincroniza fuentes cuyo `poll_ttl` venció
+  (`sources/fetch_state.py::is_due`). Un fallo en una fuente no rompe el
+  ciclo. Test: `test_editorial_context_refresh_context.py`. Actualizado
+  `tests/test_deployment_modes.py::test_supervisor_observe_skips_every_external_stage`
+  (ahora 2 pasos sin canal en vez de 1).
+- [x] Fase 9c — `editorial_context/archive_backfill.py` (Parte 6): backfill
+  real desde `GET /api/public/posts` del CMS propio (paginado, se detiene en
+  página corta/vacía). **Nota abierta**: nombres de campo del endpoint
+  tomados de la auditoría con fallbacks razonables, no confirmados contra
+  una respuesta real — documentar como riesgo pendiente. Test:
+  `test_editorial_context_archive_backfill.py`. Verde.
+  **Suite completa: 664/664 tests OK, compileall limpio.**
+- [x] Fase 10 — Integración en `editorial.py`/`publisher.py`: hecha antes de
+  tiempo (ver más abajo, sección "Fase 10 (adelantada)"). Pendiente todavía:
+  conectar `sources/selector.py` + `sources/cache.py` como
+  `official_snippets` reales dentro de `editorial_context/bundle.py`
+  (hoy `build_context_bundle` acepta `official_snippets` por parámetro pero
+  nadie se lo pasa desde `publisher.py` — es el próximo paso concreto).
 - [ ] Fase 11 — Instrumentación IA (ai_client.py).
 - [ ] Fase 12 — CMS/web: schema Prisma story_key + endpoint + `<StoryTimeline />`.
 - [ ] Fase 13 — Backfill script (--report-only).

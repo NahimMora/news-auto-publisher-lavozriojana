@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Ejemplo Atom</title>
+  <entry>
+    <title>Se lanzo un nuevo programa de asistencia</title>
+    <link href="https://ejemplo.gob.ar/noticias/nuevo-programa" />
+    <updated>2026-09-01T10:00:00Z</updated>
+    <summary>El programa busca asistir a los beneficiarios registrados.</summary>
+  </entry>
+</feed>

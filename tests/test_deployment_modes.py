@@ -119,10 +119,13 @@ class DeploymentModeTests(unittest.TestCase):
             ):
                 result = run_24x7.run_cycle(1, heartbeat_interval=1)
 
-        self.assertEqual(1, run_step.call_count)
+        # run_all.py y editorial_context/refresh_context.py no tienen canal
+        # (no están sujetos a los kill switches de web/facebook/instagram) y
+        # llaman a run_step siempre; el resto se saltea sin invocarlo.
+        self.assertEqual(2, run_step.call_count)
         children = result.details["children"]
         self.assertEqual(
-            ["scraping_rewrite", "web", "facebook", "instagram", "instagram"],
+            ["scraping_rewrite", "scraping_rewrite", "web", "facebook", "instagram", "instagram"],
             [item["stage"] for item in children],
         )
         self.assertTrue(all(item["status"] == "no_work" for item in children))

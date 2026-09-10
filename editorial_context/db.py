@@ -183,6 +183,14 @@ _SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_bundle_events_created_at ON bundle_events(created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS source_fetch_state (
+        source_id TEXT PRIMARY KEY,
+        etag TEXT,
+        last_modified TEXT,
+        last_fetched_at TEXT
+    )
+    """,
 ]
 
 _FALLBACK_FTS_TABLE = """
