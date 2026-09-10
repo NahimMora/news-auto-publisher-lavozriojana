@@ -279,6 +279,18 @@ def add_story_relation(
         )
 
 
+def get_all_without_story_key(
+    *, limit: int | None = None, path: Path | str | None = None
+) -> list[ArchiveArticle]:
+    """Artículos indexados sin ``story_key`` asignado (Parte 43, backfill)."""
+    query = "SELECT * FROM archive_articles WHERE story_key IS NULL OR story_key = '' ORDER BY published_at DESC"
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    with ec_db.connection(path) as conn:
+        rows = conn.execute(query).fetchall()
+    return [_row_to_article(row) for row in rows]
+
+
 def get_story_relations(story_key: str, *, path: Path | str | None = None) -> list[dict]:
     with ec_db.connection(path) as conn:
         rows = conn.execute(
