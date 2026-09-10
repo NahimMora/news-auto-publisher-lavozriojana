@@ -31,6 +31,8 @@ Las rutas operativas se resuelven con `utils/paths.py`. Producción usa por defe
 | `utils/visual_style.py` | flags seguros por workflow: paridad visual manual→automático y composición cinemática del generador manual de Reels |
 | `utils/editorial_policy.py` | política explícita de fallbacks y sensibilidad |
 | `pipeline/node_webapp/*` | validación editorial, medios R2, payload, contrato CMS y URL web |
+| `editorial_context/*` | Archive Context Engine + Story Engine + Context Store + EditorialContextBundle; índice derivado SQLite (`data/derived/editorial_context.sqlite3`), reconstruible, NO autoritativo. Ver `docs/EDITORIAL_CONTEXT.md`, `docs/STORY_ENGINE.md` |
+| `sources/*` | Source Registry de fuentes oficiales (`config/official_sources.json`) + adapters genéricos RSS/HTML_INDEX, caché condicional, SourceSelector por categoría, métricas por fuente. Ver `docs/OFFICIAL_SOURCES.md` |
 | `utils/social_caption.py` | caption único compartido por Instagram y Facebook |
 | `utils/social_queue.py` | estados independientes de Facebook/Instagram; `get_pending(source_prefix=/exclude_source_prefix=)` permite cupo reservado por fuente (hoy: paparazzi, 8+2 en `meta/run_ig.py`) sin competir por el mismo `IG_MAX_PER_RUN` |
 | `utils/editorial_router.py` | router determinístico automatic/candidate/suppressed por canal; gate y cap de tema para Instagram (opt-in vía `EDITORIAL_ROUTER_ENABLED`); expone candidatas e identidades promovidas manualmente desde su historial durable; segundo camino de "automatic" por rendimiento histórico de categoría (opt-in vía `IG_STATS_PROMOTION_ENABLED`, nunca bypassa el tope por tema) |
@@ -109,8 +111,17 @@ HTML fuente
   ├→ data/noticias_web_pending.json
   └→ data/noticias_meta.json
        ↓
+[editorial_context/refresh_context.py: fuentes oficiales habilitadas,
+ una vez por ciclo, respeta poll_ttl — ver docs/OFFICIAL_SOURCES.md]
+       ↓
+EditorialContextBundle (archivo propio + fuentes oficiales cacheadas)
+  → pipeline/node_webapp/editorial.py (contexto opcional, nunca obligatorio)
+  → ver docs/EDITORIAL_CONTEXT.md y docs/STORY_ENGINE.md
+       ↓
 CMS + R2 ← web pending
-  → data/noticias_web_publicadas.json
+  → data/noticias_web_publicadas.json (ventana de 7 días, NO es el archivo
+    histórico; el archivo real vive en data/derived/editorial_context.sqlite3,
+    derivado/reconstruible, y se completa además vía backfill del CMS propio)
   → URL web sincronizada en meta/social
        ↓
 data/noticias_sociales_pendientes.json

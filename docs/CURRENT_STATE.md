@@ -1,7 +1,45 @@
 # Estado actual
 
-Última actualización: 2026-08-21 (separación dev/producción; el resto del documento
-describe el estado previo y sigue vigente).
+Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
+Registry; el resto del documento describe el estado previo y sigue vigente).
+
+## Editorial Context Engine, Story Engine y Source Registry (rama `feature/editorial-context-story-engine`, no mergeada, 2026-09-10)
+
+Nueva capa aditiva que enriquece la redacción editorial existente con
+antecedentes del archivo propio y de fuentes oficiales, sin reemplazar el
+pipeline actual. Detalle técnico completo en `docs/EDITORIAL_CONTEXT.md`,
+`docs/STORY_ENGINE.md`, `docs/OFFICIAL_SOURCES.md` y `docs/COST_MODEL.md`;
+bitácora completa de la construcción de esta etapa en
+`docs/EDITORIAL_CONTEXT_PROGRESS.md`.
+
+Resumen de lo que cambia en el flujo real:
+
+- Nuevo índice derivado `data/derived/editorial_context.sqlite3`
+  (reconstruible, gitignored, no autoritativo) con búsqueda full-text
+  (FTS5 con fallback) sobre el archivo propio de notas publicadas.
+- Nueva etapa de ciclo `editorial_context/refresh_context.py` en
+  `run_24x7.py::CYCLE_STEPS` (entre `run_all.py` y
+  `pipeline/publish_web.py`): sincroniza fuentes oficiales habilitadas una
+  vez por ciclo, respetando `poll_ttl` por fuente.
+- `pipeline/node_webapp/publisher.py` arma un `EditorialContextBundle`
+  antes de `prepare_editorial` (contexto 100% opcional, nunca bloquea la
+  publicación) y, si corresponde, agrega `storyKey`, `sources[]` y
+  `metadata.archiveContext` al payload del CMS.
+- **Bug corregido en el mismo paso**: `_CATEGORY_AUTHORS` mandaba
+  `authorName` fijo por categoría ("Redacción Política", etc.),
+  contradiciendo la política real del CMS (Fernando Nahim Mora). Eliminado;
+  ver `docs/DECISIONS.md` (2026-09-10).
+- CMS (`LaVozRiojana`, rama propia con el mismo nombre): `Post.storyKey`
+  (migración aditiva nullable, ya aplicada al DB local de desarrollo),
+  módulos `<StoryTimeline />` / `<ArchiveContextNote />` en la página de
+  nota.
+
+Nada de esto está activo en producción todavía: la rama no está mergeada a
+`main` en ninguno de los dos repos, y el índice derivado no existe hasta la
+primera ejecución real (se autogenera solo). No requiere pausar el
+supervisor productivo para desarrollarse ni testearse — todo el trabajo de
+esta etapa se hizo en la máquina de desarrollo, nunca en la PC de
+producción (ver sección siguiente).
 
 ## Separación dev/producción: el servicio corre en una PC dedicada (2026-08-21)
 
