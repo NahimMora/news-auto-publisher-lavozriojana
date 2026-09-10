@@ -396,5 +396,11 @@ sin pushear todavía:
 9adcbb8 feat: soporte de storyKey y modulos "Segui esta historia" / "En contexto"
 ```
 
-**Ninguna rama fue pusheada ni hay PR abierta todavía** — requiere
-autorización explícita antes de hacerlo (visible en GitHub para terceros).
+Ambas ramas fueron pusheadas y ambas PR quedaron abiertas (sin mergear),
+con autorización explícita del usuario:
+
+- Autopublicador: https://github.com/NahimMora/news-auto-publisher-lavozriojana/pull/6
+  (base: `feature/editorial-cinematica-riojana`, que a su vez sigue sin
+  mergear a `main`).
+- CMS: https://github.com/NahimMora/lavozriojana-news-app/pull/1
+  (base: `main`).
