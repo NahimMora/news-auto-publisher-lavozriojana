@@ -369,9 +369,82 @@ Todo detrás de flags con default seguro (`EDITORIAL_CONTEXT_ENABLED`,
 `OFFICIAL_SOURCES_ENABLED`, cada fuente con su propio `enabled` en el
 registry) siguiendo el patrón ya establecido en AGENTS.md.
 
-## Próximo paso concreto
+## Fase 12 — CMS/web (repo LaVozRiojana, rama `feature/editorial-context-story-engine`)
 
-Esperar el resultado del fork de auditoría de fuentes oficiales (RSS/sitemap/
-JSON-LD por sitio). Mientras tanto, empezar a escribir código: primero
-`utils/paths.py::derived_dir()` y `editorial_context/db.py` (esquema +
-probe FTS5), después `entities.py`, `archive_index.py`, tests en paralelo.
+Commit `9adcbb8` en `C:\Users\pc10\Desktop\AutoPublicadores\LaVozRiojana`
+(repo separado, `main` en HEAD original, se creó rama nueva igual que en el
+autopublicador — no estaba en una feature branch previa).
+
+- `prisma/schema.prisma`: `Post.storyKey String? @db.VarChar(160)` +
+  `@@index([storyKey, publishedAt])`. Migración
+  `prisma/migrations/20260910130000_add_post_story_key/` escrita a mano
+  (mismo estilo que las migraciones previas del repo) y **APLICADA al DB
+  local de desarrollo** (`lavozriojana_news_app` en `127.0.0.1:3306`) con
+  `npx prisma migrate deploy`.
+- **Hallazgo operativo crítico, ya corregido**: al regenerar el Prisma
+  Client con el campo nuevo, `npm run build` reventó con
+  `prisma:error ... column storyKey does not exist` en **todas** las
+  queries de posts (home, categorías, etc.), no sólo las nuevas —
+  cualquier cambio de `schema.prisma` que toque `Post` exige que la
+  migración se aplique ANTES o junto con el deploy del código, nunca
+  después, o el sitio entero sirve páginas vacías (los `.catch(() => [])`
+  existentes lo esconden como "sin resultados" en vez de crashear).
+  **Anotar esto explícitamente en el RUNBOOK de deploy de la web.**
+- `lib/schemas.ts`: `storyKey` opcional en `postCreateSchema` (y por
+  herencia `postPatchSchema`), regex `^[a-z0-9:_-]+$`.
+- `lib/post-mutations.ts`: `createPost`/`updatePost` persisten `storyKey`.
+- `lib/posts.ts::getStoryTimeline(storyKey, excludePostId, limit=5)`:
+  sólo posts `PUBLISHED`, excluye la nota actual.
+- `components/news/StoryTimeline.tsx` ("Seguí esta historia", se
+  autooculta con <2 items) y `components/news/ArchiveContextNote.tsx`
+  ("En contexto", lee `metadata.archiveContext` de forma defensiva —
+  JSON libre de un sistema externo). Mutuamente excluyentes, insertados en
+  `app/noticias/[slug]/page.tsx` entre `<Sources />` y `<AuthorBox />`.
+  CSS nuevo en `app/globals.css` reusando los design tokens existentes
+  (`--surface`, `--border`, `--muted`, `--blue`, etc.), sin tocar nada del
+  sistema visual existente.
+- **Lado autopublicador** (ya commiteado antes, `pipeline/node_webapp/publisher.py`):
+  `build_post_payload` acepta `story_key`/`archive_context` opcionales →
+  `payload["storyKey"]` / `payload["metadata"]["archiveContext"]`;
+  `EditorialContextBundle.archive_context_entries()` sólo devuelve algo
+  cuando NO hay `story_key` (mutuamente excluyente, Parte 38). Tests:
+  `test_editorial_context_bundle.py::ArchiveContextEntriesTests`,
+  `test_node_webapp_publisher.py` (2 tests nuevos sobre `build_post_payload`).
+- **Validaciones CMS**: `npm run typecheck` limpio, `npm run lint` limpio
+  ("No ESLint warnings or errors"), `npm run build` limpio (32/32 páginas,
+  sin `prisma:error`) — verificado DESPUÉS de aplicar la migración.
+- **No hay suite de tests en este repo** (confirmado en la auditoría
+  inicial: no existe script `test` en `package.json`) — no aplica agregar
+  tests unitarios ahí, sólo typecheck/lint/build.
+
+## Próximo paso concreto (actualizado)
+
+Pendiente en orden:
+1. `scripts/backfill_story_index.py` en el autopublicador (Parte 43,
+   `--report-only` por default; `--apply` llama `PATCH /api/private/posts/[id]`
+   del CMS y exige opt-in explícito).
+2. Tests end-to-end (Parte 67, casos A-G) y cobertura restante de la lista
+   de 35 casos de la Parte 65 (repasar cuáles ya están cubiertos por los
+   tests existentes vs cuáles faltan explícitamente).
+3. Validaciones finales autopublicador (Parte 69): `unittest discover`,
+   `compileall`, `cli.py doctor --scope core --json`,
+   `cli.py run-once --dry-run --json`, `git diff --check`.
+4. Documentación nueva/actualizada (Parte 71): ARCHITECTURE, CURRENT_STATE,
+   DECISIONS, RUNBOOK (autopublicador) + OFFICIAL_SOURCES.md,
+   EDITORIAL_CONTEXT.md, STORY_ENGINE.md, COST_MODEL.md.
+5. Cost report (Parte 73) confirmando Google Search calls=0, paid
+   embeddings=0, paid search APIs=0.
+6. Dejar PR lista en ambos repos (Parte 74) — NO mergear a `main`.
+7. Informe final (Parte 76) para pegar en ChatGPT.
+
+Riesgos abiertos a no ocultar en el informe final:
+- `anses`/`indec` sin confirmar (fetch estático vacío) pese a ser prioridad
+  HIGH del plan — necesitan un probe real con `requests`+headers de
+  navegador, no sólo WebFetch.
+- `archive_backfill.py` asume nombres de campo de `GET /api/public/posts`
+  no verificados contra una respuesta real del endpoint.
+- No se implementó fetch del cuerpo completo de artículos oficiales
+  (sólo título/excerpt del índice/RSS) — decisión consciente de costo/tiempo,
+  documentar como limitación conocida, no como bug.
+- `secretaria_justicia_larioja` sigue deshabilitada sin adapter (home sin
+  listado de noticias real en el fetch).

@@ -208,6 +208,7 @@ def build_post_payload(
     is_breaking: bool = False,
     is_featured: bool = False,
     story_key: str = "",
+    archive_context: list[dict] | None = None,
 ) -> dict:
     if not media.main_image:
         raise ValueError("mainImage is required")
@@ -240,6 +241,10 @@ def build_post_payload(
         "editorialFinalAttemptUsed": getattr(editorial, "final_attempt_used", False),
         "editorialRevisionHistory": getattr(editorial, "revision_history", []),
     }
+    if archive_context:
+        # "En contexto" en la web (Parte 38): antecedentes propios cuando no
+        # hay una historia con timeline propio (ver storyKey más abajo).
+        metadata["archiveContext"] = archive_context
 
     payload = {
         "title": editorial.title.upper(),
@@ -679,6 +684,9 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
         "timeline": bundle.timeline,
         "related_articles": bundle.related_articles,
         "context_depth": bundle.context_depth,
+        # "En contexto" en la web (Parte 38): sólo cuando NO hay timeline
+        # (bundle.archive_context_entries() ya se anula sola si hay story_key).
+        "archive_context": bundle.archive_context_entries(),
     }
 
 
@@ -787,6 +795,7 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
             is_breaking=is_breaking,
             is_featured=is_featured,
             story_key=str((context_bundle or {}).get("story_key") or ""),
+            archive_context=(context_bundle or {}).get("archive_context") or None,
         )
     except ValueError as exc:
         logger.error("No se publica por payload invalido: %s", exc)

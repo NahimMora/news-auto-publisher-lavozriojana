@@ -496,6 +496,50 @@ class PayloadAndApiTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["sourceName"], "Tiempo Popular")
         self.assertIn("externalId", payload["metadata"])
 
+    def test_build_post_payload_includes_story_key_and_archive_context_when_present(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+        archive_context = [{"postId": "1", "title": "Nota previa", "url": "https://x", "snippet": "antecedente"}]
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+            story_key="story:abc123",
+            archive_context=archive_context,
+        )
+
+        self.assertEqual(payload["storyKey"], "story:abc123")
+        self.assertEqual(payload["metadata"]["archiveContext"], archive_context)
+
+    def test_build_post_payload_omits_story_key_and_archive_context_when_absent(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+
+        payload = publisher.build_post_payload(noticia, result, media_result, published_at="2026-06-30T12:00:00Z")
+
+        self.assertNotIn("storyKey", payload)
+        self.assertNotIn("archiveContext", payload["metadata"])
+
     def test_build_post_payload_includes_video_field_when_present(self):
         noticia = sample_news()
         result = editorial.build_fallback_editorial(noticia)

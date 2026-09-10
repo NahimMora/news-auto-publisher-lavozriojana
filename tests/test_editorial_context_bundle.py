@@ -127,5 +127,38 @@ class BuildContextBundleTests(unittest.TestCase):
         self.assertEqual(summary["context_depth_none"], 1)
 
 
+class ArchiveContextEntriesTests(unittest.TestCase):
+    def test_empty_when_story_key_present(self):
+        bundle = eb.EditorialContextBundle(
+            story_key="story:x",
+            archive_snippets=[eb.ContextSnippet(text="antecedente", source_type="own_archive")],
+            related_articles=[{"article_id": "a1", "title": "T", "url": "https://x"}],
+        )
+        self.assertEqual(bundle.archive_context_entries(), [])
+
+    def test_zips_snippets_with_related_articles_by_index(self):
+        bundle = eb.EditorialContextBundle(
+            story_key="",
+            archive_snippets=[eb.ContextSnippet(text="En junio se habia anunciado la obra", source_type="own_archive")],
+            related_articles=[{"article_id": "a1", "title": "Titulo previo", "url": "https://lavozriojana.com/a1"}],
+        )
+        entries = bundle.archive_context_entries()
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "postId": "a1",
+                    "title": "Titulo previo",
+                    "url": "https://lavozriojana.com/a1",
+                    "snippet": "En junio se habia anunciado la obra",
+                }
+            ],
+        )
+
+    def test_empty_when_no_related_articles(self):
+        bundle = eb.EditorialContextBundle(story_key="")
+        self.assertEqual(bundle.archive_context_entries(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

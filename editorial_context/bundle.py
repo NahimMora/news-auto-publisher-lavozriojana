@@ -104,6 +104,29 @@ class EditorialContextBundle:
             fragment["context_depth"] = self.context_depth
         return fragment
 
+    def archive_context_entries(self) -> list[dict]:
+        """Antecedentes propios para el módulo web "En contexto" (Parte 38).
+
+        Sólo tiene sentido cuando NO hay timeline (``story_key`` vacío): si
+        hay historia, el timeline la reemplaza (módulos no redundantes).
+        ``archive_snippets``/``related_articles`` comparten el mismo prefijo
+        de origen (ambos son slices de la misma lista ``relevant``), así que
+        alinean por índice.
+        """
+        if self.story_key:
+            return []
+        entries = []
+        for snippet, related in zip(self.archive_snippets, self.related_articles):
+            entries.append(
+                {
+                    "postId": related.get("article_id", ""),
+                    "title": related.get("title", ""),
+                    "url": related.get("url", ""),
+                    "snippet": snippet.text,
+                }
+            )
+        return entries
+
     def to_dict(self) -> dict:
         return {
             "context_depth": self.context_depth,
