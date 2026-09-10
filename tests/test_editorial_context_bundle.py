@@ -6,6 +6,8 @@ from unittest.mock import patch
 from editorial_context import archive_index as ai
 from editorial_context import bundle as eb
 from editorial_context import metrics as ec_metrics
+from sources import cache as source_cache
+from sources.contract import OfficialSourceItem
 
 
 class BuildContextBundleTests(unittest.TestCase):
@@ -79,6 +81,44 @@ class BuildContextBundleTests(unittest.TestCase):
         with patch("editorial_context.bundle._build_context_bundle", side_effect=RuntimeError("boom")):
             result = eb.build_context_bundle(article_id="x", title="titulo", path=self.db_path)
         self.assertEqual(result.context_depth, "NONE")
+
+    def test_auto_gathers_relevant_official_snippet_from_cache_via_selector(self):
+        source_cache.upsert_cache_item(
+            OfficialSourceItem(
+                source_id="mpf_larioja",
+                title="El MPF confirmo la apertura de una causa de contrabando de autopartes",
+                url="https://www.mpflarioja.gob.ar/n/1",
+                excerpt="La fiscalia detallo el operativo realizado en Chilecito",
+                published_at="2026-08-09T10:00:00Z",
+            ),
+            path=self.db_path,
+        )
+        result = eb.build_context_bundle(
+            article_id="new1",
+            title="Se realizo un nuevo allanamiento en la causa de contrabando de autopartes",
+            category="policiales",
+            path=self.db_path,
+        )
+        self.assertTrue(any(s.source_id == "mpf_larioja" for s in result.official_snippets))
+        self.assertIn("official_context", result.to_prompt_fragment())
+
+    def test_auto_gather_ignores_unrelated_cached_items(self):
+        source_cache.upsert_cache_item(
+            OfficialSourceItem(
+                source_id="mpf_larioja",
+                title="Se realizo una capacitacion interna sobre gestion documental",
+                url="https://www.mpflarioja.gob.ar/n/2",
+                excerpt="Actividad administrativa sin vinculo con causas judiciales",
+            ),
+            path=self.db_path,
+        )
+        result = eb.build_context_bundle(
+            article_id="new1",
+            title="Juan Perez fue condenado en la causa de contrabando de autopartes",
+            category="policiales",
+            path=self.db_path,
+        )
+        self.assertEqual(result.official_snippets, [])
 
     def test_records_bundle_event_metrics(self):
         eb.build_context_bundle(article_id="new1", title="Una nota cualquiera", category="sociedad", path=self.db_path)

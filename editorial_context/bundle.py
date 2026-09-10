@@ -21,6 +21,9 @@ from editorial_context import story_engine
 from editorial_context import timeline as tl
 from utils.logging_setup import setup_logger
 
+# Import diferido dentro de _gather_official_snippets para evitar acoplar
+# este módulo a sources/ cuando sólo se usa el motor de archivo propio.
+
 logger = setup_logger("editorial_context.bundle", "editorial_context.log")
 
 
@@ -38,6 +41,9 @@ TIMELINE_MAX_ITEMS = _env_int("TIMELINE_MAX_ITEMS", 5)
 ARCHIVE_CONTEXT_MAX_CHARS = _env_int("ARCHIVE_CONTEXT_MAX_CHARS", 3500)
 OFFICIAL_CONTEXT_MAX_CHARS = _env_int("OFFICIAL_CONTEXT_MAX_CHARS", 4500)
 ANTECEDENT_SNIPPET_MAX_CHARS = 280
+OFFICIAL_SNIPPET_MAX_ITEMS = _env_int("OFFICIAL_SNIPPET_MAX_ITEMS", 3)
+OFFICIAL_SNIPPET_TEXT_MAX_CHARS = 400
+OFFICIAL_ITEMS_PER_SOURCE_SCANNED = 10
 
 
 @dataclass
@@ -116,6 +122,70 @@ def _summarize_antecedent(article: ai.ArchiveArticle) -> str:
     return text[:ANTECEDENT_SNIPPET_MAX_CHARS]
 
 
+def _gather_official_snippets(
+    *,
+    category: str,
+    entities: list[str],
+    localities: list[str],
+    title: str,
+    excerpt: str,
+    path: Path | str | None = None,
+) -> tuple[list[ContextSnippet], int]:
+    """SourceSelector + caché local (Parte 24/57): nunca consulta la red acá
+    (eso lo hace ``editorial_context/refresh_context.py`` una vez por ciclo,
+    Parte 56); sólo filtra lo ya cacheado por relevancia real al hecho
+    puntual (entidad/término/localidad compartidos), no por sola coincidencia
+    de fuente/categoría."""
+    from sources import cache as source_cache
+    from sources import selector as source_selector
+
+    sources = source_selector.select_sources(
+        category=category, localities=localities, keywords_text=" ".join([title, excerpt])
+    )
+    if not sources:
+        return [], 0
+
+    probe_entities_norm = {ec_entities.normalize_entity(e) for e in entities}
+    probe_terms = retrieval.significant_terms(title, excerpt, exclude=probe_entities_norm)
+    probe_localities = set(localities)
+
+    snippets: list[ContextSnippet] = []
+    for source in sources:
+        for item in source_cache.recent_items_for_source(
+            source.source_id, limit=OFFICIAL_ITEMS_PER_SOURCE_SCANNED, path=path
+        ):
+            item_title = str(item.get("title") or "")
+            item_excerpt = str(item.get("excerpt") or "")
+            item_entities_norm = {
+                ec_entities.normalize_entity(e) for e in ec_entities.extract_entities(item_title, item_excerpt)
+            }
+            item_terms = retrieval.significant_terms(item_title, item_excerpt, exclude=item_entities_norm)
+            item_localities = set(ec_entities.extract_localities(item_title, item_excerpt))
+
+            relevant = bool(
+                (probe_entities_norm & item_entities_norm)
+                or (probe_terms & item_terms)
+                or (probe_localities & item_localities - {"la rioja", "rioja"})
+            )
+            if not relevant:
+                continue
+            snippets.append(
+                ContextSnippet(
+                    text=(item_excerpt or item_title)[:OFFICIAL_SNIPPET_TEXT_MAX_CHARS],
+                    source_type="official_source",
+                    source_id=source.source_id,
+                    source_url=str(item.get("url") or ""),
+                    published_at=str(item.get("published_at") or ""),
+                )
+            )
+            if len(snippets) >= OFFICIAL_SNIPPET_MAX_ITEMS:
+                break
+        if len(snippets) >= OFFICIAL_SNIPPET_MAX_ITEMS:
+            break
+
+    return snippets, len(sources)
+
+
 def build_context_bundle(
     *,
     article_id: str,
@@ -128,8 +198,12 @@ def build_context_bundle(
     path: Path | str | None = None,
 ) -> EditorialContextBundle:
     """Punto de entrada único. Nunca lanza: una falla acá degrada a NONE
-    (Parte 60, "si falla el archivo, la nota puede continuar sin contexto")."""
-    official_snippets = official_snippets or []
+    (Parte 60, "si falla el archivo, la nota puede continuar sin contexto").
+
+    ``official_snippets=None`` (default) hace que este módulo los reúna solo
+    vía ``SourceSelector`` + caché local; pasar una lista explícita (incluso
+    vacía) omite ese paso automático (útil para tests o para un caller que ya
+    los resolvió por su cuenta)."""
     try:
         return _build_context_bundle(
             article_id=article_id,
@@ -153,12 +227,22 @@ def _build_context_bundle(
     excerpt: str,
     category: str,
     published_at: str,
-    official_snippets: list[ContextSnippet],
+    official_snippets: list[ContextSnippet] | None,
     official_source_lookup_count: int,
     path: Path | str | None,
 ) -> EditorialContextBundle:
     entities_found = ec_entities.extract_entities(title, excerpt)
     localities_found = ec_entities.extract_localities(title, excerpt)
+
+    if official_snippets is None:
+        official_snippets, official_source_lookup_count = _gather_official_snippets(
+            category=category,
+            entities=entities_found,
+            localities=localities_found,
+            title=title,
+            excerpt=excerpt,
+            path=path,
+        )
 
     candidates = ai.candidate_retrieval(
         title=title,

@@ -147,9 +147,33 @@ sin autorización explícita.
 - [x] Fase 10 — Integración en `editorial.py`/`publisher.py`: hecha antes de
   tiempo (ver más abajo, sección "Fase 10 (adelantada)"). Pendiente todavía:
   conectar `sources/selector.py` + `sources/cache.py` como
-  `official_snippets` reales dentro de `editorial_context/bundle.py`
-  (hoy `build_context_bundle` acepta `official_snippets` por parámetro pero
-  nadie se lo pasa desde `publisher.py` — es el próximo paso concreto).
+  `official_snippets` reales dentro de `editorial_context/bundle.py` — HECHO
+  (ver abajo).
+
+## Fase 9d — SourceSelector + caché conectados al bundle (cierre del loop)
+
+- `editorial_context/bundle.py::_gather_official_snippets`: cuando el
+  caller no pasa `official_snippets` explícitos (`None`, el caso real de
+  `publisher.py`), se auto-completan vía `sources.selector.select_sources` +
+  `sources.cache.recent_items_for_source`. **Nunca hace red acá**: sólo lee
+  lo que `editorial_context/refresh_context.py` ya cacheó una vez por ciclo
+  (Parte 56). Filtra por relevancia real (entidad/término/localidad
+  compartidos con la noticia), no por sola coincidencia de fuente/categoría.
+- Tests nuevos en `test_editorial_context_bundle.py`: confirma que un item
+  cacheado relevante aparece en `official_snippets` y uno irrelevante se
+  descarta, ambos vía la ruta automática (sin pasar `official_snippets`
+  manualmente).
+- `cli.py`: nuevos subcomandos `source-probe --source <id> [--json]` (Parte
+  22, nunca escribe caché/métricas, `force=True` interno para poder
+  diagnosticar una fuente aún deshabilitada) y `archive-index
+  {rebuild,backfill-cms,stats}`. Test: `tests/test_cli_source_context.py`.
+- **Bug propio detectado y corregido en el mismo paso**: el primer test de
+  `source-probe` parcheaba `sources.sync.sync_source` en vez de
+  `sources.probe.sync_source` (el `from ... import` de `probe.py` crea un
+  binding local independiente) — la suite terminó haciendo un GET real a
+  `mpf_larioja.gob.ar` durante los tests. Corregido antes de commitear;
+  ninguna corrida de tests debe volver a pegarle a una fuente real.
+  **Suite completa: 671/671 tests OK, sin tocar red.**
 - [ ] Fase 11 — Instrumentación IA (ai_client.py).
 - [ ] Fase 12 — CMS/web: schema Prisma story_key + endpoint + `<StoryTimeline />`.
 - [ ] Fase 13 — Backfill script (--report-only).
