@@ -1833,3 +1833,187 @@ la PC de producción) en vez de `git pull` manual por SSH; o se agregue una segu
 PC de producción, caso que `Ops\docs\ARCHITECTURE.md` (proyecto hermano HolaSalta)
 ya advierte que requiere asignar capacidades/recursos explícitos, no asumir un
 segundo agente con todo habilitado por default.
+
+---
+
+### 2026-09-10 — SQLite derivado para el Archive Context Engine (no reemplaza JSON)
+
+**Decisión**: crear `data/derived/editorial_context.sqlite3` (índice FTS5 con
+fallback `LIKE`, probado en runtime) como índice **derivado, reconstruible y no
+autoritativo** para el Archive Context Engine y Story Engine
+(`docs/EDITORIAL_CONTEXT.md`). Las colas JSON siguen siendo el estado autoritativo.
+
+**Motivo**: la decisión previa de 2026-07-23 rechazó migrar a SQLite como
+*reemplazo* de JSON por falta de evidencia de volumen — esa razón sigue vigente y no
+se contradice acá. Lo que se necesita ahora es un índice de búsqueda full-text sobre
+miles de notas históricas para el retrieval en dos pasos (Parte 7 del plan de
+contexto editorial), algo que recorrer JSON completo no puede resolver a un costo
+razonable, y que además puede borrarse y reconstruirse sin ningún riesgo (`cli.py
+archive-index rebuild`), a diferencia de las colas productivas.
+
+**Alternativas rechazadas**: reemplazar las colas JSON por SQLite (fuera de alcance
+y contradiría la decisión anterior); mantener sólo búsqueda en memoria sobre JSON
+completo por ciclo (no escala con miles de notas ni sobrevive reinicios sin
+recalcular todo).
+
+**Consecuencias**: nueva dependencia de runtime (sqlite3, ya en la stdlib, sin
+paquete nuevo) y un archivo binario nuevo en `data/derived/` (gitignored). Si el
+build de `sqlite3` del host no soporta FTS5, se usa automáticamente un fallback
+`LIKE` más lento pero funcional — confirmado disponible en Python 3.10.0 (mismo
+build que producción) al momento de esta decisión.
+
+**Revisar nuevamente cuando**: el volumen de `archive_articles` crezca lo
+suficiente como para que el fallback `LIKE` (si algún host no soporta FTS5) se
+vuelva lento; o se quiera exponer un buscador de noticias público
+(`ArchiveSearchProvider` ya está diseñado para eso, Parte 48).
+
+---
+
+### 2026-09-10 — Backfill del archivo propio vía API del CMS, no sitemap
+
+**Decisión**: usar `GET /api/public/posts` (endpoint de lectura ya existente del
+CMS propio) como fuente principal de backfill histórico
+(`editorial_context/archive_backfill.py`), en vez de sitemap + JSON-LD por
+artículo como sugiere el orden de preferencia genérico de la Parte 6 del plan.
+
+**Motivo**: `noticias_web_publicadas.json` resultó ser sólo una ventana rodante de
+7 días (podada en cada lectura por `publisher.py::_load_published_history`), no un
+histórico completo — el plan ya anticipaba que podía hacer falta backfill. El
+endpoint público del CMS ya devuelve exactamente los campos necesarios
+(slug/título/excerpt/categoría/fecha/tags) paginado, en una sola llamada por
+página; sitemap + JSON-LD hubiera requerido primero descubrir todas las URLs y
+después un fetch HTML por artículo — más requests, más lento, mismo resultado.
+
+**Alternativas rechazadas**: sitemap + JSON-LD por artículo (más caro, más lento,
+sin ventaja de datos); scraping del HTML público de cada nota (innecesario
+existiendo un endpoint JSON propio).
+
+**Consecuencias**: el backfill depende de que `GET /api/public/posts` no cambie de
+forma sin aviso — los nombres de campo se tomaron de la auditoría del repo
+`LaVozRiojana`, no de una respuesta real verificada; queda como riesgo abierto
+documentado (`docs/EDITORIAL_CONTEXT_PROGRESS.md`).
+
+**Revisar nuevamente cuando**: se confirme el formato exacto de
+`GET /api/public/posts` contra una respuesta real; o el CMS cambie ese contrato.
+
+---
+
+### 2026-09-10 — `metadata` JSON existente para "En contexto", columna nueva sólo para `storyKey`
+
+**Decisión**: en el CMS (`Post`), agregar únicamente una columna nueva real
+(`storyKey String? @db.VarChar(160)`, indexada) para el timeline; el antecedente
+"En contexto" (cuando no hay timeline) se guarda dentro del campo `metadata Json?`
+que ya existía (`metadata.archiveContext`), sin modelo ni migración adicional.
+
+**Motivo**: `storyKey` necesita un índice real porque se consulta con `WHERE
+storyKey = ? ORDER BY publishedAt` sobre potencialmente miles de posts — un campo
+JSON no indexable no serviría ahí. El antecedente de "En contexto" es sólo para
+mostrar 1-2 notas relacionadas en la UI, no se consulta por ese campo desde SQL, así
+que reusar `metadata` (ya presente, ya nullable, ya sin impacto en notas viejas) es
+la solución más simple que cumple la Parte 41 ("preferir la solución más simple").
+
+**Alternativas rechazadas**: tabla `Story` completa + tabla `PostRelation` (Parte
+41 lo permite, pero es arquitectura de más para lo que hace falta hoy — no hay
+necesidad de metadata de historia más allá de agrupar por `storyKey`); una segunda
+columna JSON dedicada a `archiveContext` (redundante con `metadata`, que ya cumple
+la misma función sin nueva migración).
+
+**Consecuencias**: `metadata.archiveContext` es JSON libre sin validación de schema
+en el lado de lectura — `components/news/ArchiveContextNote.tsx` lo parsea de forma
+defensiva (`parseArchiveContext`), tolerando forma inesperada sin romper el render.
+
+**Revisar nuevamente cuando**: se necesite consultar por contenido de
+`archiveContext` desde SQL (ej. reportes), momento en que sí justificaría una tabla
+propia.
+
+---
+
+### 2026-09-10 — HTML_INDEX por sección en vez de sitemap para `argentina.gob.ar`
+
+**Decisión**: para las 10 fuentes nacionales bajo `www.argentina.gob.ar`
+(Gendarmería, PFA, Vialidad Nacional, Salud Nación, Educación Nación, ARCA, SENASA,
+Energía Nación, Prefectura, Seguridad Nación), usar HTML_INDEX por sección en vez
+de sitemap, pese a que el orden de preferencia genérico de la Parte 21 pone sitemap
+por encima de HTML index.
+
+**Motivo**: se confirmó con un fetch real que `sitemap.xml` de ese dominio es un
+índice genérico de **todo el portal** (miles de URLs de trámites, ministerios y
+contenido histórico desde 2017 mezclados), sin forma barata de filtrar sólo la
+sección de noticias de un organismo. El índice HTML por sección
+(`/gendarmeria/noticias`, etc.) da exactamente lo que hace falta con un solo
+request por sección.
+
+**Alternativas rechazadas**: descargar y filtrar el sitemap completo del portal
+(mucho más pesado y lento por sección que un solo HTML index, sin ninguna ventaja
+de datos).
+
+**Consecuencias**: el adapter genérico `sources/strategies/html_index.py` es una
+heurística (anchors con texto largo, mismo host, path con ≥2 segmentos, fecha
+opcional del contenedor cercano) — no un scraper a medida por sitio, así que puede
+devolver `published_at` vacío para algunos ítems o requerir ajuste si el sitio
+cambia de plantilla. Se acepta ese costo de precisión a cambio de mantenibilidad
+(Parte 21: preferir lo simple/mantenible).
+
+**Revisar nuevamente cuando**: `source_metrics` muestre `parse_failures` altos o
+`items_new` en cero sostenido para alguna de estas fuentes.
+
+---
+
+### 2026-09-10 — Corrección: no mandar `authorName` fijo por categoría
+
+**Decisión**: eliminar `pipeline/node_webapp/publisher.py::_CATEGORY_AUTHORS`
+(mapeaba categoría → `"Redacción Política"`, `"Redacción Deportes"`, etc.) y dejar
+de mandar `authorName` en el payload cuando no hay autor explícito, para que el CMS
+resuelva su propia política editorial actual (Fernando Nahim Mora,
+`lib/post-mutations.ts::resolveAuthor`).
+
+**Motivo**: hallazgo de la auditoría inicial de esta etapa —
+`_CATEGORY_AUTHORS` contradecía directamente la Parte 61 del plan de contexto
+editorial, que pide explícitamente mantener la política real del CMS y no
+reintroducir bylines tipo "Redacción X". El CMS ya tenía el fallback correcto
+implementado (commit previo "Consolidar autoría: Fernando Nahim Mora firma real de
+todas las notas" en el repo `LaVozRiojana`); el autopublicador lo estaba
+sobrescribiendo en cada publicación sin que nadie lo pidiera así.
+
+**Alternativas rechazadas**: mandar `authorName: "Fernando Nahim Mora"` explícito
+desde el autopublicador (duplicaría la política editorial en dos repos; si el CMS
+cambia de responsable editorial en el futuro, el autopublicador quedaría
+desactualizado sin que nadie lo note).
+
+**Consecuencias**: las notas publicadas a partir de este cambio muestran el autor
+real (Fernando Nahim Mora) en vez de un nombre de sección genérico. No afecta notas
+ya publicadas (no se hizo backfill de autoría histórica, fuera de alcance de esta
+etapa).
+
+**Revisar nuevamente cuando**: el CMS cambie su política de autoría por defecto —
+en ese caso, esta ausencia deliberada de `authorName` seguiría siendo correcta (el
+autopublicador seguiría delegando en el CMS), no haría falta tocar nada acá.
+
+---
+
+### 2026-09-10 — Fuentes sin estrategia confirmada quedan deshabilitadas, nunca adivinadas
+
+**Decisión**: `policia_larioja`, `salud_larioja`, `secretaria_justicia_larioja`,
+`anses`, `indec`, `smn_alerts` y `boletin_oficial_larioja` quedan sembradas en
+`config/official_sources.json` con `enabled=false` y una razón documentada en
+`notes`, en vez de forzar una estrategia sin evidencia real de que funciona.
+
+**Motivo**: un relevamiento técnico real (fetch en vivo, no inferencia) mostró que
+estas fuentes no tienen un mecanismo de descubrimiento confirmado hoy: sin
+alternativa a Facebook, sitio caído, HTML sin listado real, contenido cargado por
+JS sin endpoint visible, o dominio sin provenance oficial confirmada. Inventar una
+estrategia sin confirmarla arriesgaría publicar con datos de un parser roto o de
+una fuente ilegítima. Ver `docs/OFFICIAL_SOURCES.md` para el detalle por fuente.
+
+**Alternativas rechazadas**: implementar un adapter "mejor esfuerzo" para cada una
+igual (rechazado explícitamente por el plan: "no inventar, comprobar"; y por el
+criterio de decisión general de este proyecto de preferir no perder/corromper datos
+antes que sofisticación).
+
+**Consecuencias**: quedan sin cobertura automática algunas fuentes de prioridad
+HIGH/CRITICAL del plan (notablemente ANSES e INDEC, relevantes para economía). El
+`SourceSelector` simplemente no las selecciona mientras estén deshabilitadas.
+
+**Revisar nuevamente cuando**: alguien confirme manualmente (o con un fetch real
+con headers de navegador, no sólo el usado en este relevamiento) un mecanismo
+estable para alguna de estas fuentes.

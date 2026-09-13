@@ -31,6 +31,19 @@ def photos_dir() -> Path:
     return _configured_dir("LVR_FOTOS_DIR", "FotosLVR")
 
 
+def derived_dir() -> Path:
+    """Datos derivados/reconstruibles (índice de contexto editorial, etc.).
+
+    No autoritativo: puede borrarse y regenerarse desde las colas JSON y el
+    CMS propio sin pérdida de información productiva. Vive bajo ``data/`` por
+    defecto para heredar aislamiento de tests vía ``LVR_DATA_DIR``.
+    """
+    raw = str(os.getenv("LVR_DERIVED_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (data_dir() / "derived").resolve()
+
+
 def data_path(name: str) -> str:
     return str(data_dir() / name)
 

@@ -33,6 +33,7 @@ logger = setup_logger("run_24x7", "run_24x7.log")
 BASE_DIR = os.path.dirname(__file__)
 CYCLE_STEPS = [
     ("run_all.py", None),
+    ("editorial_context/refresh_context.py", None),
     ("pipeline/publish_web.py", "web"),
     ("meta/run_fb.py", "facebook"),
     ("meta/run_ig.py", "instagram"),
@@ -40,6 +41,7 @@ CYCLE_STEPS = [
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,
+    "editorial_context/refresh_context.py": 900,
     "pipeline/publish_web.py": 3600,
     # El default de 600s se quedaba corto: hasta 2 items paparazzi por ciclo,
     # cada uno con video que puede tardar minutos en procesar en Meta, más el

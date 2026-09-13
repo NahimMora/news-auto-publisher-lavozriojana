@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Ejemplo Noticias</title>
+    <link>https://ejemplo.gob.ar/</link>
+    <item>
+      <title>El MPF confirmo la apertura de una nueva causa</title>
+      <link>https://ejemplo.gob.ar/noticias/mpf-nueva-causa</link>
+      <guid>https://ejemplo.gob.ar/noticias/mpf-nueva-causa</guid>
+      <pubDate>Mon, 01 Sep 2026 10:00:00 -0300</pubDate>
+      <description>&lt;p&gt;El Ministerio Publico Fiscal informo detalles del operativo.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Se realizo un allanamiento en el marco de la investigacion</title>
+      <link>https://ejemplo.gob.ar/noticias/allanamiento</link>
+      <guid>https://ejemplo.gob.ar/noticias/allanamiento</guid>
+      <pubDate>Tue, 02 Sep 2026 10:00:00 -0300</pubDate>
+      <description>Detalle del procedimiento realizado por la fiscalia.</description>
+    </item>
+  </channel>
+</rss>

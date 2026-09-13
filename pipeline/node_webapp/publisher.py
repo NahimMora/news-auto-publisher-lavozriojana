@@ -9,11 +9,14 @@ from urllib.parse import urlparse
 
 import requests
 
+from editorial_context.bundle import build_context_bundle
+from editorial_context import archive_index as ec_archive_index
 from pipeline.node_webapp.editorial import (
     EditorialResult,
     category_to_name,
     category_to_slug,
     clean_text,
+    get_original_paragraphs,
     news_category,
     prepare_editorial,
     source_display_name,
@@ -40,19 +43,6 @@ SOCIAL_OUTPUT = os.getenv("SOCIAL_QUEUE_PATH", os.path.join(DATA_DIR, "noticias_
 PUBLISHED_HISTORY = os.getenv("WEB_PUBLISHED_HISTORY_PATH", os.path.join(DATA_DIR, "noticias_web_publicadas.json"))
 WEB_DEDUP_HISTORY_DAYS = int(os.getenv("WEB_DEDUP_HISTORY_DAYS", "7"))
 ALLOWED_STATUS = {"published", "draft", "archived"}
-
-_CATEGORY_AUTHORS: dict[str, str] = {
-    "politica":     "Redacción Política",
-    "policiales":   "Redacción Policiales",
-    "interior":     "Redacción Interior",
-    "sociedad":     "Redacción Sociedad",
-    "economia":     "Redacción Economía",
-    "salud":        "Redacción Salud",
-    "educacion":    "Redacción Educación",
-    "deportes":     "Redacción Deportes",
-    "cultura":      "Redacción Cultura",
-    "espectaculos": "Redacción Espectáculos",
-}
 
 
 class InvalidCredentialError(RuntimeError):
@@ -217,6 +207,9 @@ def build_post_payload(
     published_at: str | None = None,
     is_breaking: bool = False,
     is_featured: bool = False,
+    story_key: str = "",
+    archive_context: list[dict] | None = None,
+    official_sources: list[dict] | None = None,
 ) -> dict:
     if not media.main_image:
         raise ValueError("mainImage is required")
@@ -228,7 +221,11 @@ def build_post_payload(
     source_url = clean_text(noticia.get("canonical_url") or noticia.get("url") or "")
     source_name = source_display_name(noticia)
     imported_at = utc_now_iso()
-    author = _CATEGORY_AUTHORS.get(category_slug, os.getenv("WEBAPP_DEFAULT_AUTHOR", "Redacci\u00f3n La Voz Riojana"))
+    # Pol\u00edtica editorial actual del CMS: el autor real es Fernando Nahim Mora
+    # (ver lib/post-mutations.ts::resolveAuthor en el repo de la web). No se
+    # manda authorName fijo por categor\u00eda ("Redacci\u00f3n Pol\u00edtica", etc.) \u2014 eso
+    # se hab\u00eda reintroducido por error y el propio plan de contexto editorial
+    # pide expl\u00edcitamente no reintroducirlo (ver docs/DECISIONS.md).
 
     metadata = {
         "externalId": external_id(noticia),
@@ -245,6 +242,10 @@ def build_post_payload(
         "editorialFinalAttemptUsed": getattr(editorial, "final_attempt_used", False),
         "editorialRevisionHistory": getattr(editorial, "revision_history", []),
     }
+    if archive_context:
+        # "En contexto" en la web (Parte 38): antecedentes propios cuando no
+        # hay una historia con timeline propio (ver storyKey más abajo).
+        metadata["archiveContext"] = archive_context
 
     payload = {
         "title": editorial.title.upper(),
@@ -252,7 +253,6 @@ def build_post_payload(
         "contentHtml": editorial.content_html,
         "categorySlug": category_slug,
         "categoryName": category_name,
-        "authorName": author,
         "tags": editorial.tags,
         "sourceName": source_name,
         "sourceUrl": source_url,
@@ -273,6 +273,10 @@ def build_post_payload(
     if is_featured:
         payload["isFeatured"] = True
         payload["editorialPriority"] = 100
+    if story_key:
+        payload["storyKey"] = story_key
+    if official_sources:
+        payload["sources"] = official_sources
 
     payload = _drop_empty(payload)
     warnings = validate_post_payload(payload)
@@ -653,6 +657,69 @@ def sync_meta_web_link(noticia: dict, response_data: dict | None, base_url: str)
     return public_url
 
 
+def _build_editorial_context_bundle(noticia: dict) -> dict | None:
+    """Arma el EditorialContextBundle (Parte 34) antes de la redacción.
+
+    Nunca bloquea la publicación: ``build_context_bundle`` ya degrada a
+    ``NONE`` sola ante cualquier falla interna (Parte 60). Devuelve ``None``
+    si no hay nada útil, para no ensuciar ``noticia`` sin necesidad.
+    """
+    try:
+        paragraphs = get_original_paragraphs(noticia)
+        excerpt = paragraphs[0] if paragraphs else ""
+        bundle = build_context_bundle(
+            article_id=external_id(noticia),
+            title=str(noticia.get("titulo_original") or noticia.get("titulo") or ""),
+            excerpt=excerpt,
+            category=category_to_slug(classify(noticia)),
+            published_at=utc_now_iso(),
+        )
+    except Exception:
+        logger.exception("No se pudo construir el EditorialContextBundle; se publica sin contexto")
+        return None
+
+    if bundle.context_depth == "NONE" and not bundle.story_key:
+        return None
+    return {
+        "factual_basis_text": bundle.factual_basis_text,
+        "prompt_fragment": bundle.to_prompt_fragment(),
+        "story_key": bundle.story_key,
+        "timeline": bundle.timeline,
+        "related_articles": bundle.related_articles,
+        "context_depth": bundle.context_depth,
+        # "En contexto" en la web (Parte 38): sólo cuando NO hay timeline
+        # (bundle.archive_context_entries() ya se anula sola si hay story_key).
+        "archive_context": bundle.archive_context_entries(),
+        # sources[] del CMS (Parte 62): sólo fuentes oficiales que realmente
+        # aportaron un dato, nunca las consultadas sin resultado.
+        "official_sources": bundle.official_sources_used(),
+    }
+
+
+def _record_archive_article(noticia: dict, payload: dict, public_url: str, *, story_key: str = "") -> None:
+    """Ingesta en tiempo real del artículo publicado en el Archive Context
+    Engine (Parte 6: "cómo llenar el archivo hacia adelante"). Best-effort:
+    nunca puede romper una publicación ya confirmada."""
+    try:
+        ec_archive_index.upsert_article(
+            ec_archive_index.ArchiveArticle(
+                article_id=external_id(noticia),
+                canonical_url=public_url,
+                title=payload.get("title") or "",
+                excerpt=payload.get("excerpt") or "",
+                category=payload.get("categorySlug") or "",
+                published_at=payload.get("publishedAt") or "",
+                tags=list(payload.get("tags") or []),
+                topic_key=str(noticia.get("topic_key") or ""),
+                story_key=story_key,
+                content_summary=payload.get("excerpt") or "",
+                source_kind="own_archive",
+            )
+        )
+    except Exception:
+        logger.exception("No se pudo indexar el artículo publicado en el archivo; no afecta la publicación")
+
+
 def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> dict:
     """
     Publica una noticia en la WebApp y devuelve el detalle completo del resultado.
@@ -680,7 +747,11 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
         "next_retry_at": None,
     }
 
-    editorial = prepare_editorial(noticia)
+    context_bundle = _build_editorial_context_bundle(noticia)
+    noticia_for_editorial = (
+        {**noticia, "_editorial_context_bundle": context_bundle} if context_bundle else noticia
+    )
+    editorial = prepare_editorial(noticia_for_editorial)
     fallback_decision = evaluate_web_fallback(
         noticia,
         editorial.fallback_used,
@@ -729,6 +800,9 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
             noticia, editorial, media,
             is_breaking=is_breaking,
             is_featured=is_featured,
+            story_key=str((context_bundle or {}).get("story_key") or ""),
+            archive_context=(context_bundle or {}).get("archive_context") or None,
+            official_sources=(context_bundle or {}).get("official_sources") or None,
         )
     except ValueError as exc:
         logger.error("No se publica por payload invalido: %s", exc)
@@ -833,6 +907,9 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
     synced_url = sync_meta_web_link(noticia, response_data, base_url)
     public_url = synced_url or public_url
     _record_published_history(noticia, payload, public_url)
+    _record_archive_article(
+        noticia, payload, public_url, story_key=str((context_bundle or {}).get("story_key") or "")
+    )
     degradation_reasons = list(flag_errors)
     if fallback_decision.degraded:
         degradation_reasons.append(

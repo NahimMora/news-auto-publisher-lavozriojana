@@ -664,6 +664,51 @@ def cmd_restore(args) -> int:
         return 1
 
 
+def cmd_source_probe(args) -> int:
+    """Diagnóstico read-only de una fuente oficial (Parte 22). Nunca publica nada."""
+    from sources.probe import probe_source
+
+    try:
+        result = probe_source(args.source)
+    except KeyError as exc:
+        print(red(str(exc)))
+        return 1
+
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(bold(f"source-probe: {result['source']}"))
+        print(f"  reachable={result['reachable']} strategy={result['strategy']} http_status={result['http_status']}")
+        print(f"  items_found={result['items_found']} newest_item_date={result['newest_item_date']!r}")
+        print(f"  latency_ms={result['latency_ms']} parse_status={result['parse_status']}")
+        if result["warnings"]:
+            print(yellow(f"  warnings: {result['warnings']}"))
+    return 0 if result["reachable"] or result["parse_status"] == "not_modified" else 1
+
+
+def cmd_archive_index(args) -> int:
+    """Índice derivado de contexto editorial: reconstruible, nunca autoritativo."""
+    from editorial_context.archive_backfill import backfill_from_cms_api
+    from editorial_context.db import rebuild_database
+    from editorial_context.metrics import editorial_metrics_summary, source_metrics_summary
+
+    if args.action == "rebuild":
+        path = rebuild_database()
+        print(json.dumps({"status": "success", "rebuilt_at": str(path)}, ensure_ascii=False, indent=2))
+        return 0
+    if args.action == "backfill-cms":
+        report = backfill_from_cms_api(max_pages=args.max_pages)
+        print(json.dumps({"status": "success", **report.to_dict()}, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if not report.errors else 2
+
+    payload = {
+        "editorial": editorial_metrics_summary(since_hours=args.since_hours),
+        "sources": source_metrics_summary(since_days=args.since_days),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_videos(args) -> int:
     script = os.path.join(BASE_DIR, "video_reel_manager.py")
     completed = subprocess.run(
@@ -823,6 +868,25 @@ def main(argv: list[str] | None = None) -> int:
     restore_parser.add_argument("--backup", required=True)
     restore_parser.add_argument("--target", required=True, help="Nombre destino dentro de data")
 
+    source_probe_parser = sub.add_parser(
+        "source-probe", help="Diagnóstico read-only de una fuente oficial (Parte 22)"
+    )
+    source_probe_parser.add_argument("--source", required=True, help="source_id del registry")
+    source_probe_parser.add_argument("--json", action="store_true")
+
+    archive_index_parser = sub.add_parser(
+        "archive-index", help="Índice derivado de contexto editorial (SQLite, reconstruible)"
+    )
+    archive_index_sub = archive_index_parser.add_subparsers(dest="action", required=True)
+    archive_index_sub.add_parser("rebuild", help="Borra y recrea el esquema vacío (derivado, no autoritativo)")
+    backfill_cms_parser = archive_index_sub.add_parser(
+        "backfill-cms", help="Ingesta posts desde GET /api/public/posts del CMS propio"
+    )
+    backfill_cms_parser.add_argument("--max-pages", type=int, default=50, dest="max_pages")
+    stats_parser = archive_index_sub.add_parser("stats", help="Métricas editoriales y por fuente (Partes 54/55)")
+    stats_parser.add_argument("--since-hours", type=int, default=24, dest="since_hours")
+    stats_parser.add_argument("--since-days", type=int, default=7, dest="since_days")
+
     args = parser.parse_args(argv)
     commands = {
         "start": cmd_start,
@@ -842,6 +906,8 @@ def main(argv: list[str] | None = None) -> int:
         "logs": cmd_logs,
         "backup": cmd_backup,
         "restore": cmd_restore,
+        "source-probe": cmd_source_probe,
+        "archive-index": cmd_archive_index,
     }
     if args.cmd not in commands:
         parser.print_help()

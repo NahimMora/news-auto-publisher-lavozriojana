@@ -474,18 +474,20 @@ class PayloadAndApiTests(unittest.TestCase):
             og_image_url="https://media.lavozriojana.com/og/a.jpg",
         )
 
-        with patch.dict(os.environ, {"WEBAPP_DEFAULT_AUTHOR": "Redaccion La Voz Riojana"}, clear=False):
-            payload = publisher.build_post_payload(
-                noticia,
-                result,
-                media_result,
-                published_at="2026-06-30T12:00:00Z",
-            )
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+        )
 
         self.assertEqual(payload["categorySlug"], "interior")
         self.assertEqual(payload["status"], "published")
         self.assertEqual(payload["publishedAt"], "2026-06-30T12:00:00Z")
-        self.assertEqual(payload["authorName"], "Redacción Interior")
+        # No se manda authorName fijo por categoria (Parte 61 del plan de
+        # contexto editorial): el CMS resuelve el autor real (Fernando Nahim
+        # Mora) cuando no viene explicito.
+        self.assertNotIn("authorName", payload)
         self.assertIn("contentHtml", payload)
         self.assertIn("mainImage", payload)
         self.assertEqual(payload["ogImageUrl"], "https://media.lavozriojana.com/og/a.jpg")
@@ -493,6 +495,75 @@ class PayloadAndApiTests(unittest.TestCase):
         self.assertEqual(payload["sourceName"], "Tiempo Popular")
         self.assertEqual(payload["metadata"]["sourceName"], "Tiempo Popular")
         self.assertIn("externalId", payload["metadata"])
+
+    def test_build_post_payload_includes_story_key_and_archive_context_when_present(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+        archive_context = [{"postId": "1", "title": "Nota previa", "url": "https://x", "snippet": "antecedente"}]
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+            story_key="story:abc123",
+            archive_context=archive_context,
+        )
+
+        self.assertEqual(payload["storyKey"], "story:abc123")
+        self.assertEqual(payload["metadata"]["archiveContext"], archive_context)
+
+    def test_build_post_payload_includes_official_sources_when_present(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+        official_sources = [{"name": "MPF", "url": "https://mpf.gob.ar/n/1", "type": "OFICIAL"}]
+
+        payload = publisher.build_post_payload(
+            noticia,
+            result,
+            media_result,
+            published_at="2026-06-30T12:00:00Z",
+            official_sources=official_sources,
+        )
+
+        self.assertEqual(payload["sources"], official_sources)
+
+    def test_build_post_payload_omits_story_key_and_archive_context_when_absent(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        media_result = MediaResult(
+            ok=True,
+            main_image={
+                "url": "https://media.lavozriojana.com/noticias/2026/06/a.webp",
+                "width": 1200,
+                "height": 800,
+                "alt": "Alt",
+            },
+        )
+
+        payload = publisher.build_post_payload(noticia, result, media_result, published_at="2026-06-30T12:00:00Z")
+
+        self.assertNotIn("storyKey", payload)
+        self.assertNotIn("archiveContext", payload["metadata"])
+        self.assertNotIn("sources", payload)
 
     def test_build_post_payload_includes_video_field_when_present(self):
         noticia = sample_news()

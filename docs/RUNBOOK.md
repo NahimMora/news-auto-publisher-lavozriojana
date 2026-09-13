@@ -901,3 +901,58 @@ persistente midió ~2.9s/paquete, ~1s/slide individual, ver `docs/METRICS.md`).
   Remove-Item remotion\.render-server.json, remotion\.render-cache -Recurse -Force
   ```
   El siguiente render lo vuelve a levantar automáticamente con el bundle nuevo.
+
+## Editorial Context Engine y fuentes oficiales
+
+Ver `docs/EDITORIAL_CONTEXT.md`, `docs/STORY_ENGINE.md` y
+`docs/OFFICIAL_SOURCES.md` para el diseño completo. Operación día a día:
+
+```powershell
+# Diagnóstico read-only de una fuente (nunca escribe nada, ni publica)
+python cli.py source-probe --source mpf_larioja --json
+
+# Reconstruir el índice derivado desde cero (seguro: es reconstruible)
+python cli.py archive-index rebuild
+
+# Backfill desde el CMS propio (GET /api/public/posts, paginado)
+python cli.py archive-index backfill-cms --max-pages 50
+
+# Métricas editoriales y por fuente (Partes 54/55)
+python cli.py archive-index stats --since-hours 24 --since-days 7
+
+# Backfill de story_key para notas publicadas existentes (Parte 43)
+python scripts/backfill_story_index.py --report-only
+python scripts/backfill_story_index.py --apply --confirm --limit 50
+```
+
+`editorial_context/refresh_context.py` corre solo como parte del ciclo del
+supervisor (`run_24x7.py`); no hace falta invocarlo manualmente salvo para
+depurar (en ese caso, correrlo como script standalone respeta igual
+`poll_ttl` por fuente y nunca publica nada).
+
+Variables de entorno nuevas (todas opcionales, con default seguro):
+
+| Variable | Default | Efecto |
+|---|---|---|
+| `LVR_DERIVED_DIR` | `<data_dir>/derived` | ubicación del índice SQLite derivado |
+| `ARCHIVE_CONTEXT_MAX_ITEMS` | `3` | notas previas máximas citadas en el cuerpo |
+| `RELATED_ARTICLES_MAX_ITEMS` | `5` | relacionadas máximas en el bundle |
+| `TIMELINE_MAX_ITEMS` | `5` | items máximos del timeline |
+| `ARCHIVE_CONTEXT_MAX_CHARS` | `3500` | tope de caracteres de contexto propio enviado a Gemini |
+| `OFFICIAL_CONTEXT_MAX_CHARS` | `4500` | tope de caracteres de contexto oficial enviado a Gemini |
+| `OFFICIAL_SNIPPET_MAX_ITEMS` | `3` | fragmentos oficiales máximos por nota |
+
+Si el índice derivado se corrompe o hay que empezar de cero (por ejemplo,
+tras un cambio de esquema), `archive-index rebuild` es seguro: no toca
+ninguna cola JSON productiva, sólo el archivo SQLite derivado. Repoblarlo
+después con `archive-index backfill-cms` (histórico) — la ingesta en tiempo
+real (cada publicación nueva) sigue funcionando sola desde el próximo
+ciclo.
+
+**Fuentes oficiales deshabilitadas** (`config/official_sources.json`,
+`enabled=false`): no requieren ninguna acción — el `SourceSelector` las
+ignora solas. Para reactivar una (por ejemplo, si `anses`/`indec` consiguen
+un mecanismo de acceso confirmado), editar su entrada en el JSON
+(`enabled: true`, `discovery_strategy`/`fetch_strategy` correctos) y validar
+primero con `source-probe --force` (vía `probe_source`, que ya ignora
+`enabled` para diagnosticar) antes de habilitarla en el ciclo real.

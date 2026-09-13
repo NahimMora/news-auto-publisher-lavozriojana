@@ -100,6 +100,11 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
   `docs/DECISIONS.md`.
 - Mantener los estados Pending/Processing/Completed/Failed/Expired/Dead-letter y el
   journal `queue_events.json`.
+- `data/derived/editorial_context.sqlite3` (Editorial Context Engine, ver
+  `docs/EDITORIAL_CONTEXT.md`) es la única excepción a "no introducir base de
+  datos": es derivado, reconstruible (`cli.py archive-index rebuild`) y NO
+  autoritativo — nunca reemplaza ni compite con las colas JSON. No agregar más
+  estado autoritativo ahí.
 
 ## Capa editorial premium (feature/premium-editorial-layer)
 
