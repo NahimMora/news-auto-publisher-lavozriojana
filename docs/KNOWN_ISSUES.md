@@ -1101,3 +1101,33 @@
   cadena de procesos y cero tareas/registro/Startup referenciando el repo en dev.
 - Estado actual: **resuelto**. Riesgo residual: si en el futuro se vuelve a mover
   `data/` entre hosts, repetir el chequeo de PID antes de reiniciar cualquier lado.
+
+## 85. `meta/run_fb.py` se cuelga y termina en `step_timeout` (10 min) de forma intermitente
+
+- ID: observado durante el despliegue del Editorial Context Engine/Story Engine
+  (commit `414d281`, 2026-09-13); severidad media, preexistente.
+- Reproducción: en el ciclo #447 (post-deploy, 21:03) `run_fb.py` publicó varias
+  notas reales (`logs/fb_client.log` con posts exitosos hasta las 21:17) y después
+  quedó colgado en alguna, cortando por el `step_timeout` de 10 minutos con
+  `status=failed exit=1 0/0`. El mismo patrón ya había aparecido en los ciclos #445
+  (18:03) y #446 (19:37), **ambos antes** del deploy de esa tarde — descarta que lo
+  haya introducido el Editorial Context Engine. `logs/run_fb.log` muestra además una
+  racha larga de HTTP 429 de Facebook (rate limit / preview rechazado) desde el
+  2026-09-01.
+- Causa raíz: no identificada todavía. Hipótesis abiertas sin confirmar: (a) algún
+  post puntual dispara un colgado real en el cliente/SDK de Facebook (llamada que
+  nunca vuelve, no un simple rate limit), o (b) el rate limit 429 deja al proceso
+  reintentando/esperando sin backoff suficiente y sin cortar antes del timeout de
+  la etapa.
+- Mitigación actual: ninguna nueva; el `step_timeout` existente corta el proceso
+  colgado igual, así que no bloquea el ciclo siguiente ni deja el supervisor
+  colgado — Facebook queda `degraded` (publica parcialmente) en vez de bloqueado
+  con kill switch caído.
+- Estado actual: **abierto, no reproducido en aislamiento**. Pendiente: diagnosticar
+  qué post puntual cuelga el script (revisar `logs/fb_client.log` alrededor de cada
+  corte para identificar un patrón común) y evaluar subir `step_timeout` de esa
+  etapa específica o agregar timeout/backoff explícito dentro de `run_fb.py` en vez
+  de depender sólo del corte externo de 10 minutos.
+- Riesgo residual: mientras no se diagnostique, cada corte por timeout deja
+  publicaciones de Facebook pendientes de ese ciclo para el siguiente (o para
+  reconciliación manual), sin pérdida de datos pero con demora.

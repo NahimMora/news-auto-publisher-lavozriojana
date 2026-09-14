@@ -163,6 +163,31 @@ default de `AUTOMATIC_STATIC_RENDER_ENGINE`, que toca el pipeline de publicació
 - [ ] Mantener fixtures frente a cambios de HTML.
 - [ ] Validar filesystem si el estado se mueve a un share de red.
 - [ ] Documentar un staging externo si se crea.
+- [ ] Diagnosticar y corregir el colgado intermitente de `meta/run_fb.py` que corta
+  por `step_timeout` (10 min) — ver Known Issue #85. No es nuevo ni lo introdujo el
+  Editorial Context Engine, pero sigue sin causa raíz confirmada.
+
+## Mejora futura — extender el Editorial Context Engine a redes sociales
+
+Hoy `editorial_context/bundle.py::build_context_bundle` sólo alimenta
+`editorial.py`/`publisher.py` (el cuerpo del artículo web y, como efecto
+secundario del mismo llamado a Gemini, `social_title`/`social_description` —
+es decir, `ogTitle`/`ogDescription` del CMS). El copy real que arma
+`pipeline/custom_post.py` para Instagram/Facebook (captions, hashtags, texto de
+los reels Remotion) **no consume el bundle de contexto** — es un pipeline
+separado que no sabe nada del archivo histórico ni del Story Engine.
+
+- [ ] Evaluar pasarle al generador de captions de redes (`pipeline/custom_post.py`)
+  el mismo `EditorialContextBundle` (o un subconjunto: `story_key`/timeline,
+  `archive_context` resumido) para que un posteo de seguimiento de una historia en
+  curso pueda referenciar el ángulo/antecedente ya cubierto en vez de repetir el
+  mismo enfoque que el posteo anterior sobre el mismo hecho.
+  - Costo: cero llamadas de IA nuevas si se reusa el mismo bundle ya calculado
+    para la nota web (que corre antes, en `publisher.py`); sólo hay que propagarlo
+    al momento de armar el caption/reel, no recalcularlo.
+  - Riesgo a evitar: no inventar contexto sin evidencia en redes tampoco — mismo
+    principio que ya rige para la web (`docs/EDITORIAL_CONTEXT.md`, "Fallbacks").
+  - No implementado todavía; sin fecha ni owner asignado.
 
 ## Riesgos aceptados o fuera de alcance
 
