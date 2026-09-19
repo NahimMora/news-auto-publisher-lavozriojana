@@ -169,6 +169,28 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
 - La propuesta de tag es `v1.0.0-reliability-baseline`; no crearla antes del merge
   aprobado.
 
+## Segundo Cerebro (gestión de conocimiento personal)
+
+Este repo está trackeado por el "Segundo Cerebro" personal
+(`AutoPublicadores/2doCerebro`, https://ops.moraapps.com) bajo el proyecto
+`LVR` (La Voz Riojana), módulo `autopublicador`.
+
+- Si el usuario pregunta algo del estilo "qué bugs/ideas/incidentes anoté
+  acá", consultar antes de responder, no asumir que no hay nada pendiente:
+  `POST /api/shortcuts` con `{"action":"list_items","projectCode":"LVR","moduleSlug":"autopublicador"}`,
+  header `Authorization: Bearer $SEGUNDO_CEREBRO_TOKEN`.
+- Resolver algo ya anotado ahí (id visible en la respuesta anterior o
+  dicho por el usuario, formato `LVR-BUG-0007`) → marcarlo resuelto con
+  `{"action":"resolve_item","publicId":"LVR-BUG-0007"}` y referenciarlo en
+  el commit.
+- Bug real que no se va a arreglar ahora, o idea/mejora para más adelante
+  → capturarlo en vez de perderlo en la conversación, con
+  `{"action":"capture","content":"...","mode":"interpret","projectCode":"LVR","moduleSlug":"autopublicador"}`.
+- `SEGUNDO_CEREBRO_TOKEN` vive en `.env` (gitignored). Nunca commitear ni
+  imprimir su valor — mismo criterio que el resto de los secrets de este
+  repo (ver "Seguridad" arriba). Si no está seteado, avisar que la
+  integración no está disponible en vez de fallar en silencio.
+
 ## Perfil activo del host (desde 2026-07-27)
 
 - El arranque operativo se hace con `scripts/start_24x7_production.ps1`; no relajar el
