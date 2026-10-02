@@ -24,6 +24,7 @@ from utils.editorial_priority import normalize_category
 from utils.file_manager import JsonStateError, load_json, save_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
+from utils.kpis import record_followers_snapshot, record_media_insights
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 
 logger = setup_logger("ig_insights", "ig_insights.log")
@@ -75,6 +76,47 @@ def _fetch_insights(media_id: str) -> dict | None:
     return values or None
 
 
+def _followers_count(url: str, token: str) -> int | None:
+    if not token:
+        return None
+    try:
+        response = requests.get(url, params={"fields": "followers_count", "access_token": token}, timeout=REQUEST_TIMEOUT)
+        value = response.json().get("followers_count") if response.status_code == 200 else None
+    except (requests.RequestException, ValueError) as exc:
+        logger.info("KPIs: no se pudo leer seguidores: %s", type(exc).__name__)
+        return None
+    return int(value) if isinstance(value, (int, float)) else None
+
+
+def _facebook_followers() -> int | None:
+    from meta.fb_client import GRAPH_API as FB_GRAPH_API, PAGE_ID
+    from meta.facebook_token_manager import get_page_token
+
+    if not PAGE_ID or PAGE_ID == "PENDIENTE":
+        return None
+    try:
+        token = get_page_token()
+    except (ValueError, OSError):
+        return None
+    return _followers_count(f"{FB_GRAPH_API}/{PAGE_ID}", token)
+
+
+def _record_kpis(entries: list[dict]) -> None:
+    """Mediciones semanales (LVR-NOTE-0001): nunca cambian el resultado de la etapa."""
+    try:
+        record_media_insights(entries)
+        record_followers_snapshot(
+            {
+                "instagram": lambda: _followers_count(f"{GRAPH_API}/{IG_ACCOUNT_ID}", IG_ACCESS_TOKEN),
+                "facebook": _facebook_followers,
+            }
+        )
+    except JsonStateError as exc:
+        logger.warning("KPIs: no se pudo guardar el estado de mediciones: %s", exc)
+    except Exception:  # noqa: BLE001 - medir nunca puede romper la etapa
+        logger.exception("KPIs: falla inesperada registrando mediciones")
+
+
 def _engagement_rate(bucket: dict) -> float | None:
     reach_sum = bucket.get("reach_sum") or 0
     if reach_sum <= 0:
@@ -121,6 +163,7 @@ def main() -> StageResult:
     category_sums: dict[str, dict[str, float]] = {}
     overall = {"reach_sum": 0.0, "interactions_sum": 0.0, "sample_size": 0}
     succeeded = failed = 0
+    kpi_entries: list[dict] = []
 
     for item in items:
         media_id = str(item.get("external_id") or "")
@@ -132,6 +175,15 @@ def main() -> StageResult:
             failed += 1
             continue
         succeeded += 1
+        kpi_entries.append(
+            {
+                "media_id": media_id,
+                "posted_at": item.get("posted_at"),
+                "seccion": category,
+                "reach": reach,
+                "interactions": interactions,
+            }
+        )
         bucket = category_sums.setdefault(
             category, {"reach_sum": 0.0, "interactions_sum": 0.0, "sample_size": 0}
         )
@@ -165,6 +217,7 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
         )
 
+    _record_kpis(kpi_entries)
     logger.info(
         "Insights actualizados: %s posts consultados, %s ok, %s fallidos, %s categorías",
         len(items), succeeded, failed, len(categories_out),

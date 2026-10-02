@@ -3,6 +3,32 @@
 Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
 Registry; el resto del documento describe el estado previo y sigue vigente).
 
+## Integración del backlog del Segundo Cerebro (2026-10-01)
+
+- LVR-BUG-0001: contexto oficial acotado (54 % → 2 % de notas en replay).
+- LVR-IMPROVEMENT-0001: caption de IG/FB desde la versión editorial web
+  (`IG_CAPTION_FROM_WEB_ENABLED=true` en producción).
+- LVR-IMPROVEMENT-0003: OG en dos columnas con titular de Instagram; re-scrape con
+  diagnóstico real (rechazo por configuración de la app de Meta, `KNOWN_ISSUES` 88).
+- LVR-NOTE-0001: KPIs semanales (`cli.py kpis`).
+- LVR-IDEA-0001 (historias): postergada por el operador.
+- Notas con video: Instagram publica sólo el Reel (sin carrusel + reel).
+- Videos de X del backend HolaSalta: etapa `run_x_videos` publica sólo Reel (IG/FB).
+- Todo en la rama `fix/social-queue-bootstrap-loop`, sin desplegar; el supervisor
+  sigue detenido hasta la Fase 0 (merge + reinicio).
+
+## Reset social y corrección del bucle de la cola social (2026-10-01)
+
+- Facebook/Instagram no publicaban desde el 20/09 y 24/09 por `LVR-085` (bucle de
+  reactivación + bootstrap con una escritura completa por noticia).
+- Rama `fix/social-queue-bootstrap-loop` (sin merge): `enqueue_many`, corte de
+  antigüedad del bootstrap, `record_queue_events` y `queue-cutover --social-reset`.
+- Aplicado en producción con el supervisor detenido y backup previo: cola social sin
+  pendientes (`cutoff_ts=1790829319`, fijado en el script de arranque), `.tmp`
+  huérfanos eliminados. Web, `noticias_meta.json` y la UI manual no se tocaron.
+- La tarea `LaVozRiojana-24x7` quedó **deshabilitada** hasta la decisión de reinicio.
+- Abierto: 429 del prewarm de Facebook (`LVR-086`).
+
 ## Editorial Context Engine, Story Engine y Source Registry (rama `feature/editorial-context-story-engine`, no mergeada, 2026-09-10)
 
 Nueva capa aditiva que enriquece la redacción editorial existente con

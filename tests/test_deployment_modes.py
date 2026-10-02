@@ -125,7 +125,7 @@ class DeploymentModeTests(unittest.TestCase):
         self.assertEqual(2, run_step.call_count)
         children = result.details["children"]
         self.assertEqual(
-            ["scraping_rewrite", "scraping_rewrite", "web", "facebook", "instagram", "instagram"],
+            ["scraping_rewrite", "scraping_rewrite", "web", "facebook", "instagram", "instagram", "instagram"],
             [item["stage"] for item in children],
         )
         self.assertTrue(all(item["status"] == "no_work" for item in children))

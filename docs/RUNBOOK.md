@@ -556,6 +556,20 @@ aplicación conserva las 20 identidades más recientes usando `web_queued_at` y
 ausente bloquea toda la operación. “Excluido de la línea de base” no equivale a
 “publicado”: sin ID o URL externa nunca se crea esa evidencia.
 
+## Reset de la cola social (sólo Facebook/Instagram)
+
+No toca Web ni `noticias_meta.json`. Con el supervisor detenido:
+
+```powershell
+python cli.py queue-cutover --social-reset --report-only --json
+python cli.py backup
+python cli.py queue-cutover --social-reset --apply --json
+```
+
+Copiar el `cutoff_ts` devuelto a `SOCIAL_BOOTSTRAP_NOT_BEFORE_TS` en
+`scripts/start_24x7_production.ps1`; sin eso, el bootstrap puede volver a encolar
+noticias recientes anteriores al reset. Excluir no equivale a publicar.
+
 ## Feedback editorial y sexto intento
 
 Cada revisión envía a OpenAI los warnings exactos, instrucciones por tipo y el

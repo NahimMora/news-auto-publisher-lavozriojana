@@ -25,9 +25,11 @@ from utils.logging_setup import setup_logger
 from utils.paths import data_dir
 from utils.social_queue import (
     claim,
+    bootstrap_not_before,
     compact_queue,
-    enqueue,
+    enqueue_many,
     get_pending,
+    is_too_old_for_bootstrap,
     item_identity,
     mark_dead_letter,
     mark_done,
@@ -74,6 +76,40 @@ def _matches_manual_automatic(noticia: dict, identities: set[str]) -> bool:
     )
 
 
+def _promoted_at(candidate: dict) -> int:
+    """Última promoción manual candidate -> automatic (epoch, 0 si no hay)."""
+    latest = 0
+    for change in candidate.get("manual_override_history") or []:
+        if not isinstance(change, dict) or change.get("to") != "automatic":
+            continue
+        try:
+            latest = max(latest, int(change.get("ts") or 0))
+        except (TypeError, ValueError):
+            continue
+    return latest
+
+
+def _publish_paparazzi(noticia: dict):
+    """Nota con video: un único Reel. Sin video utilizable: imagen sola.
+
+    Ya no se publica carrusel portada+video más un reel aparte (dos
+    publicaciones de la misma nota en Instagram).
+    """
+    from utils.paparazzi_reels import publish_paparazzi_reel_as_instagram_post
+
+    if noticia.get("video_url"):
+        operation = publish_paparazzi_reel_as_instagram_post(noticia)
+        if operation is not None:
+            return operation
+        logger.info("Sin reel utilizable para la nota de paparazzi; se publica la imagen sola")
+    image_only = {
+        key: value
+        for key, value in noticia.items()
+        if key not in ("video_url", "video_duration_seconds", "media_type")
+    }
+    return post_paparazzi_carousel_to_instagram(image_only)
+
+
 def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
     noticias = load_json(META_INPUT, [], expected_type=list)
     included = 0
@@ -82,7 +118,15 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
     included_by_manual_override = 0
     manual_override_without_web_url = 0
     restored_from_candidate_store = 0
-    manual_candidates = manual_automatic_candidates(channel="instagram")
+    too_old = 0
+    batch: list[dict] = []
+    not_before = bootstrap_not_before()
+    manual_candidates = [
+        candidate
+        for candidate in manual_automatic_candidates(channel="instagram")
+        # Una promoción anterior al corte operativo de colas no se drena sola.
+        if not not_before or _promoted_at(candidate) >= not_before
+    ]
     manual_by_identity = {
         str(candidate.get("identity") or "").strip(): candidate
         for candidate in manual_candidates
@@ -114,7 +158,11 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
         if not manual_override and _is_suppressed(noticia):
             omitted_by_policy += 1
             continue
-        enqueue(noticia, platform="instagram")
+        if not manual_override and is_too_old_for_bootstrap(noticia):
+            omitted_by_policy += 1
+            too_old += 1
+            continue
+        batch.append(noticia)
         included += 1
         if manual_override:
             manual_override_budget -= 1
@@ -147,7 +195,7 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
         has_web_url = bool(
             str(restored.get("web_url") or restored.get("noticia_url") or "").strip()
         )
-        enqueue(restored, platform="instagram")
+        batch.append(restored)
         included += 1
         manual_override_budget -= 1
         included_by_manual_override += 1
@@ -159,6 +207,10 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
             "presente" if has_web_url else "ausente",
             str(restored.get("dedup_key") or restored.get("titulo") or "")[:120],
         )
+    if batch:
+        enqueue_many(batch, platform="instagram")
+    if too_old:
+        logger.info("Bootstrap Instagram: %s noticias omitidas por antigüedad", too_old)
     return (
         included,
         omitted_by_policy,
@@ -266,7 +318,7 @@ def main() -> StageResult:
             continue
         is_paparazzi = item_source(noticia).startswith(IG_PAPARAZZI_SOURCE_PREFIX)
         if is_paparazzi:
-            operation = post_paparazzi_carousel_to_instagram(noticia)
+            operation = _publish_paparazzi(noticia)
         else:
             operation = post_to_instagram_detailed(noticia)
         processed += 1
@@ -281,17 +333,6 @@ def main() -> StageResult:
                 },
             )
             succeeded += 1
-            if is_paparazzi:
-                # Best-effort: nunca debe afectar el resultado del carrusel ya
-                # publicado. Ver utils/paparazzi_reels.py — idempotencia propia.
-                try:
-                    from utils.paparazzi_reels import publish_paparazzi_reel
-
-                    publish_paparazzi_reel(noticia)
-                except Exception:
-                    logger.exception(
-                        "Fallo inesperado generando el reel de paparazzi (no afecta el carrusel)"
-                    )
             continue
 
         error_type = operation.error_type

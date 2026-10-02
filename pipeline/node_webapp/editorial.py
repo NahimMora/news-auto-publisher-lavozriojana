@@ -953,7 +953,10 @@ cuando corresponda (por ejemplo "segun informo la Policia..." o "en junio se
 habia anunciado..."). La noticia actual siempre es el centro: nunca empieces
 la nota por el antecedente ni conviertas la nota en un resumen historico. Si
 "archive_context"/"official_context" no aportan nada util a este hecho
-puntual, ignoralos por completo. "enrichment_hints" (si viene) son datos
+puntual, ignoralos por completo. Nunca agregues menciones a organismos,
+ministerios o al gobierno provincial que no figuren en la noticia original:
+"official_context" solo se usa si habla del mismo hecho o del mismo organismo
+que ya aparece en la noticia. "enrichment_hints" (si viene) son datos
 puntuales ya verificados (cifras, proximos pasos): podes citarlos tal cual
 estan si suman, nunca los reformules inventando numeros nuevos. No repitas
 subtitulos tecnicos como "CONTEXTO"/"IMPACTO"/"DATOS": si agregas una seccion

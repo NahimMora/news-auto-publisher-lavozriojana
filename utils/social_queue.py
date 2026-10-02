@@ -10,7 +10,7 @@ from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import duplicate_reason
 from utils.paths import data_dir
-from utils.queue_events import record_queue_event
+from utils.queue_events import record_queue_event, record_queue_events
 from utils.url_normalization import url_hash
 
 logger = setup_logger("social_queue", "social_queue.log")
@@ -90,56 +90,134 @@ def _is_similar_to_existing(titulo: str, queue: list[dict]) -> bool:
     ) is not None
 
 
-def enqueue(noticia: dict, platform: Platform | None = None) -> None:
-    """Agrega o activa atómicamente una noticia para las plataformas pedidas."""
-    incoming = dict(noticia)
-    url = incoming.get("canonical_url") or incoming.get("url") or ""
-    incoming["dedup_key"] = incoming.get("dedup_key") or f"link:{url_hash(url)}"
-    incoming_keys = _item_keys(incoming)
-    outcome = {"action": "unchanged"}
+def _can_reactivate(item: dict, platform: Platform) -> bool:
+    """Sólo una exclusión editorial reversible vuelve a pending.
+
+    ``expired``, ``completed``, ``dead_letter`` y ``processing`` nunca se
+    reactivan: reactivar ``expired`` generaba un bucle (el TTL la vencía y el
+    bootstrap la reactivaba en cada corrida). Una exclusión hecha por un corte
+    de operador (motivo ``operator_*``) tampoco se revierte sola.
+    """
+    if platform_state(item, platform) != "excluded":
+        return False
+    reason = str(item.get(f"{platform}_reason") or "")
+    return not reason.startswith("operator_")
+
+
+def bootstrap_not_before() -> int:
+    """Corte operativo (epoch) bajo el cual ninguna noticia entra nueva a la cola social."""
+    raw = str(os.getenv("SOCIAL_BOOTSTRAP_NOT_BEFORE_TS") or "").strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        logger.warning("SOCIAL_BOOTSTRAP_NOT_BEFORE_TS inválido (%r); se ignora", raw)
+        return 0
+
+
+def is_too_old_for_bootstrap(noticia: dict, *, now: float | None = None) -> bool:
+    """True si la noticia es anterior al corte operativo o al TTL social.
+
+    Evita que una noticia vieja de ``noticias_meta.json`` vuelva a entrar como
+    nueva (con ``social_queued_at`` fresco) después de compactar la cola. Sin
+    timestamp durable no se infiere antigüedad.
+    """
+    try:
+        queued_at = int(noticia.get("queued_at") or 0)
+    except (TypeError, ValueError):
+        queued_at = 0
+    if queued_at <= 0:
+        return False
+    current = time.time() if now is None else now
+    if queued_at < bootstrap_not_before():
+        return True
+    return queued_at < current - SOCIAL_TTL_HOURS * 3600
+
+
+def enqueue_many(noticias: list[dict], platform: Platform | None = None) -> dict[str, int]:
+    """Agrega o activa un lote de noticias con una sola escritura atómica.
+
+    El bootstrap de Facebook/Instagram recorre cientos de noticias por corrida:
+    una escritura completa de la cola por noticia excedía el timeout de la etapa.
+    """
+    incoming_items: list[dict] = []
+    for noticia in noticias:
+        incoming = dict(noticia)
+        url = incoming.get("canonical_url") or incoming.get("url") or ""
+        incoming["dedup_key"] = incoming.get("dedup_key") or f"link:{url_hash(url)}"
+        incoming_items.append(incoming)
+
+    counts = {
+        "enqueued": 0,
+        "reactivated": 0,
+        "duplicate": 0,
+        "already_completed": 0,
+        "unchanged": 0,
+    }
+    actions: list[tuple[str, dict]] = []
+    if not incoming_items:
+        return counts
 
     def mutate(queue):
         if not isinstance(queue, list):
             raise ValueError("La cola social debe ser una lista")
+        actions.clear()
+        index: dict[str, dict] = {}
         for item in queue:
-            if not isinstance(item, dict) or not (_item_keys(item) & incoming_keys):
+            if isinstance(item, dict):
+                for key in _item_keys(item):
+                    index.setdefault(key, item)
+
+        for incoming in incoming_items:
+            incoming_keys = _item_keys(incoming)
+            existing = next((index[key] for key in sorted(incoming_keys) if key in index), None)
+            if existing is not None:
+                action = "unchanged"
+                if platform:
+                    state = platform_state(existing, platform)
+                    if state == "completed":
+                        action = "already_completed"
+                    elif _can_reactivate(existing, platform):
+                        _set_platform_state(existing, platform, "pending")
+                        action = "reactivated"
+                actions.append((action, incoming))
                 continue
-            if platform:
-                state = platform_state(item, platform)
-                if state == "completed" and item.get(f"{platform}_done_at"):
-                    outcome["action"] = "already_completed"
-                    return queue
-                if state not in {"processing", "dead_letter"}:
-                    _set_platform_state(item, platform, "pending")
-                    outcome["action"] = "reactivated"
-            return queue
 
-        if _is_similar_to_existing(str(incoming.get("titulo") or ""), queue):
-            outcome["action"] = "duplicate"
-            return queue
+            if _is_similar_to_existing(str(incoming.get("titulo") or ""), queue):
+                actions.append(("duplicate", incoming))
+                continue
 
-        item = dict(incoming)
-        item["social_queued_at"] = int(time.time())
-        platforms = ("facebook", "instagram")
-        for current in platforms:
-            enabled = platform is None or platform == current
-            _set_platform_state(item, current, "pending" if enabled else "excluded")
-        queue.append(item)
-        outcome["action"] = "enqueued"
+            item = dict(incoming)
+            item["social_queued_at"] = int(time.time())
+            for current in ("facebook", "instagram"):
+                enabled = platform is None or platform == current
+                _set_platform_state(item, current, "pending" if enabled else "excluded")
+            queue.append(item)
+            for key in _item_keys(item):
+                index.setdefault(key, item)
+            actions.append(("enqueued", incoming))
         return queue
 
     update_json(QUEUE_PATH, mutate, [], expected_type=list)
-    action = outcome["action"]
-    if action == "duplicate":
-        record_queue_event(
-            stage="social",
-            status="completed",
-            reason="duplicate_pending",
-            item=incoming,
-        )
-        logger.info("Descartado por similitud: %s", str(incoming.get("titulo") or "")[:60])
-    elif action in {"enqueued", "reactivated"}:
-        logger.info("%s: %s", action, str(incoming.get("titulo") or "")[:60])
+    for action, incoming in actions:
+        counts[action] += 1
+        if action == "duplicate":
+            record_queue_event(
+                stage="social",
+                status="completed",
+                reason="duplicate_pending",
+                item=incoming,
+            )
+            logger.info("Descartado por similitud: %s", str(incoming.get("titulo") or "")[:60])
+        elif action in {"enqueued", "reactivated"}:
+            logger.info("%s: %s", action, str(incoming.get("titulo") or "")[:60])
+    return counts
+
+
+def enqueue(noticia: dict, platform: Platform | None = None) -> None:
+    """Agrega o activa atómicamente una noticia para las plataformas pedidas."""
+    enqueue_many([noticia], platform)
 
 
 def _expire_pending(platform: Platform) -> tuple[list[dict], int]:
@@ -157,14 +235,18 @@ def _expire_pending(platform: Platform) -> tuple[list[dict], int]:
         return queue
 
     update_json(QUEUE_PATH, mutate, [], expected_type=list)
-    for item in expired_items:
-        record_queue_event(
-            stage=platform,
-            status="expired",
-            reason="social_ttl_exceeded",
-            item=item,
-            metadata={"ttl_hours": SOCIAL_TTL_HOURS},
-        )
+    record_queue_events(
+        [
+            {
+                "stage": platform,
+                "status": "expired",
+                "reason": "social_ttl_exceeded",
+                "item": item,
+                "metadata": {"ttl_hours": SOCIAL_TTL_HOURS},
+            }
+            for item in expired_items
+        ]
+    )
     return _load_queue(), len(expired_items)
 
 
@@ -313,13 +395,17 @@ def recover_ambiguous_processing(platform: Platform) -> int:
         return queue
 
     update_json(QUEUE_PATH, mutate, [], expected_type=list)
-    for item in recovered:
-        record_queue_event(
-            stage=platform,
-            status="dead_letter",
-            reason="ambiguous_after_restart_requires_reconciliation",
-            item=item,
-        )
+    record_queue_events(
+        [
+            {
+                "stage": platform,
+                "status": "dead_letter",
+                "reason": "ambiguous_after_restart_requires_reconciliation",
+                "item": item,
+            }
+            for item in recovered
+        ]
+    )
     return len(recovered)
 
 

@@ -99,6 +99,7 @@ META_FIELDS = (
     "web_published_at",
     "web_slug",
     "web_post_id",
+    "web_editorial",
     "selected_for_publish",
     "publish_batch_id",
     "publish_batch_at",
@@ -106,7 +107,8 @@ META_FIELDS = (
 )
 
 WEB_EXCLUDE_FIELDS = {
-    "titulo_instagram",
+    # ``titulo_instagram`` se conserva en la cola web: es el titular de la
+    # imagen OG de Facebook (LVR-IMPROVEMENT-0003).
     "texto_instagram",
     "cta",
     "dedup_key",

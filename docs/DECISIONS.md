@@ -2017,3 +2017,65 @@ HIGH/CRITICAL del plan (notablemente ANSES e INDEC, relevantes para economía). 
 **Revisar nuevamente cuando**: alguien confirme manualmente (o con un fetch real
 con headers de navegador, no sólo el usado en este relevamiento) un mecanismo
 estable para alguna de estas fuentes.
+
+### 2026-10-01 — Reset de cola social por operador y corte durable del bootstrap
+
+**Contexto**: el bucle `LVR-085` dejó 1.724 pendientes de Facebook con más de 48 h y
+50 promociones manuales de Instagram de julio/agosto drenándose de a 3 por corrida.
+`queue-cutover --keep-latest` también archiva la cola Web, que no estaba afectada, y
+`noticias_meta.json` lo usan además la selección del lote Web y el router editorial.
+
+**Decisión**: `queue-cutover --social-reset` sólo modifica
+`noticias_sociales_pendientes.json`: estados no terminales a `excluded`
+(`operator_social_reset`), `processing` a `dead_letter`, sin tocar `completed`,
+`expired` ni `dead_letter`. Registra un evento resumen por plataforma (no miles con
+payload, que desplazarían historial por la retención del journal); el estado
+completo queda en el backup previo. `SOCIAL_BOOTSTRAP_NOT_BEFORE_TS` (vacío =
+apagado) impide reencolar noticias o promociones manuales anteriores al corte. Una
+exclusión `operator_*` nunca se revierte sola.
+
+**Revisar nuevamente cuando**: se quiera republicar a mano algo anterior al corte
+(hoy requiere una decisión explícita y una herramienta propia).
+
+### 2026-10-01 — Caption de redes desde la versión web, OG en dos columnas y KPIs
+
+- **Caption (LVR-IMPROVEMENT-0001)**: al publicar en la web se guarda
+  `web_editorial` (título, bajada, lead, `social_*`, hasta 4 puntos clave) en
+  `noticias_meta.json` y la cola social, sólo para notas nuevas (sin migración: el
+  campo es opcional y se conserva en `META_FIELDS`). Con
+  `IG_CAPTION_FROM_WEB_ENABLED=true` el caption de IG/FB se arma con esos datos de
+  forma determinística —sin llamadas extra a IA— y cae al caption anterior si
+  faltan. Producción lo activa desde el script de arranque.
+- **OG (LVR-IMPROVEMENT-0003)**: `FacebookOgCard` pasa a dos columnas (foto a alto
+  completo con `cover` centrado, sin recorte inteligente; titular a la derecha). El
+  titular es `titulo_instagram` (ya generado, se conserva en la cola web), la OG
+  parte de la imagen original y no de la WEBP recomprimida, JPEG 95 sin
+  submuestreo. Sin flag, por decisión del operador. El reescalado no se
+  implementó: las fuentes publican fotos de 640–1.052 px en origen y un
+  reescalado con IA requiere un binario externo y GPU (sólo Intel UHD 630).
+- **KPIs (LVR-NOTE-0001)**: `meta/ig_insights.py` guarda alcance/interacciones por
+  publicación (`ig_media_insights.json`, 120 días) y una lectura diaria de
+  seguidores IG/FB (`kpi_daily.json`, 400 días; 2 llamadas por día). `cli.py kpis`
+  resume por semana. Medir nunca cambia el resultado de la etapa.
+
+### 2026-10-01 — Notas con video: sólo Reel en Instagram; videos de X como Reel
+
+- **Instagram**: una nota de paparazzi con video ya no publica carrusel
+  portada+video seguido de un reel aparte (dos publicaciones de la misma nota).
+  `meta/run_ig.py::_publish_paparazzi` publica un único Reel
+  (`utils/paparazzi_reels.py::publish_paparazzi_reel_as_instagram_post`, mismo
+  motor EditorialReel). Sin video utilizable, imagen sola. La evidencia queda en
+  `paparazzi_reels_posted.json` e `ig_posted.json`. Facebook no cambia: video post
+  + reel (este último detrás de `PAPARAZZI_REEL_ENABLED`).
+- **Videos de X**: el backend de HolaSalta anota en
+  `C:/sources/x_video_sources.json` (sólo lectura para LVR) los links que manda a
+  procesar. La etapa `meta/run_x_videos.py` (canal instagram del supervisor) toma
+  `job_id` nuevos, deduplica también por id del post, omite los de más de
+  `X_VIDEO_MAX_AGE_HOURS` (24) y procesa hasta `X_VIDEO_MAX_PER_CYCLE` (2): texto
+  del post vía yt-dlp, caption con el mismo generador (una llamada a IA, sección fija
+  `X_VIDEO_DEFAULT_SECTION`), reel con `render_reel_item` y publicación sólo como
+  Reel en IG y FB según el plan de despliegue. Estado propio en
+  `data/x_video_reels.json` (pending/processing/completed/skipped/dead_letter); un
+  `processing` heredado pasa a `dead_letter` sin reintento ciego; 3 intentos máximo;
+  comparte con el resto sólo el backoff de rate limit de Meta.
+  `X_VIDEO_REELS_ENABLED` apagado por defecto, activo en el script de producción.

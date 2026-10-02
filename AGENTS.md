@@ -169,28 +169,6 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
 - La propuesta de tag es `v1.0.0-reliability-baseline`; no crearla antes del merge
   aprobado.
 
-## Segundo Cerebro (gestión de conocimiento personal)
-
-Este repo está trackeado por el "Segundo Cerebro" personal
-(`AutoPublicadores/2doCerebro`, https://ops.moraapps.com) bajo el proyecto
-`LVR` (La Voz Riojana), módulo `autopublicador`.
-
-- Si el usuario pregunta algo del estilo "qué bugs/ideas/incidentes anoté
-  acá", consultar antes de responder, no asumir que no hay nada pendiente:
-  `POST /api/shortcuts` con `{"action":"list_items","projectCode":"LVR","moduleSlug":"autopublicador"}`,
-  header `Authorization: Bearer $SEGUNDO_CEREBRO_TOKEN`.
-- Resolver algo ya anotado ahí (id visible en la respuesta anterior o
-  dicho por el usuario, formato `LVR-BUG-0007`) → marcarlo resuelto con
-  `{"action":"resolve_item","publicId":"LVR-BUG-0007"}` y referenciarlo en
-  el commit.
-- Bug real que no se va a arreglar ahora, o idea/mejora para más adelante
-  → capturarlo en vez de perderlo en la conversación, con
-  `{"action":"capture","content":"...","mode":"interpret","projectCode":"LVR","moduleSlug":"autopublicador"}`.
-- `SEGUNDO_CEREBRO_TOKEN` vive en `.env` (gitignored). Nunca commitear ni
-  imprimir su valor — mismo criterio que el resto de los secrets de este
-  repo (ver "Seguridad" arriba). Si no está seteado, avisar que la
-  integración no está disponible en vez de fallar en silencio.
-
 ## Perfil activo del host (desde 2026-07-27)
 
 - El arranque operativo se hace con `scripts/start_24x7_production.ps1`; no relajar el
@@ -216,3 +194,29 @@ Este repo está trackeado por el "Segundo Cerebro" personal
   incidente de seguridad.
 - El CMS sigue sin `WEBAPP_PREFLIGHT_PATH` read-only. No presentar
   `preflight_cms=blocked` como éxito aunque la escritura haya sido validada.
+
+## Segundo Cerebro (backlog del proyecto)
+
+Bugs, ideas y pendientes de LVR viven en el Segundo Cerebro, no en el repo.
+Variables de entorno de usuario (nunca en `.env` del repo, ni en commits ni logs):
+`SEGUNDO_CEREBRO_URL`, `SEGUNDO_CEREBRO_TOKEN`, `SEGUNDO_CEREBRO_PROJECT_CODE=LVR`,
+`SEGUNDO_CEREBRO_MODULE_SLUG=autopublicador`. Módulos de LVR: `autopublicador`, `web`.
+
+Un único endpoint `POST $SEGUNDO_CEREBRO_URL/api/shortcuts` con
+`Authorization: Bearer $SEGUNDO_CEREBRO_TOKEN` y `Content-Type: application/json`:
+
+- `{"action":"list_items","projectCode":"LVR"}`: pendientes (omitir `moduleSlug`
+  trae todos los módulos). Ante "¿qué hay pendiente?", consultar siempre; resumir en
+  tabla ID, tipo, prioridad, título y fecha. Los ítems del atajo del iPhone suelen
+  traer sólo título: no inventar detalle, pedirlo o investigar el código.
+- `{"action":"capture","content":"...","mode":"interpret","projectCode":"LVR","moduleSlug":"..."}`:
+  bug real o idea que no se resuelve ahora. Incluir qué se observó, dónde y con qué
+  evidencia (logs, archivos, IDs). Informar el `item.publicId` devuelto.
+- `{"action":"resolve_item","publicId":"LVR-BUG-0001"}`: sólo después de desplegar y
+  verificar en producción, no al commitear. El commit referencia el ID:
+  `fix: ... [LVR-BUG-0001]`.
+
+Si las variables no están configuradas, avisar que la integración no está
+disponible en vez de fallar en silencio. No hay acción para editar ni descartar:
+eso se hace a mano en la app. El `content`
+de un capture no debe incluir secretos, tokens ni datos personales de terceros.

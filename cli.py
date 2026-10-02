@@ -35,8 +35,10 @@ from utils.process_runner import run_stage_process
 from utils.queue_cutover import (
     apply_cutover,
     apply_latest_window,
+    apply_social_reset,
     build_cutover_report,
     build_latest_window_report,
+    build_social_reset_report,
 )
 from utils.stage_result import StageResult, StageStatus, aggregate_results
 from utils.editorial_router import report_routing
@@ -532,9 +534,37 @@ def cmd_alert_check(args) -> int:
     return result.exit_code
 
 
+def cmd_kpis(args) -> int:
+    from utils.kpis import weekly_report
+
+    try:
+        report = weekly_report(args.weeks)
+    except JsonStateError as exc:
+        print(red(f"No se pudieron leer las mediciones: {exc}"))
+        return 1
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print("Semana                 Seguidores IG     Seguidores FB     Posts IG/FB  Alcance prom. IG  Interacción IG")
+    for week in report:
+        def fmt(network):
+            data = week["followers"].get(network)
+            return f"{data['end']} ({data['delta']:+d})" if data else "sin datos"
+        ig = week["instagram"]
+        rate = f"{ig['engagement_rate'] * 100:.2f}%" if ig["engagement_rate"] is not None else "-"
+        reach = f"{ig['avg_reach']:.0f}" if ig["avg_reach"] is not None else "-"
+        print(
+            f"{week['week_start']}..{week['week_end'][5:]}  {fmt('instagram'):<16}  {fmt('facebook'):<16}  "
+            f"{week['posts']['instagram']:>3}/{week['posts']['facebook']:<3}      {reach:>8}          {rate:>7}"
+        )
+    return 0
+
+
 def cmd_queue_cutover(args) -> int:
     try:
-        if args.keep_latest is not None:
+        if args.social_reset:
+            result = apply_social_reset() if args.apply else build_social_reset_report()
+        elif args.keep_latest is not None:
             result = (
                 apply_latest_window(args.keep_latest)
                 if args.apply
@@ -783,6 +813,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     reconcile_parser.add_argument("--json", action="store_true")
 
+    kpis_parser = sub.add_parser("kpis", help="KPIs semanales de redes (seguidores, posts, alcance)")
+    kpis_parser.add_argument("--weeks", type=int, default=4)
+    kpis_parser.add_argument("--json", action="store_true")
+
     cutover_parser = sub.add_parser(
         "queue-cutover",
         help="Archiva colas anteriores a una fecha sin perder trazabilidad",
@@ -796,6 +830,11 @@ def main(argv: list[str] | None = None) -> int:
         "--keep-latest",
         type=int,
         help="Conserva las últimas N noticias según timestamp durable de cola",
+    )
+    cutover_strategy.add_argument(
+        "--social-reset",
+        action="store_true",
+        help="Deja sin pendientes la cola social (Facebook/Instagram); no toca Web",
     )
     cutover_parser.add_argument("--json", action="store_true")
 
@@ -897,6 +936,7 @@ def main(argv: list[str] | None = None) -> int:
         "preflight": cmd_preflight,
         "canary": cmd_canary,
         "reconcile-facebook": cmd_reconcile_facebook,
+        "kpis": cmd_kpis,
         "queue-cutover": cmd_queue_cutover,
         "alert-test": cmd_alert_test,
         "alert-check": cmd_alert_check,

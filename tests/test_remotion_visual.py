@@ -211,22 +211,19 @@ class PremiumSlideSchemaTests(unittest.TestCase):
         # La frase relevante usa exactamente el mismo color de acento.
         self.assertIn("highlightColor={mode.accent}", headline)
 
-    def test_og_card_headline_fits_its_own_short_panel(self):
-        # El lienzo 1200x630 es mucho más bajo: reusar el padding/escala de
-        # marca (pensados para 1080x1350) hacía que el título desbordara el
-        # panel y se superpusiera al footer. FacebookOgCard usa su propia
-        # escala tipográfica (OG_HEADLINE_SCALE) y comprime el padding.
+    def test_og_card_uses_two_columns_with_full_height_photo(self):
+        # LVR-IMPROVEMENT-0003: la v2 apilaba foto (52%) y titular en un
+        # panel bajo; el lienzo 1200x630 es horizontal, así que la foto ocupa
+        # la columna izquierda a alto completo (cover centrado, sin recorte
+        # inteligente) y el titular-gancho tiene su propia columna.
         og = _read("FacebookOgCard.tsx")
-        self.assertIn("OG_HEADLINE_SCALE", og)
-        self.assertIn("mode.pad * 0.75", og)
-        self.assertIn("overflow: \"hidden\"", og)
-        self.assertNotIn("width * 0.8", og)
-        self.assertNotIn('align="right"', og)
-        # Chrome más grande (feedback: "la sección que se vea como las de
-        # estudio premium" — antes 0.82 se veía chico).
-        self.assertIn("OG_CHROME_SCALE = 1.05", og)
-        self.assertIn("OG_MASTHEAD_H = 92", og)
-        self.assertIn("OG_FOOTER_H = 78", og)
+        self.assertIn("const PHOTO_W = 640", og)
+        self.assertIn("height: FB_OG_H", og)
+        self.assertIn('objectFit: "cover"', og)
+        self.assertIn("HEADLINE_SCALE = 0.74", og)
+        self.assertIn("maxLines={MAX_LINES}", og)
+        self.assertIn('overflow: "hidden"', og)
+        self.assertNotIn("PHOTO_H", og)
         self.assertIn('publicationStyle: z.enum(["automatic", "manual_publication"]).default("automatic")', og)
         self.assertIn('boxedSection={publicationStyle === "manual_publication"}', og)
 
