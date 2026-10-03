@@ -37,6 +37,8 @@ CYCLE_STEPS = [
     ("pipeline/publish_web.py", "web"),
     ("meta/run_fb.py", "facebook"),
     ("meta/run_ig.py", "instagram"),
+    # Videos de X del backend HolaSalta: Reel propio, estado propio.
+    ("meta/run_x_videos.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
 ]
 _STEP_TIMEOUTS = {
@@ -48,6 +50,8 @@ _STEP_TIMEOUTS = {
     # reel best-effort y los posts automáticos generales, podían superarlo y
     # perder el ciclo completo (0 procesados) por timeout del subprocess.
     "meta/run_ig.py": 1200,
+    # Hasta X_VIDEO_MAX_PER_CYCLE videos: descarga yt-dlp + render + proceso en Meta.
+    "meta/run_x_videos.py": 1200,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

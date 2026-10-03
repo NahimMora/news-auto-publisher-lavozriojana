@@ -1102,7 +1102,7 @@
 - Estado actual: **resuelto**. Riesgo residual: si en el futuro se vuelve a mover
   `data/` entre hosts, repetir el chequeo de PID antes de reiniciar cualquier lado.
 
-## 85. `meta/run_fb.py` se cuelga y termina en `step_timeout` (10 min) de forma intermitente
+## 85. `meta/run_fb.py` se cuelga y termina en `step_timeout` (10 min) de forma intermitente — CORREGIDO 2026-10-01 (ver resolución)
 
 - ID: observado durante el despliegue del Editorial Context Engine/Story Engine
   (commit `414d281`, 2026-09-13); severidad media, preexistente.
@@ -1123,7 +1123,7 @@
   colgado igual, así que no bloquea el ciclo siguiente ni deja el supervisor
   colgado — Facebook queda `degraded` (publica parcialmente) en vez de bloqueado
   con kill switch caído.
-- Estado actual: **abierto, no reproducido en aislamiento**. Pendiente: diagnosticar
+- Estado previo: **abierto, no reproducido en aislamiento**. Pendiente: diagnosticar
   qué post puntual cuelga el script (revisar `logs/fb_client.log` alrededor de cada
   corte para identificar un patrón común) y evaluar subir `step_timeout` de esa
   etapa específica o agregar timeout/backoff explícito dentro de `run_fb.py` en vez
@@ -1131,3 +1131,89 @@
 - Riesgo residual: mientras no se diagnostique, cada corte por timeout deja
   publicaciones de Facebook pendientes de ese ciclo para el siguiente (o para
   reconciliación manual), sin pérdida de datos pero con demora.
+
+### Resolución 2026-10-01: bucle de reactivación de la cola social (`LVR-085`)
+
+- ID: `LVR-085`; severidad alta operativa.
+- Síntoma: desde el 14–20/09 cada ciclo terminaba `degraded 3/6`; `run_fb` cortaba
+  por `step_timeout` (600 s) y `run_ig` fallaba con `Timeout esperando lock` o por
+  timeout (1200 s). Último FB completado 20/09, último IG 24/09. ~15.000 líneas
+  `reactivated` por día en `social_queue.log` y 133 `.tmp` huérfanos (630 MB) en
+  `data/`.
+- Causa raíz:
+  1. `social_queue.enqueue` reactivaba ítems `expired`; `_expire_pending` los volvía a
+     vencer por TTL y el bootstrap los reactivaba en la corrida siguiente.
+  2. El bootstrap de FB/IG llamaba a `enqueue` por cada noticia de
+     `noticias_meta.json` (1.744 seleccionadas, hasta 30 días) y cada llamada
+     reescribía la cola completa (8,7 MB): más de 600 s antes de publicar.
+  3. El supervisor mataba `run_fb` con el lock tomado; `run_ig` arrancaba enseguida,
+     esperaba 10 s (el lock recién se considera viejo a los 120 s) y fallaba. Cada
+     corte a mitad de escritura dejaba un `.tmp` huérfano.
+  4. `compact_queue` retira ítems terminales y el bootstrap podía volver a encolarlos
+     como nuevos (con `social_queued_at` fresco) aunque la noticia fuera vieja.
+- Corrección:
+  - `enqueue_many`: una sola escritura por lote; sólo reactiva `excluded` editorial
+    (nunca `expired`, `completed`, `dead_letter`, `processing` ni exclusiones
+    `operator_*`); `pending` queda intacto.
+  - El bootstrap omite noticias con `queued_at` fuera del TTL social o anteriores a
+    `SOCIAL_BOOTSTRAP_NOT_BEFORE_TS`; las promociones manuales de IG anteriores al
+    corte no se drenan.
+  - `record_queue_events` registra eventos de TTL/recuperación en una escritura.
+  - `cli.py queue-cutover --social-reset` deja la cola social sin pendientes sin
+    tocar Web ni `noticias_meta.json`.
+- Operación 2026-10-01: supervisor detenido, backup, `--social-reset --apply`
+  (2.577 estados a `excluded`, `cutoff_ts=1790829319`, fijado en
+  `scripts/start_24x7_production.ps1`), `.tmp` huérfanos eliminados.
+- Tests: `tests/test_social_queue_bootstrap_loop.py`.
+- Riesgo residual: el 429 del prewarm de Facebook (ver `LVR-086`).
+
+## 86. Prewarm de Facebook recibe HTTP 429 tras 3–5 posts por ciclo — MITIGADO 2026-10-01
+
+- ID: `LVR-086`; severidad media operativa.
+- Síntoma: desde el 20/08, en cada ciclo los primeros 3–5 posts pasan y el resto
+  falla en el prewarm con `link_preview_page_http_error` 429, a 1 s entre sí. Las
+  URLs que se repiten son las que quedan al final del lote, no URLs defectuosas: las
+  mismas responden 200 fuera de la ráfaga.
+- Evidencia 2026-10-01: Cloudflare delante (`cf-cache-status: DYNAMIC`,
+  `no-store`), `og:image` en `media.lavozriojana.com`; 15 GET seguidos con UA
+  `facebookexternalhit` desde el host dieron 200. La app Next del CMS no emite 429
+  en notas (sólo en contacto). El 429 coincide con la ráfaga combinada del prewarm
+  y del crawler de Meta (re-scrape + post) por cada nota. El re-scrape forzado
+  devuelve siempre `scrape_rejected`.
+- Mitigación (rama `fix/social-queue-bootstrap-loop`):
+  - El prewarm usa UA propio (`FB_LINK_PREWARM_USER_AGENT`, default
+    `LaVozRiojana-LinkCheck/1.0`) en vez de suplantar `facebookexternalhit`.
+  - Un 429 de página u `og:image` devuelve `link_preview_rate_limited` con
+    `next_retry_at` según `Retry-After` (default 600 s), corta el resto del lote, no
+    toca el backoff de Meta y loguea `Server`/`CF-RAY`/`cf-mitigated`/`Retry-After`.
+  - `FB_INTER_POST_DELAY_SECONDS` (default 0; producción 30) espacia los posts.
+- Pendiente: con los headers logueados, atribuir el 429 a Cloudflare o Hostinger y,
+  si es Cloudflare, excluir bots verificados del rate limit y cachear `/noticias/*`.
+
+## 87. Contexto oficial en casi todas las notas (LVR-BUG-0001) — CORREGIDO 2026-10-01
+
+- Síntoma: notas de cualquier origen mencionaban organismos provinciales.
+- Causa: `editorial_context/bundle.py::_gather_official_snippets` daba por
+  relevante una fuente oficial con un solo término compartido ("gobierno",
+  "provincia", "acusado") y ofrecía fuentes provinciales también a notas
+  nacionales. `bundle_events`: 548 de 1.008 notas con contexto oficial (economía
+  64/64, educación 36/37, política 129/144, policiales 162/179).
+- Corrección: fuentes `scope=provincial` sólo con señal riojana (localidad en el
+  texto o sección local de origen, `RIOJAN_SOURCE_SECTIONS`); relevancia por
+  entidad específica, localidad específica o ≥2 términos, excluyendo entidades,
+  gentilicios, vocabulario judicial/policial, meses y conectores genéricos. El
+  prompt prohíbe agregar organismos que no estén en la noticia original.
+- Evidencia: replay sólo lectura sobre 600 notas reales: 12 con contexto (2 %).
+
+## 88. Re-scrape forzado de Facebook rechazado siempre (code 100 / 1611016) — ABIERTO
+
+- Síntoma: `force_facebook_rescrape` devolvía `scrape_rejected` en todos los posts.
+- Diagnóstico 2026-10-01 (4 llamadas, sin publicar): Graph responde
+  `400 OAuthException code=100 subcode=1611016 "Invalid parameter"` también con una
+  URL ajena (wikipedia.org), con token de página y de app, en body y en query, en
+  v19 y v23. No depende del sitio ni del formato: es configuración/permiso de la app
+  de Meta.
+- Mitigación: se loguea código/subcódigo/mensaje y, ante code 100, se omite el
+  re-scrape por el resto de la corrida (antes: hasta 8 llamadas fallidas por ciclo).
+- Pendiente: revisar la app en Meta for Developers (permisos y acceso a la
+  funcionalidad de URL scraping). El Sharing Debugger manual sigue disponible.

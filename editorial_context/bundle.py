@@ -162,6 +162,31 @@ def _summarize_antecedent(article: ai.ArchiveArticle) -> str:
     return text[:ANTECEDENT_SNIPPET_MAX_CHARS]
 
 
+# Entidades que comparten casi todas las notas riojanas y no prueban que la fuente
+# oficial hable del mismo hecho (LVR-BUG-0001).
+_GENERIC_OFFICIAL_ENTITIES = {
+    "la rioja", "rioja", "gobierno", "gobierno provincial", "gobierno de la rioja",
+    "provincia", "provincia de la rioja", "nacion", "gobierno nacional", "argentina",
+    "justicia", "la justicia", "poder judicial", "policia", "legislatura", "ministerio",
+    "municipio", "municipalidad", "tribunal", "fiscalia", "camara",
+}
+# Gentilicios y la provincia no prueban que se hable del mismo lugar puntual.
+_GENERIC_OFFICIAL_LOCALITIES = {"la rioja", "rioja", "riojano", "riojana", "riojanos", "riojanas"}
+# Vocabulario que comparten todas las notas policiales/judiciales o palabras
+# vacías largas: coincidir en ellas no indica el mismo hecho.
+_GENERIC_OFFICIAL_TERMS = {
+    "entre", "contra", "desde", "hasta", "sobre", "durante", "luego", "ademas",
+    "acusado", "acusada", "delito", "delitos", "detenido", "detenida", "detuvieron",
+    "causa", "imputado", "imputada", "fiscal", "fiscalia", "sexual", "integridad",
+    "investigacion", "denuncia", "victima", "juicio", "condena", "condenado",
+    "tribunal", "camara", "justicia", "policia", "policial", "provincial", "gobierno",
+    "nacional", "registro", "avanza", "avanzan", "mejoras", "trabajo", "conjunto",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+}
+OFFICIAL_MIN_SHARED_TERMS = 2
+
+
 def _gather_official_snippets(
     *,
     category: str,
@@ -169,6 +194,7 @@ def _gather_official_snippets(
     localities: list[str],
     title: str,
     excerpt: str,
+    riojan_source: bool = False,
     path: Path | str | None = None,
 ) -> tuple[list[ContextSnippet], int]:
     """SourceSelector + caché local (Parte 24/57): nunca consulta la red acá
@@ -182,12 +208,21 @@ def _gather_official_snippets(
     sources = source_selector.select_sources(
         category=category, localities=localities, keywords_text=" ".join([title, excerpt])
     )
+    # Una nota nacional o de otra provincia no se enriquece con organismos
+    # riojanos: sólo con señal riojana (localidad o sección local de origen).
+    if not (localities or riojan_source):
+        sources = [source for source in sources if source.scope != "provincial"]
     if not sources:
         return [], 0
 
-    probe_entities_norm = {ec_entities.normalize_entity(e) for e in entities}
-    probe_terms = retrieval.significant_terms(title, excerpt, exclude=probe_entities_norm)
-    probe_localities = set(localities)
+    probe_entities_norm = {
+        ec_entities.normalize_entity(e) for e in entities
+    } - _GENERIC_OFFICIAL_ENTITIES
+    probe_terms = (
+        retrieval.significant_terms(title, excerpt, exclude=probe_entities_norm)
+        - _GENERIC_OFFICIAL_TERMS
+    )
+    probe_localities = set(localities) - _GENERIC_OFFICIAL_LOCALITIES
 
     snippets: list[ContextSnippet] = []
     for source in sources:
@@ -202,10 +237,13 @@ def _gather_official_snippets(
             item_terms = retrieval.significant_terms(item_title, item_excerpt, exclude=item_entities_norm)
             item_localities = set(ec_entities.extract_localities(item_title, item_excerpt))
 
+            # Un solo término compartido ("gobierno", "obra") colaba contexto
+            # oficial en la mayoría de las notas: se exige entidad específica,
+            # localidad específica o al menos dos términos en común.
             relevant = bool(
                 (probe_entities_norm & item_entities_norm)
-                or (probe_terms & item_terms)
-                or (probe_localities & item_localities - {"la rioja", "rioja"})
+                or len(probe_terms & item_terms) >= OFFICIAL_MIN_SHARED_TERMS
+                or (probe_localities & item_localities)
             )
             if not relevant:
                 continue
@@ -235,6 +273,7 @@ def build_context_bundle(
     published_at: str = "",
     official_snippets: list[ContextSnippet] | None = None,
     official_source_lookup_count: int = 0,
+    riojan_source: bool = False,
     path: Path | str | None = None,
 ) -> EditorialContextBundle:
     """Punto de entrada único. Nunca lanza: una falla acá degrada a NONE
@@ -253,6 +292,7 @@ def build_context_bundle(
             published_at=published_at,
             official_snippets=official_snippets,
             official_source_lookup_count=official_source_lookup_count,
+            riojan_source=riojan_source,
             path=path,
         )
     except Exception:
@@ -270,6 +310,7 @@ def _build_context_bundle(
     official_snippets: list[ContextSnippet] | None,
     official_source_lookup_count: int,
     path: Path | str | None,
+    riojan_source: bool = False,
 ) -> EditorialContextBundle:
     entities_found = ec_entities.extract_entities(title, excerpt)
     localities_found = ec_entities.extract_localities(title, excerpt)
@@ -281,6 +322,7 @@ def _build_context_bundle(
             localities=localities_found,
             title=title,
             excerpt=excerpt,
+            riojan_source=riojan_source,
             path=path,
         )
 

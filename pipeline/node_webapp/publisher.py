@@ -615,7 +615,26 @@ def public_post_url(response_data: dict | None, base_url: str) -> str:
     return ""
 
 
-def sync_meta_web_link(noticia: dict, response_data: dict | None, base_url: str) -> str:
+def _web_editorial_snapshot(editorial) -> dict:
+    """Versión editorial final de la web para reutilizar en redes sin otra llamada a IA."""
+    key_points = [str(point).strip() for point in (getattr(editorial, "key_points", None) or []) if str(point).strip()]
+    snapshot = {
+        "title": str(getattr(editorial, "title", "") or "").strip(),
+        "excerpt": str(getattr(editorial, "excerpt", "") or "").strip(),
+        "lead": str(getattr(editorial, "lead", "") or "").strip(),
+        "social_title": str(getattr(editorial, "social_title", "") or "").strip(),
+        "social_description": str(getattr(editorial, "social_description", "") or "").strip(),
+        "key_points": key_points[:4],
+    }
+    return {key: value for key, value in snapshot.items() if value}
+
+
+def sync_meta_web_link(
+    noticia: dict,
+    response_data: dict | None,
+    base_url: str,
+    editorial=None,
+) -> str:
     public_url = public_post_url(response_data, base_url)
     if not public_url:
         logger.warning("WebApp no devolvio URL/slug publico para sincronizar Meta")
@@ -633,6 +652,10 @@ def sync_meta_web_link(noticia: dict, response_data: dict | None, base_url: str)
         updates["web_slug"] = slug
     if post_id:
         updates["web_post_id"] = post_id
+    if editorial is not None:
+        snapshot = _web_editorial_snapshot(editorial)
+        if snapshot:
+            updates["web_editorial"] = snapshot
 
     key = _queue_key(noticia)
     updated_files = 0
@@ -657,6 +680,18 @@ def sync_meta_web_link(noticia: dict, response_data: dict | None, base_url: str)
     return public_url
 
 
+# Secciones de origen que por definición cubren La Rioja; el resto (política,
+# sociedad, nacionales, farándula) necesita una localidad riojana en el texto
+# para recibir contexto de organismos provinciales (LVR-BUG-0001).
+RIOJAN_SOURCE_SECTIONS = {
+    "tiempopopular_locales",
+    "tiempopopular_policiales",
+    "tiempopopular_interior",
+    "nuevarioja_policiales",
+    "nuevarioja_interior",
+}
+
+
 def _build_editorial_context_bundle(noticia: dict) -> dict | None:
     """Arma el EditorialContextBundle (Parte 34) antes de la redacción.
 
@@ -673,6 +708,7 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
             excerpt=excerpt,
             category=category_to_slug(classify(noticia)),
             published_at=utc_now_iso(),
+            riojan_source=str(noticia.get("source") or "").strip().lower() in RIOJAN_SOURCE_SECTIONS,
         )
     except Exception:
         logger.exception("No se pudo construir el EditorialContextBundle; se publica sin contexto")
@@ -904,7 +940,7 @@ def publish_one_detailed(noticia: dict, *, featured_claimed: bool = False) -> di
                 metadata={"active_flags": active_flags, "public_url": public_url},
             )
 
-    synced_url = sync_meta_web_link(noticia, response_data, base_url)
+    synced_url = sync_meta_web_link(noticia, response_data, base_url, editorial)
     public_url = synced_url or public_url
     _record_published_history(noticia, payload, public_url)
     _record_archive_article(

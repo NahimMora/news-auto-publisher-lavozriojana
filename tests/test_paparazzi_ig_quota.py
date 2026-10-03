@@ -19,7 +19,7 @@ class BootstrapQueueSelectionTests(unittest.TestCase):
     def _run_bootstrap(self, noticias):
         with patch.object(run_ig, "load_json", return_value=noticias), patch.object(
             run_ig, "manual_automatic_candidates", return_value=[]
-        ), patch.object(run_ig, "enqueue") as enqueue_mock:
+        ), patch.object(run_ig, "enqueue_many") as enqueue_mock:
             result = run_ig._bootstrap_queue()
         return result, enqueue_mock
 
@@ -70,7 +70,8 @@ class BootstrapQueueSelectionTests(unittest.TestCase):
         }
         (included, *_rest), enqueue_mock = self._run_bootstrap([paparazzi, local])
         self.assertEqual(2, included)
-        self.assertEqual(2, enqueue_mock.call_count)
+        enqueue_mock.assert_called_once()
+        self.assertEqual(2, len(enqueue_mock.call_args.args[0]))
 
 
 class ManualOverrideBudgetTests(unittest.TestCase):
@@ -92,7 +93,7 @@ class ManualOverrideBudgetTests(unittest.TestCase):
             os.environ, {"IG_MANUAL_OVERRIDE_MAX_PER_RUN": "3"}, clear=False
         ), patch.object(run_ig, "load_json", return_value=[]), patch.object(
             run_ig, "manual_automatic_candidates", return_value=candidates
-        ), patch.object(run_ig, "enqueue") as enqueue:
+        ), patch.object(run_ig, "enqueue_many") as enqueue:
             (
                 included,
                 omitted,
@@ -105,7 +106,8 @@ class ManualOverrideBudgetTests(unittest.TestCase):
         self.assertEqual(3, included)
         self.assertEqual(3, manual)
         self.assertEqual(3, restored)
-        self.assertEqual(3, enqueue.call_count)
+        enqueue.assert_called_once()
+        self.assertEqual(3, len(enqueue.call_args.args[0]))
 
     def test_zero_budget_disables_manual_override_restoration(self):
         from meta import run_ig
@@ -117,7 +119,7 @@ class ManualOverrideBudgetTests(unittest.TestCase):
             os.environ, {"IG_MANUAL_OVERRIDE_MAX_PER_RUN": "0"}, clear=False
         ), patch.object(run_ig, "load_json", return_value=[]), patch.object(
             run_ig, "manual_automatic_candidates", return_value=candidates
-        ), patch.object(run_ig, "enqueue") as enqueue:
+        ), patch.object(run_ig, "enqueue_many") as enqueue:
             result = run_ig._bootstrap_queue()
 
         self.assertEqual((0, 0, 0, 0, 0, 0), result)

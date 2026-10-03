@@ -289,6 +289,9 @@ def validate_config(
     _positive_int(report, env, "QUEUE_EVENT_RETENTION_COUNT", 10000, minimum=100)
     _positive_int(report, env, "FB_REQUEST_TIMEOUT_SECONDS", 60, maximum=600)
     _positive_int(report, env, "FB_LINK_PREWARM_TIMEOUT_SECONDS", 20, maximum=600)
+    _positive_int(report, env, "FB_INTER_POST_DELAY_SECONDS", 0, minimum=0, maximum=300)
+    _positive_int(report, env, "X_VIDEO_MAX_PER_CYCLE", 2, minimum=0, maximum=10)
+    _positive_int(report, env, "X_VIDEO_MAX_AGE_HOURS", 24, maximum=24 * 30)
     _positive_int(
         report,
         env,

@@ -98,13 +98,62 @@ def _prewarm_enabled() -> bool:
     }
 
 
+DEFAULT_PREWARM_USER_AGENT = "LaVozRiojana-LinkCheck/1.0 (+https://lavozriojana.com)"
+PREWARM_RATE_LIMIT_DEFAULT_SECONDS = 600
+_DIAGNOSTIC_HEADERS = ("Server", "CF-RAY", "cf-mitigated", "cf-cache-status", "Retry-After")
+
+
+def _retry_after_seconds(value: object) -> int:
+    """Interpreta ``Retry-After`` en segundos; fechas HTTP o basura usan el default."""
+    try:
+        seconds = int(str(value or "").strip())
+    except ValueError:
+        return PREWARM_RATE_LIMIT_DEFAULT_SECONDS
+    return max(1, min(seconds, 86400))
+
+
+def _prewarm_rate_limited(response: object, resource: str) -> OperationResult:
+    """429 del sitio propio: corta el lote sin tocar el backoff de Meta."""
+    headers = getattr(response, "headers", {}) or {}
+    diagnostic = {
+        name: str(headers.get(name))[:120]
+        for name in _DIAGNOSTIC_HEADERS
+        if headers.get(name) is not None
+    }
+    try:
+        response.close()
+    except (AttributeError, TypeError):
+        pass
+    wait = _retry_after_seconds(headers.get("Retry-After"))
+    logger.warning(
+        "El sitio respondió 429 al prewarm (%s); se corta el lote %ss. Headers: %s",
+        resource,
+        wait,
+        diagnostic,
+    )
+    return OperationResult(
+        StageStatus.DEGRADED,
+        error_type="link_preview_rate_limited",
+        error_code=429,
+        retryable=True,
+        next_retry_at=int(time.time()) + wait,
+        details={
+            "publication_outcome": "not_published",
+            "resource": resource,
+            "headers": diagnostic,
+        },
+    )
+
+
 def prewarm_link_preview(link: str) -> OperationResult:
     """Calienta la nota y su og:image sin publicar ni llamar a Graph."""
     timeout = int(os.getenv("FB_LINK_PREWARM_TIMEOUT_SECONDS", "20"))
     max_bytes = int(os.getenv("FB_LINK_PREWARM_MAX_BYTES", str(5 * 1024 * 1024)))
+    # UA propio: suplantar ``facebookexternalhit`` desde una IP que no es de Meta
+    # comparte el cupo de bots del crawler real y dispara rate limits (LVR-086).
     user_agent = (
-        "facebookexternalhit/1.1 "
-        "(+https://www.facebook.com/externalhit_uatext.php)"
+        str(os.getenv("FB_LINK_PREWARM_USER_AGENT") or "").strip()
+        or DEFAULT_PREWARM_USER_AGENT
     )
     try:
         page = safe_get(
@@ -119,6 +168,8 @@ def prewarm_link_preview(link: str) -> OperationResult:
         content_type = str(
             getattr(page, "headers", {}).get("Content-Type") or ""
         ).lower()
+        if status == 429:
+            return _prewarm_rate_limited(page, "page")
         if status != 200:
             return OperationResult(
                 StageStatus.DEGRADED,
@@ -160,6 +211,8 @@ def prewarm_link_preview(link: str) -> OperationResult:
         image_type = str(
             getattr(image, "headers", {}).get("Content-Type") or ""
         ).lower()
+        if image_status == 429:
+            return _prewarm_rate_limited(image, "og_image")
         if image_status != 200 or not image_type.startswith("image/"):
             try:
                 image.close()
@@ -213,11 +266,25 @@ def prewarm_link_preview(link: str) -> OperationResult:
         )
 
 
+# Rechazo de Graph que no depende de la URL (permiso/configuración de la app):
+# reintentarlo con cada post de la corrida sólo suma llamadas fallidas.
+_RESCRAPE_PERMANENT_ERRORS = {100}
+_rescrape_disabled_reason = ""
+
+
 def force_facebook_rescrape(link: str, token: str) -> OperationResult:
     """Fuerza a Facebook a re-scrapear la URL (equivalente a "Scrape Again" del
     Sharing Debugger). Best-effort: nunca debe bloquear la publicación, porque
     `prewarm_link_preview` sólo valida desde la red de la app, no desde la de
     Facebook, y el post igual puede publicarse aunque este llamado falle."""
+    global _rescrape_disabled_reason
+    if _rescrape_disabled_reason:
+        return OperationResult(
+            StageStatus.DEGRADED,
+            error_type="scrape_rejected",
+            error_code="disabled_for_run",
+            details={"reason": _rescrape_disabled_reason},
+        )
     timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
     try:
         response = requests.post(
@@ -236,12 +303,28 @@ def force_facebook_rescrape(link: str, token: str) -> OperationResult:
     if response.status_code == 200 and not data.get("error"):
         logger.info("Facebook re-scrape forzado ok para %s", link)
         return OperationResult(StageStatus.SUCCESS, response=data)
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    code = error.get("code")
+    reason = (
+        f"http={response.status_code} code={code} "
+        f"subcode={error.get('error_subcode')} message={str(error.get('message') or '')[:120]}"
+    )
+    if code in _RESCRAPE_PERMANENT_ERRORS:
+        _rescrape_disabled_reason = reason
+        logger.warning(
+            "Graph rechaza el re-scrape por configuración de la app (%s); "
+            "se omite por el resto de la corrida",
+            reason,
+        )
+    else:
+        logger.warning("Graph rechazó el re-scrape de %s: %s", link, reason)
     return OperationResult(
         StageStatus.DEGRADED,
         error_type="scrape_rejected",
         error_code=response.status_code,
         response=data or None,
-        retryable=True,
+        retryable=code not in _RESCRAPE_PERMANENT_ERRORS,
+        details={"reason": reason},
     )
 
 

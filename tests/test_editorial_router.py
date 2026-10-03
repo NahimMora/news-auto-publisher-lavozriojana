@@ -720,7 +720,7 @@ class InstagramBootstrapSelectionTests(unittest.TestCase):
             run_ig, "load_json", return_value=items
         ), mock.patch.object(
             run_ig, "manual_automatic_candidates", return_value=[]
-        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+        ), mock.patch.object(run_ig, "enqueue_many") as enqueue:
             (
                 included,
                 omitted,
@@ -735,7 +735,7 @@ class InstagramBootstrapSelectionTests(unittest.TestCase):
         self.assertEqual(0, manual)
         self.assertEqual(0, manual_without_web)
         self.assertEqual(0, restored)
-        enqueue.assert_called_once_with(items[0], platform="instagram")
+        enqueue.assert_called_once_with([items[0]], platform="instagram")
 
     def test_suppressed_technical_duplicate_is_excluded_even_if_selected(self):
         from meta import run_ig
@@ -753,7 +753,7 @@ class InstagramBootstrapSelectionTests(unittest.TestCase):
             run_ig, "load_json", return_value=items
         ), mock.patch.object(
             run_ig, "manual_automatic_candidates", return_value=[]
-        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+        ), mock.patch.object(run_ig, "enqueue_many") as enqueue:
             included, omitted, *_rest = run_ig._bootstrap_queue()
 
         self.assertEqual(0, included)
@@ -775,11 +775,11 @@ class InstagramBootstrapSelectionTests(unittest.TestCase):
             run_ig,
             "manual_automatic_candidates",
             return_value=[{"identity": "link:manual-policial", "noticia": item}],
-        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+        ), mock.patch.object(run_ig, "enqueue_many") as enqueue:
             result = run_ig._bootstrap_queue()
 
         self.assertEqual((1, 0, 0, 1, 0, 0), result)
-        enqueue.assert_called_once_with(item, platform="instagram")
+        enqueue.assert_called_once_with([item], platform="instagram")
 
     def test_manual_promotion_still_blocked_when_suppressed(self):
         """La promoción manual sigue respetando un duplicado técnico real —
@@ -798,7 +798,7 @@ class InstagramBootstrapSelectionTests(unittest.TestCase):
             run_ig,
             "manual_automatic_candidates",
             return_value=[{"identity": "link:manual-suppressed", "noticia": item}],
-        ), mock.patch.object(run_ig, "enqueue") as enqueue:
+        ), mock.patch.object(run_ig, "enqueue_many") as enqueue:
             included, omitted, *_rest = run_ig._bootstrap_queue()
 
         self.assertEqual(0, included)

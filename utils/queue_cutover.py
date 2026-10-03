@@ -13,7 +13,7 @@ from typing import Mapping
 from utils.file_manager import load_json, update_json_files
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
-from utils.queue_events import record_queue_event
+from utils.queue_events import record_queue_event, record_queue_events
 from utils.url_normalization import url_hash
 
 
@@ -576,5 +576,146 @@ def apply_cutover(
         "report_id": report["report_id"],
         "cutoff_date": cutoff.isoformat(),
         "archive_path": paths["archive"],
+        **counters,
+    }
+
+
+SOCIAL_RESET_REASON = "operator_social_reset"
+
+
+def _social_reset_transition(item: dict, platform: str) -> tuple[str, str] | None:
+    """Destino de un estado social en el reset, o None si queda igual.
+
+    ``completed``, ``expired`` y ``dead_letter`` conservan su evidencia. Una
+    exclusión editorial reversible (sin motivo ``operator_*``) se fija como
+    exclusión de operador para que el bootstrap no la reactive.
+    """
+    state = _social_state(item, platform)
+    if state in {"completed", "expired", "dead_letter"}:
+        return None
+    if state == "excluded":
+        reason = str(item.get(f"{platform}_reason") or "")
+        if reason.startswith("operator_"):
+            return None
+        return "excluded", SOCIAL_RESET_REASON
+    if state == "processing":
+        return "dead_letter", f"{SOCIAL_RESET_REASON}_processing_ambiguous"
+    return "excluded", SOCIAL_RESET_REASON
+
+
+def build_social_reset_report(values: Mapping[str, str] | None = None) -> dict:
+    """Reporta el reset de la cola social sin modificar archivos."""
+    env = os.environ if values is None else values
+    paths = _paths(env)
+    social = load_json(paths["social"], [], expected_type=list)
+    transitions: dict[str, dict[str, int]] = {
+        platform: {"to_excluded": 0, "to_dead_letter": 0, "unchanged": 0}
+        for platform in ("facebook", "instagram")
+    }
+    for raw in social:
+        if not isinstance(raw, dict):
+            continue
+        for platform in ("facebook", "instagram"):
+            transition = _social_reset_transition(raw, platform)
+            if transition is None:
+                transitions[platform]["unchanged"] += 1
+            elif transition[0] == "dead_letter":
+                transitions[platform]["to_dead_letter"] += 1
+            else:
+                transitions[platform]["to_excluded"] += 1
+    return {
+        "version": 1,
+        "strategy": "social_reset",
+        "report_only": True,
+        "modified_queues": False,
+        "social_total": len(social),
+        "transitions": transitions,
+        "note": (
+            "Sólo modifica noticias_sociales_pendientes.json. Para que el bootstrap "
+            "no reencole noticias anteriores, configurar SOCIAL_BOOTSTRAP_NOT_BEFORE_TS "
+            "con el cutoff_ts devuelto por --apply."
+        ),
+    }
+
+
+def apply_social_reset(
+    values: Mapping[str, str] | None = None,
+    *,
+    now: float | None = None,
+) -> dict:
+    """Deja la cola social sin pendientes; nunca marca nada como publicado."""
+    env = os.environ if values is None else values
+    paths = _paths(env)
+    timestamp = int(time.time() if now is None else now)
+    events: list[dict] = []
+    counters = {"social_states_excluded": 0, "social_processing_dead_letter": 0}
+
+    def mutate(files):
+        events.clear()
+        for key in counters:
+            counters[key] = 0
+        for index, raw in enumerate(files[paths["social"]]):
+            if not isinstance(raw, dict):
+                continue
+            item_id = _window_identity(raw, index, "social")
+            for platform in ("facebook", "instagram"):
+                transition = _social_reset_transition(raw, platform)
+                if transition is None:
+                    continue
+                destination, reason = transition
+                if destination == "dead_letter":
+                    counters["social_processing_dead_letter"] += 1
+                else:
+                    counters["social_states_excluded"] += 1
+                raw[f"{platform}_state"] = destination
+                raw[f"{platform}_done"] = True
+                raw[f"{platform}_done_at"] = timestamp
+                raw[f"{platform}_updated_at"] = timestamp
+                raw[f"{platform}_reason"] = reason
+                events.append(
+                    {
+                        "platform": platform,
+                        "status": destination,
+                        "reason": reason,
+                        "item_id": item_id,
+                        "item": copy.deepcopy(raw),
+                    }
+                )
+        return files
+
+    update_json_files({paths["social"]: ([], list)}, mutate)
+
+    # Un evento resumen por plataforma/destino: miles de eventos con payload
+    # completo desplazarían historial útil por la retención del journal. El
+    # estado completo previo queda en el backup que exige el runbook.
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for event in events:
+        key = (event["platform"], event["status"], event["reason"])
+        grouped.setdefault(key, []).append(event["item_id"])
+    record_queue_events(
+        [
+            {
+                "stage": platform,
+                "status": status,
+                "reason": reason,
+                "metadata": {
+                    "cutoff_ts": timestamp,
+                    "count": len(item_ids),
+                    "item_ids": item_ids,
+                },
+            }
+            for (platform, status, reason), item_ids in sorted(grouped.items())
+        ]
+    )
+    logger.info(
+        "Reset social aplicado: excluidos=%s dead_letter=%s cutoff_ts=%s",
+        counters["social_states_excluded"],
+        counters["social_processing_dead_letter"],
+        timestamp,
+    )
+    return {
+        "status": "success",
+        "strategy": "social_reset",
+        "cutoff_ts": timestamp,
         **counters,
     }

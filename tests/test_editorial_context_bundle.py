@@ -93,10 +93,12 @@ class BuildContextBundleTests(unittest.TestCase):
             ),
             path=self.db_path,
         )
+        # Sin localidad en el texto, la señal riojana viene de la sección local de origen.
         result = eb.build_context_bundle(
             article_id="new1",
             title="Se realizo un nuevo allanamiento en la causa de contrabando de autopartes",
             category="policiales",
+            riojan_source=True,
             path=self.db_path,
         )
         self.assertTrue(any(s.source_id == "mpf_larioja" for s in result.official_snippets))
@@ -187,3 +189,50 @@ class ArchiveContextEntriesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OfficialRelevanceTests(unittest.TestCase):
+    """LVR-BUG-0001: el contexto oficial se colaba en casi todas las notas."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmpdir.name) / "official_test.sqlite3"
+        source_cache.upsert_cache_item(
+            OfficialSourceItem(
+                source_id="gobierno_larioja",
+                title="El Gobierno provincial anuncio obras de pavimento en Chilecito",
+                url="https://www.larioja.gob.ar/n/1",
+                excerpt="El gobierno detallo el plan de obras para el barrio",
+            ),
+            path=self.db_path,
+        )
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _gather(self, title, *, category="politica", riojan_source=False):
+        from editorial_context import entities as ec_entities
+
+        snippets, _ = eb._gather_official_snippets(
+            category=category,
+            entities=ec_entities.extract_entities(title, ""),
+            localities=ec_entities.extract_localities(title, ""),
+            title=title,
+            excerpt="",
+            riojan_source=riojan_source,
+            path=self.db_path,
+        )
+        return snippets
+
+    def test_single_shared_generic_term_is_not_enough(self):
+        self.assertEqual([], self._gather("El gobierno nacional analiza cambios en el gabinete", riojan_source=True))
+
+    def test_national_news_without_riojan_signal_skips_provincial_sources(self):
+        self.assertEqual([], self._gather("Milei anuncio obras de pavimento en todo el pais"))
+
+    def test_riojan_news_with_specific_match_keeps_context(self):
+        snippets = self._gather("Comenzaron las obras de pavimento en Chilecito")
+        self.assertEqual(["gobierno_larioja"], [s.source_id for s in snippets])
+
+    def test_shared_province_name_alone_is_not_a_match(self):
+        self.assertEqual([], self._gather("La Rioja recibio a un equipo de futbol juvenil", category="sociedad"))

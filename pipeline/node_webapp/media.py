@@ -183,10 +183,13 @@ def generate_og_image(source_path: Path, digest: str, title: str, noticia: dict 
 
     slug = slugify(title)
     dest = _media_work_dir() / f"og_{slug}_{digest[:10]}.jpg"
+    # Gancho ya generado para Instagram: mismo titular corto en ambas redes,
+    # sin otra llamada a IA. Sin él, se usa el título web.
+    hook = clean_text((noticia or {}).get("titulo_instagram") or "", max_chars=150)
     with Image.open(source_path) as raw:
         raw = ImageOps.exif_transpose(raw).convert("RGBA")
         article = {
-            "titulo": title,
+            "titulo": hook or title,
             "seccion": (noticia or {}).get("seccion", ""),
             "imagen_url": "",
         }
@@ -254,7 +257,7 @@ def verify_public_video_url(url: str) -> bool:
     return _verify_public_media_url(url, ("video/", "application/octet-stream"))
 
 
-def upload_main_image(noticia: dict) -> tuple[dict, Path, str]:
+def upload_main_image(noticia: dict) -> tuple[dict, Path, str, Path]:
     source_path, source_kind = resolve_source_image(noticia)
     if not source_path:
         raise RuntimeError("missing_main_image")
@@ -282,7 +285,7 @@ def upload_main_image(noticia: dict) -> tuple[dict, Path, str]:
         "credit": source_name,
     }
     logger.info("Main image uploaded source=%s key=%s size=%sx%s", source_kind, key, width, height)
-    return main_image, webp_path, digest
+    return main_image, webp_path, digest, source_path
 
 
 def upload_og_image(source_webp_path: Path, digest: str, title: str, fallback_url: str, noticia: dict | None = None) -> str:
@@ -340,8 +343,11 @@ def upload_video(noticia: dict) -> str | None:
 
 def prepare_media(noticia: dict, title: str) -> MediaResult:
     try:
-        main_image, webp_path, digest = upload_main_image(noticia)
-        og_image_url = upload_og_image(webp_path, digest, title, main_image["url"], noticia)
+        main_image, webp_path, digest, source_path = upload_main_image(noticia)
+        # La OG parte de la imagen original, no de la WEBP ya recomprimida
+        # (evita una segunda pérdida de calidad, LVR-IMPROVEMENT-0003).
+        og_source = source_path if source_path and Path(source_path).is_file() else webp_path
+        og_image_url = upload_og_image(og_source, digest, title, main_image["url"], noticia)
     except Exception as exc:
         logger.error("Media preparation failed for %s: %s", clean_text(noticia.get("titulo"), max_chars=70), exc)
         return MediaResult(ok=False, warnings=[str(exc)])

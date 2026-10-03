@@ -19,8 +19,9 @@ from utils.paths import data_dir
 from utils.social_queue import (
     claim,
     compact_queue,
-    enqueue,
+    enqueue_many,
     get_pending,
+    is_too_old_for_bootstrap,
     mark_dead_letter,
     mark_done,
     mark_pending,
@@ -34,6 +35,17 @@ logger = setup_logger("run_fb", "run_fb.log")
 META_INPUT = str(data_dir() / "noticias_meta.json")
 FB_STATE_PATH = str(data_dir() / "fb_posted.json")
 FB_PAPARAZZI_SOURCE_PREFIX = "paparazzi"
+# Fallos que cortan el resto del lote: seguir golpeando sólo alarga el bloqueo.
+BATCH_STOP_ERRORS = {"rate_limit", "invalid_credential", "link_preview_rate_limited"}
+DEGRADED_ERRORS = {"rate_limit", "link_preview_rate_limited"}
+
+
+def _inter_post_delay() -> float:
+    """Pausa entre publicaciones: cada post dispara el crawler de Meta sobre la nota."""
+    try:
+        return max(0.0, float(os.getenv("FB_INTER_POST_DELAY_SECONDS", "0") or 0))
+    except ValueError:
+        return 0.0
 
 
 def _bootstrap_queue() -> int:
@@ -41,15 +53,22 @@ def _bootstrap_queue() -> int:
     lote que Web e Instagram, ver docs/DECISIONS.md) — antes encolaba todo lo
     que tuviera web_url, sin ningún filtro."""
     noticias = load_json(META_INPUT, [], expected_type=list)
-    included = 0
+    batch: list[dict] = []
+    too_old = 0
     for noticia in noticias:
         if not str(noticia.get("web_url") or noticia.get("noticia_url") or "").strip():
             continue
         if not noticia.get("selected_for_publish"):
             continue
-        enqueue(noticia, platform="facebook")
-        included += 1
-    return included
+        if is_too_old_for_bootstrap(noticia):
+            too_old += 1
+            continue
+        batch.append(noticia)
+    if batch:
+        enqueue_many(batch, platform="facebook")
+    if too_old:
+        logger.info("Bootstrap Facebook: %s noticias omitidas por antigüedad", too_old)
+    return len(batch)
 
 
 def _sync_posted_state() -> int:
@@ -117,7 +136,10 @@ def main() -> StageResult:
     succeeded = failed = deferred = processed = 0
     error_type = None
     next_retry_at = None
+    delay = _inter_post_delay()
     for index, noticia in enumerate(selected):
+        if processed and delay:
+            time.sleep(delay)
         if not claim(noticia, "facebook"):
             deferred += 1
             continue
@@ -159,7 +181,7 @@ def main() -> StageResult:
                 metadata=failure_metadata,
             )
         failed += 1
-        if operation.error_type in {"rate_limit", "invalid_credential"}:
+        if operation.error_type in BATCH_STOP_ERRORS:
             deferred += len(selected) - index - 1
             break
 
@@ -179,7 +201,7 @@ def main() -> StageResult:
     )
     if error_type == "invalid_credential":
         result.status = StageStatus.FAILED
-    elif error_type == "rate_limit":
+    elif error_type in DEGRADED_ERRORS:
         result.status = StageStatus.DEGRADED
     return result
 

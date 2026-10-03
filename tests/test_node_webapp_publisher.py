@@ -967,11 +967,61 @@ class FacebookClientTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.details["og_image_url"], "https://media.lavozriojana.com/og/nota.jpg")
         self.assertEqual(get.call_count, 2)
-        self.assertIn("facebookexternalhit", get.call_args_list[0].kwargs["headers"]["User-Agent"])
+        user_agent = get.call_args_list[0].kwargs["headers"]["User-Agent"]
+        self.assertNotIn("facebookexternalhit", user_agent)
+        self.assertEqual(fb_client.DEFAULT_PREWARM_USER_AGENT, user_agent)
         self.assertTrue(
             any("preview de facebook verificado" in line.lower() for line in captured.output),
             captured.output,
         )
+
+    def test_link_preview_prewarm_429_is_typed_with_retry_after_and_headers(self):
+        page = FakeResponse(429, None)
+        page.headers = {
+            "Content-Type": "text/html",
+            "Server": "cloudflare",
+            "CF-RAY": "abc-EZE",
+            "Retry-After": "120",
+            "Set-Cookie": "no-debe-loguearse",
+        }
+
+        with patch("meta.fb_client.safe_get", return_value=page), patch(
+            "meta.fb_client.time.time", return_value=1000
+        ):
+            result = fb_client.prewarm_link_preview(
+                "https://lavozriojana.com.ar/noticias/nota"
+            )
+
+        self.assertEqual(result.status, StageStatus.DEGRADED)
+        self.assertEqual(result.error_type, "link_preview_rate_limited")
+        self.assertEqual(result.next_retry_at, 1120)
+        self.assertTrue(result.retryable)
+        self.assertEqual(result.details["publication_outcome"], "not_published")
+        self.assertEqual(result.details["headers"]["Server"], "cloudflare")
+        self.assertNotIn("Set-Cookie", result.details["headers"])
+
+    def test_link_preview_prewarm_429_without_retry_after_uses_default(self):
+        page = FakeResponse(429, None)
+        page.headers = {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
+
+        with patch("meta.fb_client.safe_get", return_value=page), patch(
+            "meta.fb_client.time.time", return_value=1000
+        ):
+            result = fb_client.prewarm_link_preview("https://lavozriojana.com.ar/n")
+
+        self.assertEqual(
+            result.next_retry_at, 1000 + fb_client.PREWARM_RATE_LIMIT_DEFAULT_SECONDS
+        )
+
+    def test_link_preview_prewarm_user_agent_is_configurable(self):
+        page = FakeResponse(200, None)
+        page.text = "<html></html>"
+        page.headers = {"Content-Type": "text/html"}
+        with patch.dict(os.environ, {"FB_LINK_PREWARM_USER_AGENT": "QA-Agent/1.0"}), patch(
+            "meta.fb_client.safe_get", return_value=page
+        ) as get:
+            fb_client.prewarm_link_preview("https://lavozriojana.com.ar/n")
+        self.assertEqual("QA-Agent/1.0", get.call_args.kwargs["headers"]["User-Agent"])
 
     def test_link_preview_prewarm_fails_without_og_image(self):
         page = FakeResponse(200, None)

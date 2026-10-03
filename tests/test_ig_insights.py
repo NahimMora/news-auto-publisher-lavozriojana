@@ -77,11 +77,14 @@ class IgInsightsStageTests(unittest.TestCase):
                 ig_insights, "PERFORMANCE_PATH", str(perf_path)
             ), patch.object(
                 ig_insights.requests, "get", side_effect=fake_get
-            ):
+            ), patch.object(ig_insights, "_record_kpis") as record_kpis:
                 result = ig_insights.main()
 
             self.assertEqual(StageStatus.SUCCESS, result.status)
             self.assertEqual(3, result.succeeded)
+            entries = record_kpis.call_args.args[0]
+            self.assertEqual({"media-1", "media-2", "media-3"}, {entry["media_id"] for entry in entries})
+            self.assertEqual(100, next(e for e in entries if e["media_id"] == "media-3")["posted_at"])
 
             snapshot = json.loads(perf_path.read_text(encoding="utf-8"))
             politica = snapshot["categories"]["politica"]
@@ -148,3 +151,9 @@ class IgInsightsStageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KpiRecordingIsolationTests(unittest.TestCase):
+    def test_kpi_failure_never_breaks_the_stage(self):
+        with patch.object(ig_insights, "record_media_insights", side_effect=KeyError("boom")):
+            ig_insights._record_kpis([{"media_id": "m"}])

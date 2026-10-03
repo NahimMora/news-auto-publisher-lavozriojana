@@ -23,12 +23,12 @@ class FacebookStageTests(unittest.TestCase):
             },
         ]
         with patch.object(run_fb, "load_json", return_value=items), patch.object(
-            run_fb, "enqueue"
+            run_fb, "enqueue_many"
         ) as enqueue:
             included = run_fb._bootstrap_queue()
 
         self.assertEqual(1, included)
-        enqueue.assert_called_once_with(items[1], platform="facebook")
+        enqueue.assert_called_once_with([items[1]], platform="facebook")
 
     def _patch_stage(self, pending, operations):
         return (
@@ -114,6 +114,62 @@ class FacebookStageTests(unittest.TestCase):
         self.assertEqual(result.next_retry_at, 9999999999)
         self.assertEqual(result.deferred, 1)
 
+    def test_site_rate_limit_stops_batch_without_meta_backoff(self):
+        items = [news("a"), news("b"), news("c")]
+        patches = self._patch_stage(
+            items,
+            [
+                OperationResult(StageStatus.SUCCESS, external_id="fb-a"),
+                OperationResult(
+                    StageStatus.DEGRADED,
+                    error_type="link_preview_rate_limited",
+                    error_code=429,
+                    retryable=True,
+                    next_retry_at=1234,
+                    details={"publication_outcome": "not_published"},
+                ),
+            ],
+        )
+        for manager in patches:
+            manager.start()
+        try:
+            result = run_fb.main()
+            post_calls = run_fb.post_to_facebook_detailed.call_count
+            pending_calls = run_fb.mark_pending.call_args_list
+        finally:
+            for manager in reversed(patches):
+                manager.stop()
+        self.assertEqual(2, post_calls)
+        self.assertEqual(result.status, StageStatus.DEGRADED)
+        self.assertEqual(result.next_retry_at, 1234)
+        self.assertEqual(result.deferred, 1)
+        self.assertEqual("link_preview_rate_limited", pending_calls[0].args[2])
+
+    def test_inter_post_delay_only_between_external_attempts(self):
+        items = [news("a"), news("b"), news("c")]
+        patches = self._patch_stage(
+            items,
+            [OperationResult(StageStatus.SUCCESS, external_id=f"fb-{i}") for i in range(3)],
+        )
+        for manager in patches:
+            manager.start()
+        try:
+            with patch.dict(os.environ, {"FB_INTER_POST_DELAY_SECONDS": "30"}), patch.object(
+                run_fb.time, "sleep"
+            ) as sleep:
+                result = run_fb.main()
+        finally:
+            for manager in reversed(patches):
+                manager.stop()
+        self.assertEqual(result.succeeded, 3)
+        self.assertEqual([((30.0,),)] * 2, [c[:1] for c in sleep.call_args_list])
+
+    def test_inter_post_delay_defaults_to_zero(self):
+        with patch.dict(os.environ, {"FB_INTER_POST_DELAY_SECONDS": ""}):
+            self.assertEqual(0.0, run_fb._inter_post_delay())
+        with patch.dict(os.environ, {"FB_INTER_POST_DELAY_SECONDS": "x"}):
+            self.assertEqual(0.0, run_fb._inter_post_delay())
+
 
 class InstagramStageTests(unittest.TestCase):
     def test_bootstrap_waits_for_verified_web_url(self):
@@ -135,7 +191,7 @@ class InstagramStageTests(unittest.TestCase):
         with patch.object(run_ig, "load_json", return_value=items), patch.object(
             run_ig, "manual_automatic_candidates", return_value=[]
         ), patch.object(
-            run_ig, "enqueue"
+            run_ig, "enqueue_many"
         ) as enqueue:
             (
                 included,
@@ -157,7 +213,7 @@ class InstagramStageTests(unittest.TestCase):
                 restored,
             ),
         )
-        enqueue.assert_called_once_with(items[1], platform="instagram")
+        enqueue.assert_called_once_with([items[1]], platform="instagram")
 
     def test_active_rate_limit_is_degraded_even_before_selection(self):
         with patch.object(run_ig, "IG_ACCOUNT_ID", "ig"), patch.object(

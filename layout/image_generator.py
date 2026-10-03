@@ -595,7 +595,9 @@ def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | 
 
     with Image.open(io.BytesIO(png_bytes)) as opened:
         buffer = io.BytesIO()
-        opened.convert("RGB").save(buffer, format="JPEG", quality=90, optimize=True)
+        # Calidad alta y sin submuestreo de color: el titular sobre tinta
+        # oscura se ve borroso con 4:2:0 en el link preview.
+        opened.convert("RGB").save(buffer, format="JPEG", quality=95, subsampling=0, optimize=True)
         return buffer.getvalue()
 
 
