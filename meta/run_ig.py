@@ -89,6 +89,63 @@ def _promoted_at(candidate: dict) -> int:
     return latest
 
 
+def _quiet_hours_window() -> tuple[int, int] | None:
+    """Lee ``IG_STATIC_QUIET_HOURS`` ("0-7": desde las 0 hasta antes de las 7).
+
+    Vacío o inválido = apagado (comportamiento previo). Las imágenes estáticas
+    publicadas de madrugada tienen un alcance mediano de ~20 cuentas contra
+    ~200 a la tarde (``cli.py kpis``) y consumen el tope diario de la cuenta.
+    """
+    raw = os.getenv("IG_STATIC_QUIET_HOURS", "").strip()
+    if not raw:
+        return None
+    try:
+        start_raw, end_raw = raw.split("-", 1)
+        start, end = int(start_raw), int(end_raw)
+    except ValueError:
+        logger.warning("IG_STATIC_QUIET_HOURS inválido (%r); horario silencioso apagado", raw)
+        return None
+    if not (0 <= start <= 23 and 0 <= end <= 24) or start == end:
+        logger.warning("IG_STATIC_QUIET_HOURS fuera de rango (%r); horario silencioso apagado", raw)
+        return None
+    return start, end
+
+
+def _in_quiet_hours(hour: int, window: tuple[int, int]) -> bool:
+    start, end = window
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def _is_static_post(noticia: dict) -> bool:
+    return not (
+        str(noticia.get("media_type") or "").lower() == "video"
+        or noticia.get("video_url")
+    )
+
+
+def _split_quiet_hours(selected: list[dict]) -> tuple[list[dict], int]:
+    """Difiere imágenes estáticas en horario silencioso sin tomarlas de la cola.
+
+    No hace ``claim``: quedan pendientes y entran en el primer ciclo fuera del
+    horario. Reels y videos no se difieren.
+    """
+    window = _quiet_hours_window()
+    if window is None or not _in_quiet_hours(time.localtime().tm_hour, window):
+        return selected, 0
+    kept = [noticia for noticia in selected if not _is_static_post(noticia)]
+    deferred = len(selected) - len(kept)
+    if deferred:
+        logger.info(
+            "Horario silencioso IG (%s-%s h): %s imágenes estáticas quedan para más tarde",
+            window[0],
+            window[1],
+            deferred,
+        )
+    return kept, deferred
+
+
 def _publish_paparazzi(noticia: dict):
     """Nota con video: un único Reel. Sin video utilizable: imagen sola.
 
@@ -281,6 +338,7 @@ def main() -> StageResult:
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
         selected = get_pending("instagram", max_items=limit)
+        selected, quiet_deferred = _split_quiet_hours(selected)
     except JsonStateError as exc:
         logger.error("Estado social de Instagram ilegible: %s", exc)
         return StageResult(
@@ -299,6 +357,7 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
             details={
                 "included": included,
+                "quiet_hours_deferred": quiet_deferred,
                 "included_by_manual_override": manual_overrides,
                 "manual_override_without_web_url": manual_without_web_url,
                 "restored_from_candidate_store": restored_from_candidates,
@@ -373,6 +432,7 @@ def main() -> StageResult:
         error_type=error_type,
         next_retry_at=next_retry_at,
         details={
+            "quiet_hours_deferred": quiet_deferred,
             "included_by_manual_override": manual_overrides,
             "manual_override_without_web_url": manual_without_web_url,
             "restored_from_candidate_store": restored_from_candidates,

@@ -1217,3 +1217,55 @@
   re-scrape por el resto de la corrida (antes: hasta 8 llamadas fallidas por ciclo).
 - Pendiente: revisar la app en Meta for Developers (permisos y acceso a la
   funcionalidad de URL scraping). El Sharing Debugger manual sigue disponible.
+
+## 89. Caption de IG/FB desde la web con chips como viñetas y lead cortado — CORREGIDO 2026-10-04
+
+- ID: observado tras activar `IG_CAPTION_FROM_WEB_ENABLED=true` (LVR-IMPROVEMENT-0001);
+  severidad media (calidad visible en todas las publicaciones).
+- Reproducción: los 93 captions publicados entre el 02/10 y el 04/10 listaban como
+  "▪️" los `key_points` de la web, que son chips de ≤32 caracteres ("▪️ Policiales",
+  "▪️ La Rioja", "▪️ Convenio de cooperación ambient..."); el lead llegaba cortado por
+  `clean_text` ("…la presencia te..."); `#LaRioja` se repetía; en notas con fallback
+  editorial el caption mostraba el primer párrafo crudo de la fuente, ajeno al
+  título (China Suárez → "El desempleo lo persigue…"). Diagnóstico extra:
+  `ig_posted.json` guarda el `texto_instagram` previo, no el caption final.
+- Corrección: `utils/social_caption.py` lista sólo puntos de ≥4 palabras que no
+  repiten el lead y sólo si hay dos o más; lead recortado a oraciones completas;
+  pregunta normalizada con "¿"; cierre "📲 Nota completa en lavozriojana.com";
+  hashtags sin duplicados. `web_editorial.source_fallback` (campo opcional nuevo)
+  marca el fallback con texto original y redes vuelven al caption propio. El prompt
+  del caption pide voseo y una pregunta específica.
+- Tests: `tests.test_caption_from_web`. Replay sobre los 105 registros reales con
+  `web_editorial`: 0 viñetas basura, 0 cortes, 0 hashtags repetidos.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 90. Bajada (`deck`) de la card de Instagram toda en minúsculas — CORREGIDO 2026-10-04
+
+- ID: severidad media (visible en la pieza). 196 de las últimas 200 bajadas de
+  Gemini llegaban en minúscula, nombres propios incluidos ("la periodista fue
+  invitada al programa de juana viale").
+- Corrección: el prompt pide mayúscula inicial y nombres propios;
+  `openIA/caption_generator.py::restore_deck_casing` restaura, sólo en bajadas sin
+  ninguna mayúscula, los nombres propios tal como la fuente los escribe a mitad de
+  oración (ignora títulos en MAYÚSCULAS, artículos y palabras que la fuente también
+  escribe en minúscula). Se aplica al generar y al renderizar
+  (`layout/image_generator.py::_deck_for_render`), así cubre lo ya encolado. No
+  agrega ni cambia palabras.
+- Tests: `tests.test_ig_quality_fixes.DeckCasingTests`; replay de 12 bajadas reales
+  correctas.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 91. Tope diario de publicaciones de Instagram mandaba ítems a dead-letter — CORREGIDO 2026-10-04
+
+- ID: severidad alta operativa. Ciclos #771 y #772: 8 rechazos
+  `OAuthException code 9 / subcode 2207042` (tope de posts por 24 h de la cuenta)
+  en `media_publish`, clasificados como `request_rejected` con outcome `unknown`:
+  cada ítem fue a dead-letter y el ciclo siguiente volvió a chocar con el tope.
+- Corrección: `meta/ig_client.py::_is_rate_limit_error` incluye code 9 y subcode
+  2207042: backoff compartido (`IG_RATE_LIMIT_BACKOFF_SECONDS`), el ítem vuelve a
+  pendiente y la etapa corta el lote. Meta rechaza la publicación antes de
+  publicar, por eso no es un outcome ambiguo.
+- Tests: `tests.test_ig_quality_fixes.InstagramDailyLimitTests`.
+- Riesgo residual: los 8 ítems ya en dead-letter no se recuperan solos; requieren
+  decisión del operador.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.

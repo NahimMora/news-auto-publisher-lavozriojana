@@ -3,6 +3,20 @@
 Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
 Registry; el resto del documento describe el estado previo y sigue vigente).
 
+## Calidad de Instagram tras el deploy (2026-10-04)
+
+- PR #9 mergeado y supervisor reactivado el 02/10 23:39 (ciclo #753). Ciclos
+  #753–#773: FB/IG volvieron a publicar (93 posts IG en ~25 h), sin 429 del prewarm.
+- Revisión de los 93 captions publicados (reconstruidos con
+  `build_instagram_caption`, porque `ig_posted.json` guarda el `texto_instagram`
+  previo y no el caption final) y de alcance real (`ig_media_insights.json`):
+  Reels mediana 596 cuentas, imágenes estáticas 38; posts de 00–06 h, 15–21.
+- Corregido en el working tree de `main` (activo desde el ciclo siguiente, sin commit): caption desde la web sin chips como
+  viñetas, lead en oraciones completas, sin fallback crudo, hashtags sin repetir y
+  cierre "Nota completa en lavozriojana.com" (`KNOWN_ISSUES` 89); bajada de la card
+  con mayúsculas (90); tope diario de IG tratado como rate limit (91); horario
+  silencioso para imágenes estáticas `IG_STATIC_QUIET_HOURS=0-7` (perfil de producción).
+
 ## Integración del backlog del Segundo Cerebro (2026-10-01)
 
 - LVR-BUG-0001: contexto oficial acotado (54 % → 2 % de notas en replay).

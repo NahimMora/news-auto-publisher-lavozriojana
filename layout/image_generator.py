@@ -465,6 +465,25 @@ def _visual_highlight_terms(article: dict, *, publication_visual_style: bool) ->
     return [phrase] if phrase else []
 
 
+def _deck_for_render(article: dict) -> str:
+    """Bajada con mayúsculas restauradas; cubre también lo que ya estaba en cola."""
+    from openIA.caption_generator import restore_deck_casing
+
+    # La cola Meta no guarda ``parrafos``: se usan también el caption y la
+    # versión web, que ya escriben los nombres propios con mayúscula.
+    web = article.get("web_editorial") if isinstance(article.get("web_editorial"), dict) else {}
+    sources = [
+        article.get("titulo"),
+        article.get("titulo_original"),
+        *(article.get("parrafos") or [])[:4],
+        article.get("texto_instagram"),
+        web.get("lead"),
+        web.get("excerpt"),
+    ]
+    reference = "\n".join(str(text) for text in sources if text)
+    return restore_deck_casing(str(article.get("deck") or ""), reference)
+
+
 def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image | None" = None) -> bytes:
     """Renderiza la card automática con la composición Remotion
     ``AutomaticInstagramCard`` (sistema "Editorial Cinemática Riojana", ver
@@ -487,7 +506,7 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
             # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
             # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
             "locality": str(article.get("locality") or ""),
-            "deck": str(article.get("deck") or ""),
+            "deck": _deck_for_render(article),
             # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
             # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
             # esto todavía con "image_treatment" seteado; queda disponible
