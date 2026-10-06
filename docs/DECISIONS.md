@@ -2079,3 +2079,28 @@ exclusión `operator_*` nunca se revierte sola.
   `processing` heredado pasa a `dead_letter` sin reintento ciego; 3 intentos máximo;
   comparte con el resto sólo el backoff de rate limit de Meta.
   `X_VIDEO_REELS_ENABLED` apagado por defecto, activo en el script de producción.
+
+### 2026-10-04 — Calidad de Instagram guiada por alcance real
+
+**Evidencia**: 116 publicaciones con insights (`ig_media_insights.json`): Reels
+mediana 596 cuentas alcanzadas contra 38 de las imágenes estáticas; por franja,
+00–06 h entre 15 y 21 contra 187–253 entre 15 y 21 h. Con 8 posts por ciclo y 24
+ciclos, la cuenta alcanzó el tope diario de Instagram (KNOWN_ISSUES 91).
+
+**Decisión**:
+- Caption desde la web (sigue detrás de `IG_CAPTION_FROM_WEB_ENABLED`): título
+  social + lead en oraciones completas + pregunta + cierre a la nota + hashtags; los
+  chips web no se listan (KNOWN_ISSUES 89). `web_editorial.source_fallback` es un
+  campo opcional y aditivo: los registros previos no lo tienen y se tratan como
+  `false`, por eso no requiere migración.
+- `IG_STATIC_QUIET_HOURS` ("0-7"; vacío = apagado, comportamiento previo): en esa
+  franja las imágenes estáticas no se toman de la cola (sin `claim`) y quedan para
+  el primer ciclo fuera de horario; Reels y videos no cambian. Si todo lo
+  seleccionado se difiere, la etapa es `no_work`, no `degraded`.
+  El perfil de producción (`scripts/start_24x7_production.ps1`) lo activa con
+  `0-7` por decisión del operador (2026-10-06).
+- No se cambia todavía el formato estático a video: es el cambio de mayor impacto
+  según los datos, pero toca render, costo y tiempos de ciclo; queda como propuesta.
+
+**Revisar nuevamente cuando**: haya dos semanas de insights con la franja activa
+(comparar alcance mediano de estáticas antes/después con `cli.py kpis`).

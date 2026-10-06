@@ -625,6 +625,12 @@ def _web_editorial_snapshot(editorial) -> dict:
         "social_title": str(getattr(editorial, "social_title", "") or "").strip(),
         "social_description": str(getattr(editorial, "social_description", "") or "").strip(),
         "key_points": key_points[:4],
+        # Fallback con el texto original (no el sexto intento seguro): redes
+        # no lo reutilizan y vuelven al caption propio.
+        "source_fallback": bool(
+            getattr(editorial, "fallback_used", False)
+            and not getattr(editorial, "final_attempt_used", False)
+        ),
     }
     return {key: value for key, value in snapshot.items() if value}
 
