@@ -177,7 +177,8 @@ def pending_jobs(limit: int) -> list[tuple[str, dict]]:
     state = load_json(STATE_PATH, {"jobs": {}}, expected_type=dict)
     pending = [(job_id, job) for job_id, job in state.get("jobs", {}).items() if job.get("status") == "pending"]
     pending.sort(key=lambda pair: (pair[1].get("created_at") or "", pair[1].get("seen_at") or 0))
-    return pending[: max(0, limit)]
+    # 0 = sin tope por ciclo: la etapa corta por tiempo y deja el resto pendiente.
+    return pending[:limit] if limit > 0 else pending
 
 
 def _clean_tweet_text(text: str) -> str:

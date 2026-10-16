@@ -28,12 +28,17 @@ categorías elegibles esa corrida), la capacidad libre se reparte entre
 paparazzi e infobae en vez de quedar sin usar — ver docs/DECISIONS.md.
 
 Filtros editoriales (apagados por defecto, ver docs/DECISIONS.md 2026-10-16):
-- ``PAPARAZZI_VIDEO_ONLY_ENABLED``: la nota de paparazzi con video no entra al
-  lote (ni Web, ni post con link, ni imagen); se publica sólo el Reel desde
-  ``meta/run_paparazzi_videos.py``.
-- ``PUBLISH_PAPARAZZI_MIN_SCORE``: paparazzi sin video entra al lote sólo con
+- ``PAPARAZZI_VIDEO_ONLY_ENABLED`` / ``INFOBAE_VIDEO_ONLY_ENABLED``: la nota con
+  video de esa fuente no sale en redes como imagen ni con link; se publica sólo
+  el Reel desde ``meta/run_paparazzi_videos.py`` (fuera de todo cupo). La de
+  Infobae tampoco genera artículo Web.
+- ``PUBLISH_PAPARAZZI_MIN_SCORE``: paparazzi sin video sale en redes sólo con
   ``paparazzi_relevance_score`` >= umbral (sin puntaje por falla de IA: pasa,
   pero al final de la fila).
+- ``PUBLISH_PAPARAZZI_WEB_ALL``: todas las notas de paparazzi van a la Web, sin
+  cupo (con video o con relevancia baja incluidas). Las que no corresponden a
+  redes quedan marcadas con ``social_skip_reason`` (``policy_*``) y Facebook e
+  Instagram no las encolan; el cupo de paparazzi pasa a ser sólo el de redes.
 - ``PUBLISH_INTERNATIONAL_BUCKET_ENABLED``: las internacionales dejan de
   competir como locales y tienen su balde propio
   (``PUBLISH_INTERNATIONAL_MAX_PER_RUN``), sólo con
@@ -103,6 +108,19 @@ def paparazzi_video_only_enabled() -> bool:
     return _flag("PAPARAZZI_VIDEO_ONLY_ENABLED")
 
 
+def infobae_video_only_enabled() -> bool:
+    return _flag("INFOBAE_VIDEO_ONLY_ENABLED")
+
+
+def video_reels_enabled() -> bool:
+    """Alguna fuente publica sus notas con video sólo como Reel."""
+    return paparazzi_video_only_enabled() or infobae_video_only_enabled()
+
+
+def _paparazzi_web_all_enabled() -> bool:
+    return _flag("PUBLISH_PAPARAZZI_WEB_ALL")
+
+
 def _paparazzi_min_score() -> int:
     return _env_int("PUBLISH_PAPARAZZI_MIN_SCORE", 0)
 
@@ -156,8 +174,18 @@ def is_international(item: dict) -> bool:
 
 
 def is_video_only_paparazzi(item: dict) -> bool:
-    """Nota de paparazzi con video que se publica sólo como Reel (flag activo)."""
+    """Nota de paparazzi con video que en redes sale sólo como Reel (flag activo)."""
     return paparazzi_video_only_enabled() and _is_paparazzi(item) and _has_video(item)
+
+
+def is_video_only_infobae(item: dict) -> bool:
+    """Nota de Infobae con video que sale sólo como Reel, sin Web (flag activo)."""
+    return infobae_video_only_enabled() and _is_infobae(item) and _has_video(item)
+
+
+def is_reel_only_item(item: dict) -> bool:
+    """Nota con video que en redes se publica sólo como Reel EditorialReel."""
+    return is_video_only_paparazzi(item) or is_video_only_infobae(item)
 
 
 def _is_international_bucket(item: dict) -> bool:
@@ -202,8 +230,21 @@ def _infobae_sort_key(item: dict):
     return (not _has_video(item), -_strength_score(item))
 
 
+SOCIAL_SKIP_VIDEO = "policy_video_reel_only"
+SOCIAL_SKIP_LOW_RELEVANCE = "policy_paparazzi_low_relevance"
+SOCIAL_SKIP_SOCIAL_CAP = "policy_paparazzi_social_cap"
+
+
 def select_batch(pending: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Pura: separa ``pending`` en (seleccionados, resto) según los 3 baldes.
+    selected, rest, _web_only = select_batch_detailed(pending)
+    return selected, rest
+
+
+def select_batch_detailed(pending: list[dict]) -> tuple[list[dict], list[dict], dict[str, str]]:
+    """Pura: separa ``pending`` en (seleccionados, resto, sólo Web) según los baldes.
+
+    ``sólo Web`` mapea identidad -> motivo ``policy_*`` de las seleccionadas que
+    van a la Web pero no a Facebook/Instagram (``PUBLISH_PAPARAZZI_WEB_ALL``).
 
     Si el balde local no llena su cupo (no hay suficientes candidatas de
     categorías elegibles), la capacidad libre se reparte entre paparazzi e
@@ -216,12 +257,14 @@ def select_batch(pending: list[dict]) -> tuple[list[dict], list[dict]]:
         for item in pending
         if isinstance(item, dict) and _is_local(item) and item_category(item) not in excluded
     ]
-    paparazzi_pool = [
+    paparazzi_all = [item for item in pending if isinstance(item, dict) and _is_paparazzi(item)]
+    paparazzi_pool = [item for item in paparazzi_all if _paparazzi_eligible(item)]
+    # Infobae con video sale sólo como Reel (run_paparazzi_videos), nunca en el lote.
+    infobae_pool = [
         item
         for item in pending
-        if isinstance(item, dict) and _is_paparazzi(item) and _paparazzi_eligible(item)
+        if isinstance(item, dict) and _is_infobae(item) and not is_video_only_infobae(item)
     ]
-    infobae_pool = [item for item in pending if isinstance(item, dict) and _is_infobae(item)]
     international_pool = [
         item
         for item in pending
@@ -246,10 +289,27 @@ def select_batch(pending: list[dict]) -> tuple[list[dict], list[dict]]:
         : max(0, _international_max_per_run())
     ]
 
+    web_only: dict[str, str] = {}
+    if _paparazzi_web_all_enabled():
+        # Web publica todas las de paparazzi, sin cupo; el cupo queda sólo para redes.
+        social_identities = {_identity(item) for item in paparazzi_selected}
+        eligible_identities = {_identity(item) for item in paparazzi_pool}
+        for item in paparazzi_all:
+            identity = _identity(item)
+            if identity in social_identities:
+                continue
+            paparazzi_selected.append(item)
+            if is_video_only_paparazzi(item):
+                web_only[identity] = SOCIAL_SKIP_VIDEO
+            elif identity in eligible_identities:
+                web_only[identity] = SOCIAL_SKIP_SOCIAL_CAP
+            else:
+                web_only[identity] = SOCIAL_SKIP_LOW_RELEVANCE
+
     selected = local_selected + paparazzi_selected + infobae_selected + international_selected
     selected_identities = {_identity(item) for item in selected}
     rest = [item for item in pending if _identity(item) not in selected_identities]
-    return selected, rest
+    return selected, rest, web_only
 
 
 def _bucket_name(item: dict) -> str:
@@ -289,14 +349,14 @@ def compute_next_batch() -> dict:
         and not item.get("selected_for_publish")
         and (bool(item.get("web_url")) or _identity(item) in web_identities)
     ]
-    selected, _rest = select_batch(pending)
+    selected, _rest, web_only = select_batch_detailed(pending)
 
     counts = {"local": 0, "paparazzi": 0, "infobae": 0, "internacional": 0}
     for item in selected:
         counts[_bucket_name(item)] += 1
 
     if not selected:
-        return {"batch_id": None, "selected": 0, **counts}
+        return {"batch_id": None, "selected": 0, "web_only": 0, **counts}
 
     batch_id = uuid.uuid4().hex
     now = int(time.time())
@@ -310,6 +370,9 @@ def compute_next_batch() -> dict:
                     item["publish_batch_id"] = batch_id
                     item["publish_batch_at"] = now
                     item["publish_bucket"] = _bucket_name(item)
+                    reason = web_only.get(_identity(item))
+                    if reason:
+                        item["social_skip_reason"] = reason
             return queue
 
         update_json(path, mutate, [], expected_type=list)
@@ -318,11 +381,12 @@ def compute_next_batch() -> dict:
     stamp(WEB_PATH)
 
     logger.info(
-        "Lote de publicación %s: local=%s paparazzi=%s infobae=%s internacional=%s",
+        "Lote de publicación %s: local=%s paparazzi=%s infobae=%s internacional=%s (sólo Web: %s)",
         batch_id,
         counts["local"],
         counts["paparazzi"],
         counts["infobae"],
         counts["internacional"],
+        len(web_only),
     )
-    return {"batch_id": batch_id, "selected": len(selected), **counts}
+    return {"batch_id": batch_id, "selected": len(selected), "web_only": len(web_only), **counts}

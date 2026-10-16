@@ -1342,7 +1342,7 @@
 - Estado actual: **corregido en `fix/meta-page-token`; activo desde el próximo
   arranque del supervisor**.
 
-## 95. Fuente Infobae Policiales nunca llegó a la reescritura — ABIERTO 2026-10-16
+## 95. Fuente Infobae Policiales nunca llegó a la reescritura — CORREGIDO 2026-10-16
 
 - ID: severidad media. `main_infobae_policiales.py` corre desde `71a80ad` y deja
   sus notas en `data/noticias_norewrite_infobae_policiales.json`, pero
@@ -1352,5 +1352,10 @@
   se conecta tal cual, `post_to_instagram_detailed` publicaría ese MP4 crudo como
   Reel (sin plantilla EditorialReel, material de Infobae) y Facebook un link.
 - Al conectarlo, `ARTICLE_MAX_AGE_DAYS=1` expira las 408 viejas antes de la IA
-  (sin publicar). Falta decisión del operador sobre el formato antes de conectar.
-- Estado actual: **abierto; fuente sin conectar a propósito**.
+  (sin publicar).
+- Corrección: el archivo se agregó a `INPUT_FILES`; por decisión del operador
+  (`DECISIONS` 2026-10-16), la nota con video sale sólo como Reel EditorialReel
+  (`INFOBAE_VIDEO_ONLY_ENABLED`, etapa `meta/run_paparazzi_videos.py`), nunca el
+  MP4 crudo ni artículo Web; sin video, nota normal. Simulación al 16/10: de las
+  408, sólo 5 (del 15/10, todas con video) pasan la antigüedad.
+- Estado actual: **corregido en código; pendiente de verificar en producción**.

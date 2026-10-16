@@ -25,6 +25,15 @@ logger = setup_logger("run_x_videos", "run_x_videos.log")
 MAX_ATTEMPTS = 3
 
 
+def _time_budget_seconds() -> float:
+    """Tiempo de la etapa para encadenar Reels; lo que no entra queda pendiente
+    para el próximo ciclo (menor que el timeout del supervisor, 1200 s)."""
+    try:
+        return max(60.0, float(os.getenv("VIDEO_STAGE_TIME_BUDGET_SECONDS", "900")))
+    except ValueError:
+        return 900.0
+
+
 def _enabled() -> bool:
     return str(os.getenv("X_VIDEO_REELS_ENABLED", "false")).strip().lower() in {
         "1", "true", "yes", "on", "si", "sí",
@@ -120,6 +129,7 @@ def main() -> StageResult:
         ambiguous = xv.recover_interrupted()
         feed, feed_issue = xv.read_feed()
         ingested = xv.ingest(feed) if feed else {"new": 0, "skipped_old": 0, "skipped_duplicate_url": 0}
+        # 0 = sin tope: se publican todos, cortando por tiempo (el resto, al próximo ciclo).
         selected = xv.pending_jobs(int(os.getenv("X_VIDEO_MAX_PER_CYCLE", "2")))
     except JsonStateError as exc:
         logger.error("Estado de videos de X ilegible: %s", exc)
@@ -141,9 +151,13 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
         )
 
-    succeeded = failed = deferred = processed = skipped = 0
+    succeeded = failed = deferred = processed = skipped = left_for_next_cycle = 0
     next_retry_at = None
+    budget = _time_budget_seconds()
     for index, (job_id, job) in enumerate(selected):
+        if processed and time.monotonic() - started >= budget:
+            left_for_next_cycle = len(selected) - index
+            break
         until = rate_limit_until() if instagram else 0
         if time.time() < until:
             deferred += len(selected) - index
@@ -165,14 +179,14 @@ def main() -> StageResult:
         "x_videos",
         received=len(feed),
         # Un descarte editorial es una decisión, no trabajo fallido ni pendiente.
-        selected=len(selected) - skipped,
+        selected=len(selected) - left_for_next_cycle - skipped,
         processed=processed - skipped,
         succeeded=succeeded,
         failed=failed,
         deferred=deferred,
         next_retry_at=next_retry_at,
         duration_seconds=time.monotonic() - started,
-        details={**details, "editorial_skipped": skipped},
+        details={**details, "editorial_skipped": skipped, "left_for_next_cycle": left_for_next_cycle},
     )
     if deferred and result.status == StageStatus.SUCCESS:
         result.status = StageStatus.DEGRADED

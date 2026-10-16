@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.test_publish_selection import _local, _paparazzi
+from tests.test_publish_selection import _infobae, _local, _paparazzi
 
 _SELECTION_ENV = {
     "PUBLISH_LOCAL_MAX_PER_RUN": "6",
@@ -127,6 +127,91 @@ class SelectionCriteriaTests(unittest.TestCase):
             PUBLISH_INTERNATIONAL_MAX_PER_RUN="1",
         )
         self.assertEqual(1, len(selected))
+
+    def test_web_all_publishes_every_paparazzi_and_marks_social_skips(self):
+        pending = [
+            _paparazzi("video", video=True, score=1),
+            _paparazzi("bajo", score=3),
+            _paparazzi("a", score=9),
+            _paparazzi("b", score=8),
+            _paparazzi("c", score=7),
+        ]
+        with mock.patch.dict(
+            os.environ,
+            {
+                **_SELECTION_ENV,
+                "PUBLISH_PAPARAZZI_WEB_ALL": "true",
+                "PAPARAZZI_VIDEO_ONLY_ENABLED": "true",
+                "PUBLISH_PAPARAZZI_MIN_SCORE": "6",
+                "PUBLISH_PAPARAZZI_MAX_PER_RUN": "2",
+                "PUBLISH_LOCAL_MAX_PER_RUN": "0",
+            },
+        ):
+            selected, rest, web_only = self.module.select_batch_detailed(pending)
+        self.assertEqual(5, len(selected))
+        self.assertEqual([], rest)
+        self.assertEqual(
+            {
+                "https://paparazzi.com.ar/video": "policy_video_reel_only",
+                "https://paparazzi.com.ar/bajo": "policy_paparazzi_low_relevance",
+                "https://paparazzi.com.ar/c": "policy_paparazzi_social_cap",
+            },
+            web_only,
+        )
+
+    def test_infobae_with_video_is_reel_only_and_never_web(self):
+        pending = [_infobae("v", video=True), _infobae("i")]
+        selected, rest = self._select(pending, INFOBAE_VIDEO_ONLY_ENABLED="true")
+        self.assertEqual({"infobae-i"}, _ids(selected))
+        self.assertEqual({"infobae-v"}, _ids(rest))
+        with mock.patch.dict(os.environ, {"INFOBAE_VIDEO_ONLY_ENABLED": "true"}):
+            self.assertTrue(self.module.is_reel_only_item(pending[0]))
+            self.assertFalse(self.module.is_reel_only_item(pending[1]))
+
+    def test_compute_next_batch_stamps_social_skip_reason(self):
+        from utils.file_manager import load_json, save_json
+
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        video = _paparazzi("video", video=True, score=9)
+        imagen = _paparazzi("img", score=9)
+        with mock.patch.object(self.module, "META_PATH", str(root / "meta.json")), mock.patch.object(
+            self.module, "WEB_PATH", str(root / "web.json")
+        ), mock.patch.dict(
+            os.environ,
+            {**_SELECTION_ENV, "PUBLISH_PAPARAZZI_WEB_ALL": "true", "PAPARAZZI_VIDEO_ONLY_ENABLED": "true"},
+        ):
+            save_json(self.module.META_PATH, [video, imagen])
+            save_json(self.module.WEB_PATH, [dict(video), dict(imagen)])
+            result = self.module.compute_next_batch()
+            meta = load_json(self.module.META_PATH, [], expected_type=list)
+            web = load_json(self.module.WEB_PATH, [], expected_type=list)
+        self.assertEqual((2, 1), (result["selected"], result["web_only"]))
+        for queue in (meta, web):
+            by_title = {item["titulo"]: item for item in queue}
+            self.assertTrue(by_title["paparazzi-video"]["selected_for_publish"])
+            self.assertEqual("policy_video_reel_only", by_title["paparazzi-video"]["social_skip_reason"])
+            self.assertNotIn("social_skip_reason", by_title["paparazzi-img"])
+
+
+class FacebookSocialSkipTests(unittest.TestCase):
+    def test_bootstrap_skips_web_only_items(self):
+        from meta import run_fb
+
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        meta = root / "meta.json"
+        base = {"selected_for_publish": True, "web_url": "https://lavozriojana.com/x"}
+        items = [
+            {**_paparazzi("video", video=True), **base, "social_skip_reason": "policy_video_reel_only"},
+            {**_paparazzi("img", score=9), **base},
+        ]
+        meta.write_text(json.dumps(items), encoding="utf-8")
+        with mock.patch.object(run_fb, "META_INPUT", str(meta)), mock.patch.object(
+            run_fb, "is_too_old_for_bootstrap", return_value=False
+        ), mock.patch.object(run_fb, "enqueue_many") as enqueue:
+            self.assertEqual(1, run_fb._bootstrap_queue())
+        self.assertEqual(["paparazzi-img"], [item["titulo"] for item in enqueue.call_args.args[0]])
 
 
 class RelevanceFallbackTests(unittest.TestCase):
@@ -288,6 +373,20 @@ class PaparazziVideoJobsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PAPARAZZI_VIDEO_ONLY_ENABLED": "false"}):
             self.assertEqual({"new": 0}, self.jobs.ingest(now=now))
 
+    def test_ingest_infobae_video_notes(self):
+        now = int(time.time())
+        self._write_meta([{**_infobae("v", video=True), "queued_at": now - 60}, {**_infobae("i"), "queued_at": now}])
+        with mock.patch.dict(os.environ, {"PAPARAZZI_VIDEO_ONLY_ENABLED": "false", "INFOBAE_VIDEO_ONLY_ENABLED": "true"}):
+            self.assertEqual({"new": 1}, self.jobs.ingest(now=now))
+        self.assertEqual("infobae_policiales", self.jobs.pending_jobs(0)[0][1]["noticia"]["source"])
+
+    def test_pending_jobs_without_limit_returns_all(self):
+        now = int(time.time())
+        self._write_meta([{**_paparazzi(i, video=True), "queued_at": now - i} for i in range(4)])
+        self.jobs.ingest(now=now)
+        self.assertEqual(4, len(self.jobs.pending_jobs(0)))
+        self.assertEqual(2, len(self.jobs.pending_jobs(2)))
+
     def test_stale_pending_expires(self):
         now = int(time.time())
         self._write_meta([{**_paparazzi("v", video=True), "queued_at": now - 60}])
@@ -354,9 +453,32 @@ class RunPaparazziVideosTests(unittest.TestCase):
         self.assertEqual("pending", self._job()["status"])
 
     def test_disabled_by_default(self):
-        with mock.patch.dict(os.environ, {"PAPARAZZI_VIDEO_ONLY_ENABLED": "false"}):
+        with mock.patch.dict(
+            os.environ, {"PAPARAZZI_VIDEO_ONLY_ENABLED": "false", "INFOBAE_VIDEO_ONLY_ENABLED": "false"}
+        ):
             result = self.stage.main()
         self.assertEqual({"disabled": True}, result.details)
+
+    def test_time_budget_leaves_the_rest_pending(self):
+        jobs = {f"reel:{i}": {**self.job, "queued_at": i} for i in range(3)}
+        self.jobs_path.write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+        plan = mock.Mock()
+        plan.channel_enabled.return_value = True
+        clock = iter([0.0, 0.0, 1000.0, 1000.0, 1000.0])
+        with mock.patch.dict(
+            os.environ,
+            {"PAPARAZZI_VIDEO_ONLY_ENABLED": "true", "PAPARAZZI_VIDEO_MAX_PER_CYCLE": "0", "VIDEO_STAGE_TIME_BUDGET_SECONDS": "900"},
+        ), mock.patch.object(self.stage, "deployment_plan", return_value=plan), mock.patch.object(
+            self.stage.pv, "ingest", return_value={"new": 0}
+        ), mock.patch.object(self.stage.pv, "expire_stale", return_value=0), mock.patch.object(
+            self.stage, "rate_limit_until", return_value=0
+        ), mock.patch.object(self.stage, "_process", return_value="completed") as process, mock.patch.object(
+            self.stage.time, "monotonic", side_effect=lambda: next(clock)
+        ):
+            result = self.stage.main()
+        self.assertEqual(1, process.call_count)
+        self.assertEqual(2, result.details["left_for_next_cycle"])
+        self.assertEqual("success", str(getattr(result.status, "value", result.status)))
 
 
 if __name__ == "__main__":

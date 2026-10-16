@@ -301,6 +301,7 @@ def validate_config(
     _positive_int(report, env, "PUBLISH_INTERNATIONAL_MIN_SCORE", 8, minimum=0, maximum=10)
     _positive_int(report, env, "PUBLISH_INTERNATIONAL_MAX_PER_RUN", 1, minimum=0, maximum=20)
     _positive_int(report, env, "IG_LOCAL_DAILY_MAX", 0, minimum=0, maximum=100)
+    _positive_int(report, env, "VIDEO_STAGE_TIME_BUDGET_SECONDS", 900, minimum=60, maximum=1100)
     _positive_int(
         report,
         env,
@@ -403,6 +404,8 @@ def validate_config(
         ("REEL_CINEMATIC_VISUAL_STYLE_ENABLED", "false"),
         ("REEL_EDITORIAL_SCORE_ENABLED", "false"),
         ("PAPARAZZI_VIDEO_ONLY_ENABLED", "false"),
+        ("INFOBAE_VIDEO_ONLY_ENABLED", "false"),
+        ("PUBLISH_PAPARAZZI_WEB_ALL", "false"),
         ("PUBLISH_INTERNATIONAL_BUCKET_ENABLED", "false"),
         ("REEL_REQUIRE_REMOTION", "false"),
         ("REEL_SOURCE_NORMALIZE_ENABLED", "false"),
@@ -613,6 +616,9 @@ def config_inventory() -> dict[str, list[str]]:
                 "REEL_EDITORIAL_SCORE_ENABLED",
                 "REEL_EDITORIAL_MIN_SCORE",
                 "PAPARAZZI_VIDEO_ONLY_ENABLED",
+                "INFOBAE_VIDEO_ONLY_ENABLED",
+                "PUBLISH_PAPARAZZI_WEB_ALL",
+                "VIDEO_STAGE_TIME_BUDGET_SECONDS",
                 "PAPARAZZI_VIDEO_MAX_PER_CYCLE",
                 "PUBLISH_PAPARAZZI_MIN_SCORE",
                 "PUBLISH_INTERNATIONAL_BUCKET_ENABLED",

@@ -47,6 +47,9 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
+    # Infobae policiales: el scraper escribía desde 2026-08 pero nunca se leía
+    # (KNOWN_ISSUES 95). Lo atrasado cae por ARTICLE_MAX_AGE_DAYS antes de la IA.
+    os.path.join(DATA_DIR, "noticias_norewrite_infobae_policiales.json"),
 ]
 META_OUTPUT = os.path.join(DATA_DIR, "noticias_meta.json")
 WEB_OUTPUT = os.path.join(DATA_DIR, "noticias_web_pending.json")
@@ -105,6 +108,7 @@ META_FIELDS = (
     "publish_batch_id",
     "publish_batch_at",
     "publish_bucket",
+    "social_skip_reason",
 )
 
 WEB_EXCLUDE_FIELDS = {

@@ -293,6 +293,10 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
         if not manual_override and not noticia.get("selected_for_publish"):
             omitted_by_policy += 1
             continue
+        # Seleccionada sólo para la Web (p. ej. paparazzi con video: sale como Reel).
+        if not manual_override and noticia.get("social_skip_reason"):
+            omitted_by_policy += 1
+            continue
         if not manual_override and _is_suppressed(noticia):
             omitted_by_policy += 1
             continue

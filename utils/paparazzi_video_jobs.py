@@ -1,11 +1,13 @@
-"""Notas de paparazzi con video publicadas sólo como Reel (sin Web ni imagen).
+"""Notas con video (paparazzi, Infobae) publicadas en redes sólo como Reel.
 
-Con ``PAPARAZZI_VIDEO_ONLY_ENABLED`` la nota de paparazzi que trae video no
-entra al lote común (``utils/publish_selection.py``): no genera artículo Web,
-ni post con link en Facebook, ni imagen en Instagram. Este módulo la toma de
-``noticias_meta.json`` (sólo lectura) y la registra como job propio en
+Con ``PAPARAZZI_VIDEO_ONLY_ENABLED`` / ``INFOBAE_VIDEO_ONLY_ENABLED`` la nota
+que trae video no sale en Facebook ni Instagram como imagen ni con link (ver
+``utils/publish_selection.py``; la de paparazzi sí va a la Web con
+``PUBLISH_PAPARAZZI_WEB_ALL``). Este módulo la toma de ``noticias_meta.json``
+(sólo lectura) y la registra como job propio en
 ``data/paparazzi_video_jobs.json``; ``meta/run_paparazzi_videos.py`` la
-publica como Reel EditorialReel en Instagram y Facebook.
+publica como Reel EditorialReel en Instagram y Facebook, sin puntaje editorial
+y fuera de todo cupo del lote.
 
 Flujo propio y separado (mismo patrón que ``utils/x_video_reels.py``): sólo
 comparte con el resto el backoff de rate limit de Meta y el dedup de reels
@@ -20,7 +22,7 @@ from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import reel_dedup_key
 from utils.paths import data_dir
-from utils.publish_selection import is_video_only_paparazzi
+from utils.publish_selection import is_reel_only_item
 from utils.social_queue import bootstrap_not_before
 
 logger = setup_logger("paparazzi_video_jobs", "paparazzi_video_jobs.log")
@@ -62,7 +64,7 @@ def _queued_at(noticia: dict) -> int | None:
 
 
 def ingest(*, now: float | None = None) -> dict[str, int]:
-    """Registra como ``pending`` las notas de paparazzi con video recientes.
+    """Registra como ``pending`` las notas con video recientes (sólo Reel).
 
     Sólo entran notas encoladas después del corte operativo
     (``SOCIAL_BOOTSTRAP_NOT_BEFORE_TS``) y dentro de
@@ -75,7 +77,7 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
 
     candidates: list[tuple[str, dict]] = []
     for noticia in noticias:
-        if not isinstance(noticia, dict) or not is_video_only_paparazzi(noticia):
+        if not isinstance(noticia, dict) or not is_reel_only_item(noticia):
             continue
         queued = _queued_at(noticia)
         if queued is None or queued < cutoff:
@@ -107,7 +109,7 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
 
     update_json(STATE_PATH, mutate, {"jobs": {}}, expected_type=dict)
     if counts["new"]:
-        logger.info("Notas de paparazzi con video registradas para Reel: %s", counts["new"])
+        logger.info("Notas con video registradas para Reel: %s", counts["new"])
     return counts
 
 
@@ -156,8 +158,8 @@ def expire_stale(*, now: float | None = None) -> int:
 
 
 def pending_jobs(limit: int) -> list[tuple[str, dict]]:
-    """Pendientes del más viejo al más nuevo."""
+    """Pendientes del más viejo al más nuevo (``limit`` <= 0: todos)."""
     state = load_json(STATE_PATH, {"jobs": {}}, expected_type=dict)
     pending = [(job_id, job) for job_id, job in state.get("jobs", {}).items() if job.get("status") == "pending"]
     pending.sort(key=lambda pair: (int(pair[1].get("queued_at") or 0), pair[0]))
-    return pending[: max(0, limit)]
+    return pending[:limit] if limit > 0 else pending

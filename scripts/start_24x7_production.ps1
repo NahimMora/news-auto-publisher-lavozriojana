@@ -38,25 +38,31 @@ $env:IG_CAPTION_FROM_WEB_ENABLED = "true"
 $env:IG_STATIC_QUIET_HOURS = "0-7"
 # Videos de X enviados por el backend de HolaSalta (C:/sources/x_video_sources.json): sólo Reel.
 $env:X_VIDEO_REELS_ENABLED = "true"
-$env:X_VIDEO_MAX_PER_CYCLE = "2"
+# 0 = sin tope por ciclo: se publican todos los videos, cortando por tiempo
+# (VIDEO_STAGE_TIME_BUDGET_SECONDS) y dejando el resto para el ciclo siguiente.
+$env:X_VIDEO_MAX_PER_CYCLE = "0"
 $env:X_VIDEO_MAX_AGE_HOURS = "24"
-# Reels automáticos (X y paparazzi): sólo plantilla Remotion, sin overlay clásico
-# de ffmpeg. Videos de X: sólo con puntaje editorial >= 70 (paparazzi no se puntúa).
-# Ver docs/DECISIONS.md (2026-10-15 y 2026-10-16).
+# Reels automáticos (X, paparazzi e Infobae): sólo plantilla Remotion, sin overlay
+# clásico de ffmpeg. Todos los videos se publican: sin puntaje editorial y fuera
+# de los cupos del lote. Ver docs/DECISIONS.md (2026-10-15 y 2026-10-16).
 $env:REEL_REQUIRE_REMOTION = "true"
 $env:REEL_SOURCE_NORMALIZE_ENABLED = "true"
 $env:REMOTION_REEL_TIMEOUT_MS = "120000"
 $env:REMOTION_REEL_ATTEMPTS = "2"
-$env:REEL_EDITORIAL_SCORE_ENABLED = "true"
-$env:REEL_EDITORIAL_MIN_SCORE = "70"
+$env:REEL_EDITORIAL_SCORE_ENABLED = "false"
+$env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "900"
 # Criterio editorial del lote (ver docs/DECISIONS.md 2026-10-16):
-# - paparazzi con video: sólo el Reel (sin Web, ni link en Facebook, ni imagen);
-# - paparazzi sin video: sólo con relevancia >= 6/10;
+# - paparazzi: todas a la Web, sin cupo;
+# - paparazzi con video: en redes sólo el Reel (sin link en Facebook ni imagen);
+# - paparazzi sin video: en redes sólo con relevancia >= 6/10;
+# - Infobae con video: sólo el Reel (sin Web); sin video, nota normal;
 # - internacionales: balde propio, sólo alto impacto (>= 8/10), 1 por ciclo;
 # - Instagram: locales sólo último momento, policiales y sociedad, máx. 12 por día.
 $env:PAPARAZZI_VIDEO_ONLY_ENABLED = "true"
-$env:PAPARAZZI_VIDEO_MAX_PER_CYCLE = "2"
+$env:PAPARAZZI_VIDEO_MAX_PER_CYCLE = "0"
 $env:PAPARAZZI_VIDEO_MAX_AGE_HOURS = "24"
+$env:PUBLISH_PAPARAZZI_WEB_ALL = "true"
+$env:INFOBAE_VIDEO_ONLY_ENABLED = "true"
 $env:PUBLISH_PAPARAZZI_MIN_SCORE = "6"
 $env:PUBLISH_INTERNATIONAL_BUCKET_ENABLED = "true"
 $env:PUBLISH_INTERNATIONAL_MIN_SCORE = "8"

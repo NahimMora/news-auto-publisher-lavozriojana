@@ -1,8 +1,8 @@
-"""Etapa estructurada: notas de paparazzi con video publicadas sólo como Reel.
+"""Etapa estructurada: notas con video (paparazzi, Infobae) publicadas como Reel.
 
 Ver ``utils/paparazzi_video_jobs.py``. El Reel sale siempre con la plantilla
-EditorialReel; si no se puede renderizar se reintenta y nunca se publica la
-nota como imagen ni como artículo Web.
+EditorialReel, sin puntaje editorial y fuera de los cupos del lote; si no se
+puede renderizar se reintenta y nunca se publica en redes como imagen.
 """
 from __future__ import annotations
 
@@ -24,13 +24,22 @@ from utils.deployment import deployment_plan
 from utils.file_manager import JsonStateError
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import delete_reel_upload, publish_facebook_reel, render_reel_item
-from utils.publish_selection import paparazzi_video_only_enabled
+from utils.publish_selection import video_reels_enabled
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 
 logger = setup_logger("run_paparazzi_videos", "run_paparazzi_videos.log")
 
 STAGE = "paparazzi_videos"
 MAX_ATTEMPTS = 3
+
+
+def _time_budget_seconds() -> float:
+    """Tiempo de la etapa para encadenar Reels; lo que no entra queda pendiente
+    para el próximo ciclo (menor que el timeout del supervisor, 1200 s)."""
+    try:
+        return max(60.0, float(os.getenv("VIDEO_STAGE_TIME_BUDGET_SECONDS", "900")))
+    except ValueError:
+        return 900.0
 
 
 def _retry_or_dead(job_id: str, job: dict, reason: str) -> None:
@@ -80,7 +89,7 @@ def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
         )
         _record_evidence(job_id, noticia, ig_id=ig_id, fb_id=fb_id)
         logger.info(
-            "Reel de paparazzi publicado: %s | ig=%s fb=%s",
+            "Reel de nota con video publicado: %s | ig=%s fb=%s",
             str(noticia.get("titulo") or "")[:80],
             ig_id or "-",
             fb_id or "-",
@@ -107,7 +116,7 @@ def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
 
 def main() -> StageResult:
     started = time.monotonic()
-    if not paparazzi_video_only_enabled():
+    if not video_reels_enabled():
         return StageResult(STAGE, StageStatus.NO_WORK, details={"disabled": True})
     plan = deployment_plan()
     instagram = plan.channel_enabled("instagram")
@@ -119,6 +128,7 @@ def main() -> StageResult:
         ambiguous = pv.recover_interrupted()
         ingested = pv.ingest()
         expired = pv.expire_stale()
+        # 0 = sin tope: se publican todos, cortando por tiempo (el resto, al próximo ciclo).
         selected = pv.pending_jobs(int(os.getenv("PAPARAZZI_VIDEO_MAX_PER_CYCLE", "2")))
     except JsonStateError as exc:
         logger.error("Estado de reels de paparazzi ilegible: %s", exc)
@@ -140,9 +150,13 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
         )
 
-    succeeded = failed = deferred = processed = 0
+    succeeded = failed = deferred = processed = left_for_next_cycle = 0
     next_retry_at = None
+    budget = _time_budget_seconds()
     for index, (job_id, job) in enumerate(selected):
+        if processed and time.monotonic() - started >= budget:
+            left_for_next_cycle = len(selected) - index
+            break
         until = rate_limit_until() if instagram else 0
         if time.time() < until:
             deferred += len(selected) - index
@@ -158,10 +172,12 @@ def main() -> StageResult:
         else:
             failed += 1
 
+    details["left_for_next_cycle"] = left_for_next_cycle
+    attempted = len(selected) - left_for_next_cycle
     result = result_from_counts(
         STAGE,
         received=len(selected),
-        selected=len(selected),
+        selected=attempted,
         processed=processed,
         succeeded=succeeded,
         failed=failed,
