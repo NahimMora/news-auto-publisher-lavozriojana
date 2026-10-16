@@ -55,7 +55,7 @@ $env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "900"
 # - paparazzi: todas a la Web, sin cupo;
 # - paparazzi con video: en redes sólo el Reel (sin link en Facebook ni imagen);
 # - paparazzi sin video: en redes sólo con relevancia >= 6/10;
-# - Infobae con video: sólo el Reel (sin Web); sin video, nota normal;
+# - Infobae con video: Reel en redes y artículo Web; sin video, nota normal;
 # - internacionales: balde propio, sólo alto impacto (>= 8/10), 1 por ciclo;
 # - Instagram: locales sólo último momento, policiales y sociedad, máx. 12 por día.
 $env:PAPARAZZI_VIDEO_ONLY_ENABLED = "true"

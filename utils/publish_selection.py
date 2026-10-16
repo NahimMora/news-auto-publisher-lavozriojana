@@ -31,7 +31,7 @@ Filtros editoriales (apagados por defecto, ver docs/DECISIONS.md 2026-10-16):
 - ``PAPARAZZI_VIDEO_ONLY_ENABLED`` / ``INFOBAE_VIDEO_ONLY_ENABLED``: la nota con
   video de esa fuente no sale en redes como imagen ni con link; se publica sólo
   el Reel desde ``meta/run_paparazzi_videos.py`` (fuera de todo cupo). La de
-  Infobae tampoco genera artículo Web.
+  Infobae va además a la Web, sin cupo, marcada sólo Web.
 - ``PUBLISH_PAPARAZZI_MIN_SCORE``: paparazzi sin video sale en redes sólo con
   ``paparazzi_relevance_score`` >= umbral (sin puntaje por falla de IA: pasa,
   pero al final de la fila).
@@ -179,7 +179,7 @@ def is_video_only_paparazzi(item: dict) -> bool:
 
 
 def is_video_only_infobae(item: dict) -> bool:
-    """Nota de Infobae con video que sale sólo como Reel, sin Web (flag activo)."""
+    """Nota de Infobae con video: Reel en redes y artículo Web (flag activo)."""
     return infobae_video_only_enabled() and _is_infobae(item) and _has_video(item)
 
 
@@ -259,7 +259,9 @@ def select_batch_detailed(pending: list[dict]) -> tuple[list[dict], list[dict], 
     ]
     paparazzi_all = [item for item in pending if isinstance(item, dict) and _is_paparazzi(item)]
     paparazzi_pool = [item for item in paparazzi_all if _paparazzi_eligible(item)]
-    # Infobae con video sale sólo como Reel (run_paparazzi_videos), nunca en el lote.
+    # Infobae con video: en redes sólo Reel (run_paparazzi_videos); a la Web va
+    # sin cupo, marcada sólo Web (abajo).
+    infobae_videos = [item for item in pending if isinstance(item, dict) and is_video_only_infobae(item)]
     infobae_pool = [
         item
         for item in pending
@@ -305,6 +307,10 @@ def select_batch_detailed(pending: list[dict]) -> tuple[list[dict], list[dict], 
                 web_only[identity] = SOCIAL_SKIP_SOCIAL_CAP
             else:
                 web_only[identity] = SOCIAL_SKIP_LOW_RELEVANCE
+
+    for item in infobae_videos:
+        infobae_selected.append(item)
+        web_only[_identity(item)] = SOCIAL_SKIP_VIDEO
 
     selected = local_selected + paparazzi_selected + infobae_selected + international_selected
     selected_identities = {_identity(item) for item in selected}

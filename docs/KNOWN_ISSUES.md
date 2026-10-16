@@ -1356,6 +1356,6 @@
 - Corrección: el archivo se agregó a `INPUT_FILES`; por decisión del operador
   (`DECISIONS` 2026-10-16), la nota con video sale sólo como Reel EditorialReel
   (`INFOBAE_VIDEO_ONLY_ENABLED`, etapa `meta/run_paparazzi_videos.py`), nunca el
-  MP4 crudo ni artículo Web; sin video, nota normal. Simulación al 16/10: de las
+  MP4 crudo, más artículo Web; sin video, nota normal. Simulación al 16/10: de las
   408, sólo 5 (del 15/10, todas con video) pasan la antigüedad.
 - Estado actual: **corregido en código; pendiente de verificar en producción**.

@@ -159,14 +159,21 @@ class SelectionCriteriaTests(unittest.TestCase):
             web_only,
         )
 
-    def test_infobae_with_video_is_reel_only_and_never_web(self):
-        pending = [_infobae("v", video=True), _infobae("i")]
-        selected, rest = self._select(pending, INFOBAE_VIDEO_ONLY_ENABLED="true")
-        self.assertEqual({"infobae-i"}, _ids(selected))
-        self.assertEqual({"infobae-v"}, _ids(rest))
+    def test_infobae_with_video_goes_web_only_without_cap(self):
+        pending = [_infobae("v", video=True), _infobae("w", video=True), _infobae("i")]
+        with mock.patch.dict(
+            os.environ, {**_SELECTION_ENV, "INFOBAE_VIDEO_ONLY_ENABLED": "true", "PUBLISH_INFOBAE_MAX_PER_RUN": "1"}
+        ):
+            selected, rest, web_only = self.module.select_batch_detailed(pending)
+        self.assertEqual({"infobae-v", "infobae-w", "infobae-i"}, _ids(selected))
+        self.assertEqual([], rest)
+        self.assertEqual(
+            {"https://infobae.com/v": "policy_video_reel_only", "https://infobae.com/w": "policy_video_reel_only"},
+            web_only,
+        )
         with mock.patch.dict(os.environ, {"INFOBAE_VIDEO_ONLY_ENABLED": "true"}):
             self.assertTrue(self.module.is_reel_only_item(pending[0]))
-            self.assertFalse(self.module.is_reel_only_item(pending[1]))
+            self.assertFalse(self.module.is_reel_only_item(pending[2]))
 
     def test_compute_next_batch_stamps_social_skip_reason(self):
         from utils.file_manager import load_json, save_json

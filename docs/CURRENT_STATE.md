@@ -28,7 +28,7 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   momento/policiales/sociedad y máximo 12 por día; Facebook sin cambios. Deportes
   sigue excluido.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
-  Reel EditorialReel (sin Web), sin video nota normal.
+  Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

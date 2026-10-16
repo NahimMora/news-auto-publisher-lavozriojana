@@ -2219,9 +2219,9 @@ y la del puntaje de X):
 - **En redes, paparazzi con video sigue siendo sólo el Reel** y paparazzi sin
   video sigue necesitando relevancia ≥ 6.
 - **Infobae Policiales conectado** (`KNOWN_ISSUES` 95, opción A): con video ⇒ sólo
-  Reel EditorialReel (`INFOBAE_VIDEO_ONLY_ENABLED`), sin artículo Web ni imagen,
-  por la misma etapa `meta/run_paparazzi_videos.py`; sin video ⇒ nota normal en
-  su balde. El video fuente se recorta a 90 s como cualquier Reel.
+  Reel EditorialReel en redes (`INFOBAE_VIDEO_ONLY_ENABLED`, misma etapa
+  `meta/run_paparazzi_videos.py`) y artículo Web sin cupo, marcado
+  `policy_video_reel_only`; sin video ⇒ nota normal en su balde. El video fuente se recorta a 90 s como cualquier Reel.
 - **Todos los videos se publican, sin valoración y sin ocupar cupo**: puntaje
   editorial apagado también para X (`REEL_EDITORIAL_SCORE_ENABLED=false`);
   `X_VIDEO_MAX_PER_CYCLE=0` y `PAPARAZZI_VIDEO_MAX_PER_CYCLE=0` significan sin
