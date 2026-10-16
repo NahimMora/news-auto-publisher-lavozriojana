@@ -50,7 +50,7 @@ $env:REEL_SOURCE_NORMALIZE_ENABLED = "true"
 $env:REMOTION_REEL_TIMEOUT_MS = "120000"
 $env:REMOTION_REEL_ATTEMPTS = "2"
 $env:REEL_EDITORIAL_SCORE_ENABLED = "false"
-$env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "900"
+$env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "480"
 # Criterio editorial del lote (ver docs/DECISIONS.md 2026-10-16):
 # - paparazzi: todas a la Web, sin cupo;
 # - paparazzi con video: en redes sólo el Reel (sin link en Facebook ni imagen);

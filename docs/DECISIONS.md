@@ -2226,6 +2226,7 @@ y la del puntaje de X):
   editorial apagado también para X (`REEL_EDITORIAL_SCORE_ENABLED=false`);
   `X_VIDEO_MAX_PER_CYCLE=0` y `PAPARAZZI_VIDEO_MAX_PER_CYCLE=0` significan sin
   tope por ciclo. Cada etapa de video corta por tiempo
-  (`VIDEO_STAGE_TIME_BUDGET_SECONDS`, 900 s, menor que el timeout de 1200 s) y
+  (`VIDEO_STAGE_TIME_BUDGET_SECONDS`, 480 s: un Reel tarda hasta ~7 min y el timeout
+  de la etapa es 1200 s; con 900 s el 16/10 se cortó un Reel a mitad de subida) y
   deja el resto pendiente para el ciclo siguiente. Los Reels no cuentan en
   `IG_MAX_PER_RUN`, `PUBLISH_MAX_PER_RUN` ni `IG_LOCAL_DAILY_MAX`.

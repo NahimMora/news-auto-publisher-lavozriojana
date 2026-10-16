@@ -29,9 +29,9 @@ def _time_budget_seconds() -> float:
     """Tiempo de la etapa para encadenar Reels; lo que no entra queda pendiente
     para el próximo ciclo (menor que el timeout del supervisor, 1200 s)."""
     try:
-        return max(60.0, float(os.getenv("VIDEO_STAGE_TIME_BUDGET_SECONDS", "900")))
+        return max(60.0, float(os.getenv("VIDEO_STAGE_TIME_BUDGET_SECONDS", "480")))
     except ValueError:
-        return 900.0
+        return 480.0
 
 
 def _enabled() -> bool:

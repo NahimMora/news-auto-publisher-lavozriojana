@@ -20,7 +20,7 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   deshabilitada para revisar los reels: sólo plantilla Remotion
   (`REEL_REQUIRE_REMOTION`, normalización de la fuente, timeout 120 s y 2 intentos)
   y, después, todos los videos sin puntaje editorial ni tope por ciclo (corte por
-  tiempo de 900 s por etapa). Ver `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
+  tiempo de 480 s por etapa). Ver `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
 - Criterio del lote (2026-10-16, `KNOWN_ISSUES` 94): todas las de paparazzi a la
   Web; en redes, paparazzi con video sólo como Reel (etapa
   `meta/run_paparazzi_videos.py`) y sin video con relevancia ≥ 6; internacionales

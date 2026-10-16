@@ -474,7 +474,7 @@ class RunPaparazziVideosTests(unittest.TestCase):
         clock = iter([0.0, 0.0, 1000.0, 1000.0, 1000.0])
         with mock.patch.dict(
             os.environ,
-            {"PAPARAZZI_VIDEO_ONLY_ENABLED": "true", "PAPARAZZI_VIDEO_MAX_PER_CYCLE": "0", "VIDEO_STAGE_TIME_BUDGET_SECONDS": "900"},
+            {"PAPARAZZI_VIDEO_ONLY_ENABLED": "true", "PAPARAZZI_VIDEO_MAX_PER_CYCLE": "0", "VIDEO_STAGE_TIME_BUDGET_SECONDS": "480"},
         ), mock.patch.object(self.stage, "deployment_plan", return_value=plan), mock.patch.object(
             self.stage.pv, "ingest", return_value={"new": 0}
         ), mock.patch.object(self.stage.pv, "expire_stale", return_value=0), mock.patch.object(
