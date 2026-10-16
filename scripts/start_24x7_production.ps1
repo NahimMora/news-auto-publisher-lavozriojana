@@ -24,7 +24,7 @@ $env:IG_PUBLISH_ENABLED = "true"
 $env:ARTICLE_NOT_BEFORE_DATE = ""
 # Reset de cola social del 2026-10-01 (queue-cutover --social-reset): ninguna
 # noticia ni promoción manual anterior a este epoch vuelve a entrar a FB/IG.
-$env:SOCIAL_BOOTSTRAP_NOT_BEFORE_TS = "1790829319"
+$env:SOCIAL_BOOTSTRAP_NOT_BEFORE_TS = "1792108924"
 $env:EDITORIAL_FINAL_ATTEMPT_ACTION = "publish_last_safe"
 $env:FB_LINK_PREWARM_ENABLED = "true"
 $env:FB_LINK_PREWARM_TIMEOUT_SECONDS = "20"

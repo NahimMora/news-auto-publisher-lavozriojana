@@ -2104,3 +2104,20 @@ ciclos, la cuenta alcanzó el tope diario de Instagram (KNOWN_ISSUES 91).
 
 **Revisar nuevamente cuando**: haya dos semanas de insights con la franja activa
 (comparar alcance mediano de estáticas antes/después con `cli.py kpis`).
+
+### 2026-10-15 — Page Token directo y cache de token atada al token de origen
+
+**Contexto**: tras invalidarse la sesión de Meta (`KNOWN_ISSUES` 92) el operador
+generó un Page Token. El gestor sólo sabía canjear user tokens y reusaba una cache
+derivada del token anterior.
+
+**Decisión**: `fb_token_cache.json` agrega el campo opcional `source_fingerprint`
+(SHA-256 del token configurado). Una cache sin ese campo o con otra huella se
+considera vencida y se rederiva: migración perezosa e idempotente, sin backup
+especial porque la cache es descartable y se reconstruye desde `.env`. Si el token
+configurado ya es el Page Token de `FB_PAGE_ID` (`/me` devuelve la página) se usa
+directo; `FB_ALLOW_DIRECT_TOKEN_FALLBACK` sigue apagado y sólo cubre errores de red.
+Un 190/401 de publicación invalida la cache. El preflight acepta como evidencia de
+permisos los `scopes` de `debug_token` cuando `/me/permissions` no existe.
+
+**Revisar nuevamente cuando**: se migre a un System User token sin vencimiento.

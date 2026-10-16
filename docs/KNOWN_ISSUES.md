@@ -1269,3 +1269,31 @@
 - Riesgo residual: los 8 ítems ya en dead-letter no se recuperan solos; requieren
   decisión del operador.
 - Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 92. Sesión de Meta invalidada y page token cacheado sin invalidar — CORREGIDO 2026-10-15
+
+- ID: severidad alta operativa. Desde 2026-10-14 01:16 todo Graph respondió
+  `OAuthException 190 / subcode 460` (sesión invalidada por cambio de contraseña):
+  ni Facebook ni Instagram publicaron por ~44 h y la cola social acumuló 110/118
+  pendientes.
+- Causas que impedían recuperarse con sólo rotar el `.env`:
+  1. `meta/facebook_token_manager.py` reutilizaba `fb_token_cache.json` (del 29/06)
+     sin verificar de qué token se derivó, y nada lo invalidaba ante un 190.
+  2. Con un Page Token en `FB_PAGE_ACCESS_TOKEN`, `/me/accounts` falla: sólo
+     funcionaban user tokens.
+  3. `preflight --scope facebook|instagram` consultaba `/me/permissions`, que no
+     existe para Page Tokens: falso `failed (400)` con un token válido.
+  4. El supervisor carga `.env` al arrancar y los hijos heredan esas variables
+     (`load_dotenv()` no las pisa): rotar un token exige reiniciar el supervisor.
+- Corrección: la cache guarda `source_fingerprint` (SHA-256 del token de origen) y
+  se ignora si no coincide; si `/me` del token configurado es `FB_PAGE_ID` se usa
+  directo; `fb_client._api_result` invalida la cache ante 190/401; el preflight cae
+  a `debug_token` (scopes del propio token) cuando `/me/permissions` no existe.
+- Tests: `tests.test_facebook_token_manager`,
+  `tests.test_preflight...test_page_token_permissions_fall_back_to_debug_token`,
+  `tests.test_meta_contracts` (invalidación ante 190).
+- Riesgo residual: el Page Token nuevo vence el **2026-12-14** (derivado de un user
+  token de 60 días). Renovarlo antes y reiniciar el supervisor. El punto 4 sigue
+  vigente por diseño.
+- Estado actual: **corregido en `fix/meta-page-token`; activo en el host desde el
+  reinicio del supervisor del 2026-10-15**.

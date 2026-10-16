@@ -3,6 +3,20 @@
 Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
 Registry; el resto del documento describe el estado previo y sigue vigente).
 
+## Token de Meta rotado y reset social (2026-10-15)
+
+- Desde 2026-10-14 01:16 FB/IG fallaban con `OAuthException 190/460` (sesión
+  invalidada). El operador generó un Page Token nuevo (vence 2026-12-14) y se
+  cargó en `FB_PAGE_ACCESS_TOKEN` e `IG_ACCESS_TOKEN`.
+- Rama `fix/meta-page-token`: Page Token directo, cache atada al token de origen,
+  invalidación ante 190 y preflight con `debug_token` (`KNOWN_ISSUES` 92).
+  Preflight facebook/instagram: `success`.
+- Con el supervisor detenido y `cli.py backup` previo: `queue-cutover
+  --social-reset --apply` excluyó 110 pendientes de Facebook y 118 de Instagram
+  (`cutoff_ts=1792108924`, fijado en el script de arranque). Web,
+  `noticias_meta.json` y la cola de videos de X (6 pendientes del mismo día, con
+  su propio corte de 24 h) no se tocaron.
+
 ## Calidad de Instagram tras el deploy (2026-10-04)
 
 - PR #9 mergeado y supervisor reactivado el 02/10 23:39 (ciclo #753). Ciclos

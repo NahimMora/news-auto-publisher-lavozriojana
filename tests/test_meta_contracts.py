@@ -70,11 +70,12 @@ class FacebookContractTests(unittest.TestCase):
                     fb_client.requests,
                     "post",
                     return_value=FakeResponse(401, {"error": {"code": 190}}),
-                ):
+                ), patch.object(fb_client, "invalidate_cache") as invalidate:
                     self.assertEqual(
                         fb_client.post_to_facebook_detailed(self._news()).error_type,
                         "invalid_credential",
                     )
+                invalidate.assert_called_once_with()
                 with patch.object(
                     fb_client.requests,
                     "post",

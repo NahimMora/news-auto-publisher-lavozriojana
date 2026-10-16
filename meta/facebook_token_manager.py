@@ -1,8 +1,11 @@
 """
 Gestiona el token de acceso a la página de Facebook.
-El .env guarda el USER token (long-lived). Este módulo lo intercambia
-automáticamente por el PAGE token via /me/accounts y lo cachea en disco.
+El .env guarda un USER token (long-lived) o directamente el PAGE token de
+FB_PAGE_ID. Un user token se intercambia por el page token via /me/accounts;
+un page token se usa tal cual. El resultado se cachea en disco junto con la
+huella del token de origen, así rotar el .env invalida la cache sola.
 """
+import hashlib
 import os
 import time
 import requests
@@ -33,17 +36,37 @@ def get_page_token() -> str:
     if not PAGE_ID or PAGE_ID == "PENDIENTE":
         raise ValueError("FB_PAGE_ID no configurado en .env")
 
-    # 1. Intentar cache
+    source_fingerprint = _fingerprint(USER_TOKEN)
+
+    # 1. Intentar cache (sólo si se derivó del token configurado hoy en .env)
     cache = load_json(TOKEN_CACHE, {})
     cached_token = cache.get("page_token")
     cached_page  = cache.get("page_id")
-    if cached_token and cached_page == PAGE_ID:
+    if (
+        cached_token
+        and cached_page == PAGE_ID
+        and cache.get("source_fingerprint") == source_fingerprint
+    ):
         logger.debug("Usando page token cacheado")
         return cached_token
 
-    # 2. Obtener page token via /me/accounts
-    logger.info("Obteniendo page token via /me/accounts...")
     try:
+        # 2. Si el token del .env ya es el page token de PAGE_ID, usarlo directo
+        me = requests.get(
+            f"{GRAPH_API}/me",
+            params={"access_token": USER_TOKEN, "fields": "id,name"},
+            timeout=15,
+        ).json()
+        if "error" in me:
+            err = me["error"]
+            raise ValueError(f"Error Meta API [{err.get('code')}]: {err.get('message')}")
+        if str(me.get("id")) == str(PAGE_ID):
+            logger.info(f"El token configurado es el page token de: {me.get('name')} ({PAGE_ID})")
+            _save_cache(USER_TOKEN, me.get("name", ""), source_fingerprint)
+            return USER_TOKEN
+
+        # 3. Obtener page token via /me/accounts
+        logger.info("Obteniendo page token via /me/accounts...")
         r = requests.get(
             f"{GRAPH_API}/me/accounts",
             params={"access_token": USER_TOKEN, "fields": "id,name,access_token"},
@@ -62,19 +85,7 @@ def get_page_token() -> str:
                 if not page_token:
                     raise ValueError(f"Página {PAGE_ID} encontrada pero sin access_token")
                 logger.info(f"Page token obtenido para: {page.get('name')} ({PAGE_ID})")
-                # Cachear
-                def update_cache(current):
-                    current.update(
-                        {
-                            "page_token": page_token,
-                            "page_id": PAGE_ID,
-                            "page_name": page.get("name", ""),
-                            "updated_at": int(time.time()),
-                        }
-                    )
-                    return current
-
-                update_json(TOKEN_CACHE, update_cache, {}, expected_type=dict)
+                _save_cache(page_token, page.get("name", ""), source_fingerprint)
                 return page_token
 
         raise ValueError(
@@ -97,6 +108,27 @@ def get_page_token() -> str:
             f"No se pudo obtener page token: {type(e).__name__}. "
             "El fallback directo está deshabilitado."
         ) from e
+
+
+def _fingerprint(token: str) -> str:
+    """Huella SHA-256 del token de origen, para detectar una rotación del .env."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _save_cache(page_token: str, page_name: str, source_fingerprint: str) -> None:
+    def update_cache(current):
+        current.update(
+            {
+                "page_token": page_token,
+                "page_id": PAGE_ID,
+                "page_name": page_name,
+                "source_fingerprint": source_fingerprint,
+                "updated_at": int(time.time()),
+            }
+        )
+        return current
+
+    update_json(TOKEN_CACHE, update_cache, {}, expected_type=dict)
 
 
 def invalidate_cache():
