@@ -2152,3 +2152,14 @@ reel con la plantilla clásica; (2) filtrar con un puntaje editorial de IA.
 
 **Revisar nuevamente cuando**: haya dos semanas de `reel_editorial_score.log`
 para comparar alcance de reels aprobados vs. el período anterior y ajustar el umbral.
+
+### 2026-10-16 — Puntaje editorial sólo para videos de X
+
+**Contexto**: tras revisar el criterio, el operador pidió no puntuar las notas de
+paparazzi con video.
+
+**Decisión del operador**: el puntaje (`score_reel_candidate`) aplica sólo a
+`meta/run_x_videos.py`. Se retiró de `publish_paparazzi_reel_as_instagram_post` y
+de `publish_paparazzi_reel`: toda nota de paparazzi con video vuelve a publicar su
+reel (siempre con `EditorialReel`; si Remotion falla, sale como imagen). Reemplaza
+la parte "Paparazzi" de la entrada del 2026-10-15.

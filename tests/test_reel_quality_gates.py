@@ -198,38 +198,45 @@ class RenderReelItemTemplateTests(unittest.TestCase):
         self.assertTrue(render.call_args.kwargs["allow_ffmpeg_fallback"])
 
 
-class PaparazziScoreGateTests(unittest.TestCase):
+class PaparazziNotScoredTests(unittest.TestCase):
+    """El puntaje editorial aplica sólo a videos de X: paparazzi publica siempre su reel."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         from utils import paparazzi_reels
-        from utils.reel_editorial_score import ReelScoreDecision
 
         self.reels = paparazzi_reels
-        self.rejected = ReelScoreDecision(False, "rejected", 30, "Trivial")
         patcher = mock.patch.object(paparazzi_reels, "STATE_PATH", str(Path(self.tmp.name) / "reels.json"))
         patcher.start()
         self.addCleanup(patcher.stop)
         env = mock.patch.dict(
             os.environ,
-            {"PAPARAZZI_REEL_ENABLED": "true", "IG_PUBLISH_ENABLED": "true", "FB_PUBLISH_ENABLED": "true"},
+            {
+                "PAPARAZZI_REEL_ENABLED": "true",
+                "IG_PUBLISH_ENABLED": "true",
+                "FB_PUBLISH_ENABLED": "true",
+                "REEL_EDITORIAL_SCORE_ENABLED": "true",
+            },
         )
         env.start()
         self.addCleanup(env.stop)
 
-    def test_rejected_video_note_falls_back_to_image_without_render(self):
-        with mock.patch.object(self.reels, "score_reel_candidate", return_value=self.rejected), mock.patch.object(
-            self.reels, "render_reel_item"
+    def test_instagram_reel_renders_without_scoring(self):
+        with mock.patch("utils.reel_editorial_score.score_reel_candidate") as score, mock.patch.object(
+            self.reels, "render_reel_item", return_value=None
         ) as render:
             self.assertIsNone(self.reels.publish_paparazzi_reel_as_instagram_post(_video_note()))
-        render.assert_not_called()
+        render.assert_called_once()
+        score.assert_not_called()
 
-    def test_rejected_extra_reel_is_not_published(self):
-        with mock.patch.object(self.reels, "score_reel_candidate", return_value=self.rejected), mock.patch.object(
-            self.reels, "render_reel_item"
+    def test_extra_reel_renders_without_scoring(self):
+        with mock.patch("utils.reel_editorial_score.score_reel_candidate") as score, mock.patch.object(
+            self.reels, "render_reel_item", return_value=None
         ) as render:
             self.reels.publish_paparazzi_reel(_video_note())
-        render.assert_not_called()
+        render.assert_called_once()
+        score.assert_not_called()
 
 
 class XVideoScoreGateTests(unittest.TestCase):

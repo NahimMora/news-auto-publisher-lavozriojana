@@ -1,13 +1,13 @@
 """Puntaje editorial con IA para decidir qué videos se publican como Reel.
 
-Aplica a los flujos automáticos de reels (videos de X y notas de paparazzi con
-video): no todo video que entra merece un Reel. Con
+Aplica sólo a los videos de X del backend de HolaSalta (no a las notas de
+paparazzi, que publican siempre su reel): no todo video que entra merece un Reel. Con
 ``REEL_EDITORIAL_SCORE_ENABLED`` apagado (default) todo video queda aprobado,
 igual que antes. Encendido, una llamada a IA puntúa el interés del video para
 La Voz Riojana y sólo se publica lo que alcanza ``REEL_EDITORIAL_MIN_SCORE``.
 
-Si la IA no responde, el video NO se aprueba (``status="unavailable"``): el
-llamador decide si reintenta (X) o publica la nota sin reel (paparazzi).
+Si la IA no responde, el video NO se aprueba (``status="unavailable"``) y el
+job de X se reintenta en otro ciclo.
 """
 from __future__ import annotations
 

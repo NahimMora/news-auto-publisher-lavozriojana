@@ -41,7 +41,8 @@ $env:X_VIDEO_REELS_ENABLED = "true"
 $env:X_VIDEO_MAX_PER_CYCLE = "2"
 $env:X_VIDEO_MAX_AGE_HOURS = "24"
 # Reels automáticos (X y paparazzi): sólo plantilla Remotion, sin overlay clásico
-# de ffmpeg, y sólo videos con puntaje editorial >= 70. Ver docs/DECISIONS.md (2026-10-15).
+# de ffmpeg. Videos de X: sólo con puntaje editorial >= 70 (paparazzi no se puntúa).
+# Ver docs/DECISIONS.md (2026-10-15 y 2026-10-16).
 $env:REEL_REQUIRE_REMOTION = "true"
 $env:REEL_SOURCE_NORMALIZE_ENABLED = "true"
 $env:REMOTION_REEL_TIMEOUT_MS = "120000"

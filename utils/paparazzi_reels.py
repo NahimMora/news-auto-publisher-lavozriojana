@@ -21,7 +21,6 @@ import time
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
-from utils.reel_editorial_score import score_reel_candidate
 from utils.url_normalization import url_hash
 
 logger = setup_logger("paparazzi_reels", "paparazzi_reels.log")
@@ -218,9 +217,6 @@ def publish_paparazzi_reel_as_instagram_post(noticia: dict):
             StageStatus.SUCCESS, external_id=str(existing["instagram_id"]), deduplicated=True
         )
 
-    if not score_reel_candidate(noticia, origin="paparazzi").allowed:
-        return None
-
     rendered = render_reel_item(noticia)
     if rendered is None:
         return None
@@ -268,9 +264,6 @@ def publish_paparazzi_reel(noticia: dict) -> None:
     ig_allowed = _enabled("IG_PUBLISH_ENABLED")
     fb_allowed = _enabled("FB_PUBLISH_ENABLED")
     if not ig_allowed and not fb_allowed:
-        return
-
-    if not score_reel_candidate(noticia, origin="paparazzi").allowed:
         return
 
     rendered = render_reel_item(noticia)

@@ -19,8 +19,9 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
 - Después, por pedido del operador, supervisor detenido y tarea `LaVozRiojana-24x7`
   deshabilitada para revisar los reels: sólo plantilla Remotion
   (`REEL_REQUIRE_REMOTION`, normalización de la fuente, timeout 120 s y 2 intentos)
-  y puntaje editorial con IA (`REEL_EDITORIAL_SCORE_ENABLED`, umbral 70). Ver
-  `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15.
+  y puntaje editorial con IA (`REEL_EDITORIAL_SCORE_ENABLED`, umbral 70) sólo para
+  los videos de X; las notas de paparazzi con video publican siempre su reel. Ver
+  `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 
