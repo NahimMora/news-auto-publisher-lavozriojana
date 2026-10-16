@@ -292,6 +292,9 @@ def validate_config(
     _positive_int(report, env, "FB_INTER_POST_DELAY_SECONDS", 0, minimum=0, maximum=300)
     _positive_int(report, env, "X_VIDEO_MAX_PER_CYCLE", 2, minimum=0, maximum=10)
     _positive_int(report, env, "X_VIDEO_MAX_AGE_HOURS", 24, maximum=24 * 30)
+    _positive_int(report, env, "REEL_EDITORIAL_MIN_SCORE", 60, minimum=0, maximum=100)
+    _positive_int(report, env, "REMOTION_REEL_TIMEOUT_MS", 30000, minimum=1000, maximum=600000)
+    _positive_int(report, env, "REMOTION_REEL_ATTEMPTS", 1, maximum=5)
     _positive_int(
         report,
         env,
@@ -392,6 +395,9 @@ def validate_config(
         ("ENABLE_R2_OG_IMAGE", "true"),
         ("AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED", "false"),
         ("REEL_CINEMATIC_VISUAL_STYLE_ENABLED", "false"),
+        ("REEL_EDITORIAL_SCORE_ENABLED", "false"),
+        ("REEL_REQUIRE_REMOTION", "false"),
+        ("REEL_SOURCE_NORMALIZE_ENABLED", "false"),
         ("SCRAPER_LOCALES_ENABLED", "true"),
         ("SCRAPER_POLICIALES_ENABLED", "true"),
         ("SCRAPER_INTERIOR_ENABLED", "true"),
@@ -596,6 +602,12 @@ def config_inventory() -> dict[str, list[str]]:
                 "AUTOMATIC_STATIC_RENDER_ENGINE",
                 "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED",
                 "REEL_CINEMATIC_VISUAL_STYLE_ENABLED",
+                "REEL_EDITORIAL_SCORE_ENABLED",
+                "REEL_EDITORIAL_MIN_SCORE",
+                "REEL_REQUIRE_REMOTION",
+                "REEL_SOURCE_NORMALIZE_ENABLED",
+                "REMOTION_REEL_TIMEOUT_MS",
+                "REMOTION_REEL_ATTEMPTS",
                 "PREMIUM_STATIC_RENDER_ENGINE",
                 "OG_STATIC_RENDER_ENGINE",
                 "REMOTION_AVAILABILITY_CACHE_SECONDS",

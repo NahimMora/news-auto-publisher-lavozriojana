@@ -108,7 +108,13 @@ def ingest(feed_items: list[dict], *, now: float | None = None) -> dict[str, int
 
     def mutate(state):
         jobs = state.setdefault("jobs", {})
-        known_urls = {job.get("url_key") for job in jobs.values() if job.get("status") != "skipped"}
+        # Un descarte editorial también bloquea la URL: no se vuelve a puntuar.
+        known_urls = {
+            job.get("url_key")
+            for job in jobs.values()
+            if job.get("status") != "skipped"
+            or job.get("reason") == "editorial_score_below_threshold"
+        }
         # Del más viejo al más nuevo, como recomienda el manual del backend.
         for entry in reversed(feed_items):
             if entry["job_id"] in jobs:

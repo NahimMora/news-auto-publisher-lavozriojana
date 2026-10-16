@@ -54,6 +54,23 @@ OUTRO_PATH = os.path.join(BASE_DIR, "data", "media", "outro.mp4")
 _ENCODE_PRESET = os.getenv("VIDEO_ENCODE_PRESET", "medium")
 _ENCODE_CRF = os.getenv("VIDEO_ENCODE_CRF", "19")
 
+_TRUE = {"1", "true", "yes", "on", "si", "sí"}
+
+
+class ReelTemplateUnavailable(RuntimeError):
+    """Remotion no pudo renderizar el reel y el llamador no admite el fallback ffmpeg."""
+
+
+def _env_flag(name: str) -> bool:
+    return str(os.getenv(name, "false")).strip().lower() in _TRUE
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
 # Resolución reel 9:16
 W, H = 1080, 1920
 
@@ -871,6 +888,9 @@ def _render_remotion_main(
             _npx_args([
                 "remotion", "render", composition, output_path,
                 "--codec=h264", "--crf=18", f"--props={props_path}",
+                # delayRender por cuadro: el default de Remotion (30 s) cortaba la
+                # extracción de cuadros de videos fuente pesados.
+                f"--timeout={_env_int('REMOTION_REEL_TIMEOUT_MS', 30000)}",
             ]),
             cwd=REMOTION_DIR, capture_output=True, text=True, timeout=600,
         )
@@ -893,7 +913,45 @@ def _render_remotion_main(
                 pass
 
 
-def render_video(item: dict) -> tuple[str, str, int, dict]:
+def _normalize_source_for_remotion(source_video: str, video_id: str) -> str | None:
+    """Re-encodea el video fuente a H.264 CFR 30 fps, ≤1080 px y GOP corto.
+
+    Remotion extrae cada cuadro con seek; con HEVC, VFR o keyframes espaciados
+    (videos de X/Instagram) esa extracción superaba el timeout y el reel caía
+    a la plantilla clásica. Devuelve la ruta nueva, o None si ffmpeg falla
+    (el llamador sigue con el original).
+    """
+    normalized = os.path.join(RENDERS_DIR, f"_src_norm_{video_id}.mp4")
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", source_video,
+        "-vf", "scale='min(1080,iw)':-2,fps=30",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-g", "15", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k",
+        "-movflags", "+faststart",
+        normalized,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("No se pudo normalizar el video fuente (se usa el original): %s", exc)
+        result = None
+    if result is not None and result.returncode == 0 and os.path.isfile(normalized):
+        return normalized
+    if result is not None:
+        logger.warning(
+            "No se pudo normalizar el video fuente (se usa el original): %s",
+            (result.stderr or "")[-300:],
+        )
+    try:
+        os.remove(normalized)
+    except OSError:
+        pass
+    return None
+
+
+def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str, str, int, dict]:
     """
     Genera el MP4 del reel.
 
@@ -986,16 +1044,37 @@ def render_video(item: dict) -> tuple[str, str, int, dict]:
             else:
                 info["source_used"] = "overlay_only"
 
+        if asset_type == "video" and _env_flag("REEL_SOURCE_NORMALIZE_ENABLED"):
+            normalized = _normalize_source_for_remotion(asset_path, video_id)
+            if normalized:
+                temp_files.append(normalized)
+                asset_path = normalized
+                info["source_normalized"] = True
+
         logger.info("Renderizando reel (%ds, asset=%s)…", duration, asset_type)
-        main_path = _render_remotion_main(
-            item,
-            video_id,
-            duration,
-            asset_path,
-            asset_type,
-            ken_burns_variant,
-            cinematic_style=cinematic_style,
-        )
+        attempts = _env_int("REMOTION_REEL_ATTEMPTS", 1)
+        main_path = None
+        for attempt in range(1, attempts + 1):
+            main_path = _render_remotion_main(
+                item,
+                video_id,
+                duration,
+                asset_path,
+                asset_type,
+                ken_burns_variant,
+                cinematic_style=cinematic_style,
+            )
+            if main_path:
+                break
+            if attempt < attempts:
+                logger.warning("Remotion falló (intento %s/%s); se reintenta", attempt, attempts)
+        info["remotion_attempts"] = attempt
+
+        if not main_path and not allow_ffmpeg_fallback:
+            raise ReelTemplateUnavailable(
+                f"Remotion no renderizó el reel tras {attempts} intento(s); "
+                "no se usa la plantilla clásica"
+            )
 
         if main_path:
             os.replace(main_path, output_path)

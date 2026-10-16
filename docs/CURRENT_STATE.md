@@ -16,6 +16,11 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   (`cutoff_ts=1792108924`, fijado en el script de arranque). Web,
   `noticias_meta.json` y la cola de videos de X (6 pendientes del mismo día, con
   su propio corte de 24 h) no se tocaron.
+- Después, por pedido del operador, supervisor detenido y tarea `LaVozRiojana-24x7`
+  deshabilitada para revisar los reels: sólo plantilla Remotion
+  (`REEL_REQUIRE_REMOTION`, normalización de la fuente, timeout 120 s y 2 intentos)
+  y puntaje editorial con IA (`REEL_EDITORIAL_SCORE_ENABLED`, umbral 70). Ver
+  `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

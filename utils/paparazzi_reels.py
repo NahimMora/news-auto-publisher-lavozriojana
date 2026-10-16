@@ -21,6 +21,7 @@ import time
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
+from utils.reel_editorial_score import score_reel_candidate
 from utils.url_normalization import url_hash
 
 logger = setup_logger("paparazzi_reels", "paparazzi_reels.log")
@@ -98,8 +99,18 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         "imagen_url": noticia.get("imagen_url") or "",
     }
 
+    from utils.video_renderer import ReelTemplateUnavailable
+
     try:
-        video_path, _video_id, _duration, render_info = render_video(render_item)
+        # Con REEL_REQUIRE_REMOTION, un reel automático sale sólo con la plantilla
+        # EditorialReel/Main: nunca con el overlay clásico de ffmpeg.
+        video_path, _video_id, _duration, render_info = render_video(
+            render_item,
+            allow_ffmpeg_fallback=not _enabled("REEL_REQUIRE_REMOTION"),
+        )
+    except ReelTemplateUnavailable as exc:
+        logger.warning("Reel no publicado: %s", exc)
+        return None
     except Exception as exc:
         logger.warning("No se pudo renderizar el reel: %s", exc)
         return None
@@ -207,6 +218,9 @@ def publish_paparazzi_reel_as_instagram_post(noticia: dict):
             StageStatus.SUCCESS, external_id=str(existing["instagram_id"]), deduplicated=True
         )
 
+    if not score_reel_candidate(noticia, origin="paparazzi").allowed:
+        return None
+
     rendered = render_reel_item(noticia)
     if rendered is None:
         return None
@@ -254,6 +268,9 @@ def publish_paparazzi_reel(noticia: dict) -> None:
     ig_allowed = _enabled("IG_PUBLISH_ENABLED")
     fb_allowed = _enabled("FB_PUBLISH_ENABLED")
     if not ig_allowed and not fb_allowed:
+        return
+
+    if not score_reel_candidate(noticia, origin="paparazzi").allowed:
         return
 
     rendered = render_reel_item(noticia)

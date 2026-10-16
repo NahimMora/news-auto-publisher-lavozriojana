@@ -2121,3 +2121,34 @@ Un 190/401 de publicación invalida la cache. El preflight acepta como evidencia
 permisos los `scopes` de `debug_token` cuando `/me/permissions` no existe.
 
 **Revisar nuevamente cuando**: se migre a un System User token sin vencimiento.
+
+### 2026-10-15 — Reels automáticos: sólo plantilla Remotion y puntaje editorial con IA
+
+**Contexto**: el operador vio reels con dos plantillas distintas (`KNOWN_ISSUES` 93)
+y que se publicaba como Reel todo video que entraba: todas las notas de paparazzi
+con video (5–14 por día) y todos los videos de X del backend de HolaSalta (hasta 16
+por día).
+
+**Decisión del operador**: (1) reintentar Remotion y, si igual falla, no publicar el
+reel con la plantilla clásica; (2) filtrar con un puntaje editorial de IA.
+
+- `utils/reel_editorial_score.py::score_reel_candidate` (una llamada a Gemini por
+  video, mismo cliente/reintentos que los captions) devuelve 0–100 y un motivo.
+  `REEL_EDITORIAL_SCORE_ENABLED` (default apagado) y `REEL_EDITORIAL_MIN_SCORE`
+  (default 60; producción 70). Aplica antes del render en los tres flujos
+  automáticos: videos de X, Reel de Instagram de notas de paparazzi y Reel adicional
+  (`publish_paparazzi_reel`).
+- X: rechazado ⇒ `skipped` / `editorial_score_below_threshold` con
+  `editorial_score` y `editorial_reason`, terminal; su URL queda bloqueada para el
+  ingest. IA no disponible ⇒ reintento (`editorial_score_unavailable`, 3 intentos).
+  Un descarte no cuenta como trabajo fallido de la etapa.
+- Paparazzi: rechazado o IA no disponible ⇒ la nota se publica como imagen, sin reel.
+- Calibración con los 16 últimos reels publicados (sólo títulos): el prompt inicial
+  rechazaba 7/8 de paparazzi por "falta de relación con La Rioja"; se agregó que en
+  espectáculos/deportes nacionales pese la popularidad nacional. Con umbral 60
+  pasaban 14/16, con 70 pasan 10/16 (se caen p. ej. BTS en Chile, una infidelidad
+  de farándula). Producción usa 70.
+- El prompt prohíbe inventar datos, cifras, armas, personas o hechos.
+
+**Revisar nuevamente cuando**: haya dos semanas de `reel_editorial_score.log`
+para comparar alcance de reels aprobados vs. el período anterior y ajustar el umbral.

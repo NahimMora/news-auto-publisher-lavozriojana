@@ -1297,3 +1297,25 @@
   vigente por diseño.
 - Estado actual: **corregido en `fix/meta-page-token`; activo en el host desde el
   reinicio del supervisor del 2026-10-15**.
+
+## 93. Reels automáticos publicados con la plantilla clásica de ffmpeg — CORREGIDO 2026-10-15
+
+- ID: severidad media (marca). Entre 1 y 3 reels por día (`logs/video_renderer.log`,
+  09/10–15/10) salían con el overlay clásico PIL+ffmpeg en vez de `EditorialReel`:
+  `render_video` caía al fallback cuando Remotion fallaba y `render_reel_item` sólo
+  exigía `source_used == "video"`, no el motor.
+- Causas de la falla de Remotion: `Timeout while extracting frame` / `delayRender ...
+  not cleared after 28000ms` sobre videos fuente de X/paparazzi (HEVC, VFR, GOP
+  largo) y `Timed out after 30000ms while setting up the headless browser`.
+- Corrección (flags apagados por defecto, activos en el script de producción):
+  `REEL_SOURCE_NORMALIZE_ENABLED` re-encodea la fuente a H.264 CFR 30 fps, ≤1080 px,
+  GOP 15; `REMOTION_REEL_TIMEOUT_MS` (120000) se pasa como `--timeout`;
+  `REMOTION_REEL_ATTEMPTS` (2) reintenta; `REEL_REQUIRE_REMOTION` hace que los reels
+  automáticos nunca usen el fallback (`ReelTemplateUnavailable`): el job de X vuelve
+  a pendiente (3 intentos) y la nota de paparazzi sale como imagen. La UI manual
+  (`video_reel_manager.py`) conserva el fallback.
+- QA: render real de un HEVC 1920×1080 GOP 240 generado con `testsrc2`: normalizado,
+  `EditorialReel` en 32 s, H.264 1080×1920 30 fps.
+- Tests: `tests.test_reel_quality_gates`.
+- Estado actual: **corregido en `fix/meta-page-token`; activo desde el reinicio del
+  supervisor posterior al 2026-10-15 21:30**.
