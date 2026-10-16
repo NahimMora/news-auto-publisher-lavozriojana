@@ -29,7 +29,7 @@ from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
 from utils.logging_setup import setup_logger
 from utils.classifier import clasificar_con_resultado
-from utils.paparazzi_relevance import score_relevance
+from utils.paparazzi_relevance import score_international_impact, score_relevance
 from utils.paths import data_dir
 from utils.queue_events import record_queue_event
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
@@ -88,6 +88,7 @@ META_FIELDS = (
     "breaking",
     "routed_at_ts",
     "paparazzi_relevance_score",
+    "international_impact_score",
     # Escritos por otras etapas DESPUÉS de que la nota ya está en
     # noticias_meta.json (sync_meta_web_link tras publicar en Web,
     # select_publish_batch.py al armar el lote) — deben sobrevivir a
@@ -222,6 +223,14 @@ def rewrite_noticia(noticia: dict) -> dict:
         noticia["paparazzi_relevance_score"] = relevance.score
         if relevance.fallback_used:
             fallbacks_used["paparazzi_relevance"] = True
+
+    # Impacto (sólo internacionales): con PUBLISH_INTERNATIONAL_BUCKET_ENABLED
+    # se publican sólo las de alto impacto (ver utils/publish_selection.py).
+    if "internacional" in str(noticia.get("source") or "").strip().lower():
+        impact = score_international_impact(noticia["titulo"], parrafos)
+        noticia["international_impact_score"] = impact.score
+        if impact.fallback_used:
+            fallbacks_used["international_impact"] = True
 
     # Generar caption estructurado (titulo mayusculas + que paso + lo relevante + el detalle + CTA)
     caption_data = generate_caption(noticia)

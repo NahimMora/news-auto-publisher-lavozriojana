@@ -39,6 +39,8 @@ CYCLE_STEPS = [
     ("meta/run_ig.py", "instagram"),
     # Videos de X del backend HolaSalta: Reel propio, estado propio.
     ("meta/run_x_videos.py", "instagram"),
+    # Notas de paparazzi con video: sólo Reel, estado propio.
+    ("meta/run_paparazzi_videos.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
 ]
 _STEP_TIMEOUTS = {
@@ -52,6 +54,8 @@ _STEP_TIMEOUTS = {
     "meta/run_ig.py": 1200,
     # Hasta X_VIDEO_MAX_PER_CYCLE videos: descarga yt-dlp + render + proceso en Meta.
     "meta/run_x_videos.py": 1200,
+    # Hasta PAPARAZZI_VIDEO_MAX_PER_CYCLE reels: descarga + render + proceso en Meta.
+    "meta/run_paparazzi_videos.py": 1200,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

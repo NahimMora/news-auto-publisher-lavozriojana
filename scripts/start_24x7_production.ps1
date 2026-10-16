@@ -49,6 +49,20 @@ $env:REMOTION_REEL_TIMEOUT_MS = "120000"
 $env:REMOTION_REEL_ATTEMPTS = "2"
 $env:REEL_EDITORIAL_SCORE_ENABLED = "true"
 $env:REEL_EDITORIAL_MIN_SCORE = "70"
+# Criterio editorial del lote (ver docs/DECISIONS.md 2026-10-16):
+# - paparazzi con video: sólo el Reel (sin Web, ni link en Facebook, ni imagen);
+# - paparazzi sin video: sólo con relevancia >= 6/10;
+# - internacionales: balde propio, sólo alto impacto (>= 8/10), 1 por ciclo;
+# - Instagram: locales sólo último momento, policiales y sociedad, máx. 12 por día.
+$env:PAPARAZZI_VIDEO_ONLY_ENABLED = "true"
+$env:PAPARAZZI_VIDEO_MAX_PER_CYCLE = "2"
+$env:PAPARAZZI_VIDEO_MAX_AGE_HOURS = "24"
+$env:PUBLISH_PAPARAZZI_MIN_SCORE = "6"
+$env:PUBLISH_INTERNATIONAL_BUCKET_ENABLED = "true"
+$env:PUBLISH_INTERNATIONAL_MIN_SCORE = "8"
+$env:PUBLISH_INTERNATIONAL_MAX_PER_RUN = "1"
+$env:IG_LOCAL_CATEGORIES = "policiales,sociedad"
+$env:IG_LOCAL_DAILY_MAX = "12"
 $env:CANARY_ENABLED = "false"
 $env:ALERTS_ENABLED = "true"
 $env:ALERT_WEBHOOK_URL = ""

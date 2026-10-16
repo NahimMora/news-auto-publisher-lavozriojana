@@ -20,8 +20,14 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   deshabilitada para revisar los reels: sólo plantilla Remotion
   (`REEL_REQUIRE_REMOTION`, normalización de la fuente, timeout 120 s y 2 intentos)
   y puntaje editorial con IA (`REEL_EDITORIAL_SCORE_ENABLED`, umbral 70) sólo para
-  los videos de X; las notas de paparazzi con video publican siempre su reel. Ver
-  `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
+  los videos de X. Ver `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
+- Criterio del lote (2026-10-16, `KNOWN_ISSUES` 94): paparazzi con video sólo como
+  Reel (etapa `meta/run_paparazzi_videos.py`), paparazzi sin video con relevancia
+  ≥ 6, internacionales sólo de alto impacto (≥ 8, 1 por ciclo), Instagram con
+  locales sólo de último momento/policiales/sociedad y máximo 12 por día; Facebook
+  y Web sin cambios. Deportes sigue excluido.
+- Infobae Policiales nunca se conectó a la reescritura (`KNOWN_ISSUES` 95): queda
+  sin conectar hasta que el operador defina el formato de sus videos.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

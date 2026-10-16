@@ -1319,3 +1319,38 @@
 - Tests: `tests.test_reel_quality_gates`.
 - Estado actual: **corregido en `fix/meta-page-token`; activo desde el reinicio del
   supervisor posterior al 2026-10-15 21:30**.
+
+## 94. El lote publicaba casi todo: el puntaje de paparazzi no filtraba — CORREGIDO 2026-10-16
+
+- ID: severidad media (editorial). Últimos 7 días al 15/10 (`noticias_meta.json`):
+  entraron 440 notas y se seleccionaron 345; sin deportes, el 99%. Paparazzi:
+  111/119 publicadas, 25 con relevancia ≤ 4 (p. ej. recomendaciones de miniseries
+  de Netflix con 1/10). El puntaje sólo ordenaba: lo no elegido en un ciclo volvía
+  a competir en el siguiente.
+- Además: `nuevarioja_internacionales` competía como "local" (21/22 publicadas,
+  p. ej. un candidato peruano llamado Hitler Mussolini); una falla de IA en la
+  relevancia de paparazzi asignaba 10 y mandaba la nota primera; Instagram
+  publicaba todas las locales (alcance mediano 38–120 cuentas, contra 1.240 de
+  espectáculos, `ig_media_insights.json`, 632 posts en 14 días).
+- Corrección (flags apagados por defecto, activados en el script de producción):
+  `PAPARAZZI_VIDEO_ONLY_ENABLED`, `PUBLISH_PAPARAZZI_MIN_SCORE=6`,
+  `PUBLISH_INTERNATIONAL_BUCKET_ENABLED` (umbral 8, 1 por ciclo),
+  `IG_LOCAL_CATEGORIES=policiales,sociedad` + `IG_LOCAL_DAILY_MAX=12`; una falla de
+  IA deja la nota sin puntaje (pasa al final de la fila; internacional sin puntaje
+  no entra). Ver `DECISIONS` 2026-10-16.
+- Tests: `tests.test_editorial_criteria`.
+- Estado actual: **corregido en `fix/meta-page-token`; activo desde el próximo
+  arranque del supervisor**.
+
+## 95. Fuente Infobae Policiales nunca llegó a la reescritura — ABIERTO 2026-10-16
+
+- ID: severidad media. `main_infobae_policiales.py` corre desde `71a80ad` y deja
+  sus notas en `data/noticias_norewrite_infobae_policiales.json`, pero
+  `openIA/rewrite_news.py::INPUT_FILES` nunca incluyó ese archivo: 408 notas
+  acumuladas (26/08–15/10), ninguna procesada ni publicada.
+- 406 de 408 traen video propio de Infobae (`cdn.jwplayer.com`, hasta ~4 min). Si
+  se conecta tal cual, `post_to_instagram_detailed` publicaría ese MP4 crudo como
+  Reel (sin plantilla EditorialReel, material de Infobae) y Facebook un link.
+- Al conectarlo, `ARTICLE_MAX_AGE_DAYS=1` expira las 408 viejas antes de la IA
+  (sin publicar). Falta decisión del operador sobre el formato antes de conectar.
+- Estado actual: **abierto; fuente sin conectar a propósito**.

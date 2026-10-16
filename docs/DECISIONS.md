@@ -2163,3 +2163,42 @@ paparazzi con video.
 de `publish_paparazzi_reel`: toda nota de paparazzi con video vuelve a publicar su
 reel (siempre con `EditorialReel`; si Remotion falla, sale como imagen). Reemplaza
 la parte "Paparazzi" de la entrada del 2026-10-15.
+
+### 2026-10-16 — Criterio editorial del lote: qué se publica y dónde
+
+**Contexto**: `KNOWN_ISSUES` 94. El lote común (Web = Facebook = Instagram) sólo
+ordenaba; se publicaba casi todo lo que entraba.
+
+**Decisión del operador** (flags apagados por defecto; producción los activa en
+`scripts/start_24x7_production.ps1`):
+
+- **Paparazzi con video ⇒ sólo el Reel** (`PAPARAZZI_VIDEO_ONLY_ENABLED`): la nota
+  no entra al lote (sin artículo Web, sin link en Facebook, sin imagen en
+  Instagram). `meta/run_paparazzi_videos.py` la publica como Reel EditorialReel en
+  IG y FB, con estado propio `data/paparazzi_video_jobs.json`, hasta
+  `PAPARAZZI_VIDEO_MAX_PER_CYCLE` (2) por ciclo, sólo notas posteriores al corte
+  social y de menos de `PAPARAZZI_VIDEO_MAX_AGE_HOURS` (24). Render fallido ⇒
+  reintento (3) y dead-letter; nunca imagen. Comparte el dedup de
+  `paparazzi_reels_posted.json`. Semana al 15/10: 48 notas.
+- **Paparazzi sin video ⇒ relevancia ≥ 6/10** (`PUBLISH_PAPARAZZI_MIN_SCORE`).
+  Semana al 15/10: pasan 55 de 69.
+- **Falla de IA en la relevancia ⇒ sin puntaje** (antes 10): paparazzi sin puntaje
+  pasa pero al final de la fila; internacional sin puntaje no entra.
+- **Internacionales ⇒ balde propio de alto impacto**
+  (`PUBLISH_INTERNATIONAL_BUCKET_ENABLED`): `score_international_impact` (Gemini,
+  0–10, calculado en la reescritura) ≥ `PUBLISH_INTERNATIONAL_MIN_SCORE` (8), hasta
+  `PUBLISH_INTERNATIONAL_MAX_PER_RUN` (1) por ciclo, sin usar cupo local.
+  Calibración con las 22 de la semana: pasan 13 (Papa, Malvinas, Rusia-Ucrania,
+  aluvión en Chile, Lula, Ormuz); quedan afuera curiosidades y desastres lejanos.
+- **Instagram más selectivo que la Web; Facebook igual** (lleva tráfico a la Web):
+  locales sólo último momento + `IG_LOCAL_CATEGORIES` (policiales, sociedad) y
+  `IG_LOCAL_DAILY_MAX` (12) por día local, contado sobre `ig_posted.json`. Lo que
+  excede el tope queda `excluded` con motivo `policy_ig_local_daily_cap`, que el
+  bootstrap no reactiva (pasarlo al día siguiente publicaría noticias viejas).
+  Promociones manuales no cuentan para el tope. Datos: alcance mediano local
+  38–120 cuentas vs 1.240 de espectáculos; semana al 15/10: 9–17 candidatas por día.
+- **Deportes sigue excluido** del lote local por decisión del operador.
+- Lo que no entra queda en las colas hasta su TTL, como ya pasaba con deportes.
+
+**Revisar nuevamente cuando**: haya dos semanas de `ig_media_insights.json` con las
+reglas activas, para comparar alcance por publicación y ajustar categorías/tope.
