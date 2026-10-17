@@ -230,7 +230,9 @@ class AutomaticVisualStyleFlagTests(unittest.TestCase):
         }
         with patch.dict(
             os.environ,
-            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true"},
+            # El .env del host puede diferir localidad/bajada; este test cubre
+            # la generación durante la reescritura.
+            {"AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true", "LOCALITY_DECK_LAZY_ENABLED": "false"},
             clear=False,
         ), patch.object(
             rewrite_news,
