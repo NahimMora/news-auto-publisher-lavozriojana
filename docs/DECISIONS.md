@@ -2079,3 +2079,154 @@ exclusión `operator_*` nunca se revierte sola.
   `processing` heredado pasa a `dead_letter` sin reintento ciego; 3 intentos máximo;
   comparte con el resto sólo el backoff de rate limit de Meta.
   `X_VIDEO_REELS_ENABLED` apagado por defecto, activo en el script de producción.
+
+### 2026-10-04 — Calidad de Instagram guiada por alcance real
+
+**Evidencia**: 116 publicaciones con insights (`ig_media_insights.json`): Reels
+mediana 596 cuentas alcanzadas contra 38 de las imágenes estáticas; por franja,
+00–06 h entre 15 y 21 contra 187–253 entre 15 y 21 h. Con 8 posts por ciclo y 24
+ciclos, la cuenta alcanzó el tope diario de Instagram (KNOWN_ISSUES 91).
+
+**Decisión**:
+- Caption desde la web (sigue detrás de `IG_CAPTION_FROM_WEB_ENABLED`): título
+  social + lead en oraciones completas + pregunta + cierre a la nota + hashtags; los
+  chips web no se listan (KNOWN_ISSUES 89). `web_editorial.source_fallback` es un
+  campo opcional y aditivo: los registros previos no lo tienen y se tratan como
+  `false`, por eso no requiere migración.
+- `IG_STATIC_QUIET_HOURS` ("0-7"; vacío = apagado, comportamiento previo): en esa
+  franja las imágenes estáticas no se toman de la cola (sin `claim`) y quedan para
+  el primer ciclo fuera de horario; Reels y videos no cambian. Si todo lo
+  seleccionado se difiere, la etapa es `no_work`, no `degraded`.
+  El perfil de producción (`scripts/start_24x7_production.ps1`) lo activa con
+  `0-7` por decisión del operador (2026-10-06).
+- No se cambia todavía el formato estático a video: es el cambio de mayor impacto
+  según los datos, pero toca render, costo y tiempos de ciclo; queda como propuesta.
+
+**Revisar nuevamente cuando**: haya dos semanas de insights con la franja activa
+(comparar alcance mediano de estáticas antes/después con `cli.py kpis`).
+
+### 2026-10-15 — Page Token directo y cache de token atada al token de origen
+
+**Contexto**: tras invalidarse la sesión de Meta (`KNOWN_ISSUES` 92) el operador
+generó un Page Token. El gestor sólo sabía canjear user tokens y reusaba una cache
+derivada del token anterior.
+
+**Decisión**: `fb_token_cache.json` agrega el campo opcional `source_fingerprint`
+(SHA-256 del token configurado). Una cache sin ese campo o con otra huella se
+considera vencida y se rederiva: migración perezosa e idempotente, sin backup
+especial porque la cache es descartable y se reconstruye desde `.env`. Si el token
+configurado ya es el Page Token de `FB_PAGE_ID` (`/me` devuelve la página) se usa
+directo; `FB_ALLOW_DIRECT_TOKEN_FALLBACK` sigue apagado y sólo cubre errores de red.
+Un 190/401 de publicación invalida la cache. El preflight acepta como evidencia de
+permisos los `scopes` de `debug_token` cuando `/me/permissions` no existe.
+
+**Revisar nuevamente cuando**: se migre a un System User token sin vencimiento.
+
+### 2026-10-15 — Reels automáticos: sólo plantilla Remotion y puntaje editorial con IA
+
+**Contexto**: el operador vio reels con dos plantillas distintas (`KNOWN_ISSUES` 93)
+y que se publicaba como Reel todo video que entraba: todas las notas de paparazzi
+con video (5–14 por día) y todos los videos de X del backend de HolaSalta (hasta 16
+por día).
+
+**Decisión del operador**: (1) reintentar Remotion y, si igual falla, no publicar el
+reel con la plantilla clásica; (2) filtrar con un puntaje editorial de IA.
+
+- `utils/reel_editorial_score.py::score_reel_candidate` (una llamada a Gemini por
+  video, mismo cliente/reintentos que los captions) devuelve 0–100 y un motivo.
+  `REEL_EDITORIAL_SCORE_ENABLED` (default apagado) y `REEL_EDITORIAL_MIN_SCORE`
+  (default 60; producción 70). Aplica antes del render en los tres flujos
+  automáticos: videos de X, Reel de Instagram de notas de paparazzi y Reel adicional
+  (`publish_paparazzi_reel`).
+- X: rechazado ⇒ `skipped` / `editorial_score_below_threshold` con
+  `editorial_score` y `editorial_reason`, terminal; su URL queda bloqueada para el
+  ingest. IA no disponible ⇒ reintento (`editorial_score_unavailable`, 3 intentos).
+  Un descarte no cuenta como trabajo fallido de la etapa.
+- Paparazzi: rechazado o IA no disponible ⇒ la nota se publica como imagen, sin reel.
+- Calibración con los 16 últimos reels publicados (sólo títulos): el prompt inicial
+  rechazaba 7/8 de paparazzi por "falta de relación con La Rioja"; se agregó que en
+  espectáculos/deportes nacionales pese la popularidad nacional. Con umbral 60
+  pasaban 14/16, con 70 pasan 10/16 (se caen p. ej. BTS en Chile, una infidelidad
+  de farándula). Producción usa 70.
+- El prompt prohíbe inventar datos, cifras, armas, personas o hechos.
+
+**Revisar nuevamente cuando**: haya dos semanas de `reel_editorial_score.log`
+para comparar alcance de reels aprobados vs. el período anterior y ajustar el umbral.
+
+### 2026-10-16 — Puntaje editorial sólo para videos de X
+
+**Contexto**: tras revisar el criterio, el operador pidió no puntuar las notas de
+paparazzi con video.
+
+**Decisión del operador**: el puntaje (`score_reel_candidate`) aplica sólo a
+`meta/run_x_videos.py`. Se retiró de `publish_paparazzi_reel_as_instagram_post` y
+de `publish_paparazzi_reel`: toda nota de paparazzi con video vuelve a publicar su
+reel (siempre con `EditorialReel`; si Remotion falla, sale como imagen). Reemplaza
+la parte "Paparazzi" de la entrada del 2026-10-15.
+
+### 2026-10-16 — Criterio editorial del lote: qué se publica y dónde
+
+**Contexto**: `KNOWN_ISSUES` 94. El lote común (Web = Facebook = Instagram) sólo
+ordenaba; se publicaba casi todo lo que entraba.
+
+**Decisión del operador** (flags apagados por defecto; producción los activa en
+`scripts/start_24x7_production.ps1`):
+
+- **Paparazzi con video ⇒ sólo el Reel** (`PAPARAZZI_VIDEO_ONLY_ENABLED`): la nota
+  no entra al lote (sin artículo Web, sin link en Facebook, sin imagen en
+  Instagram). `meta/run_paparazzi_videos.py` la publica como Reel EditorialReel en
+  IG y FB, con estado propio `data/paparazzi_video_jobs.json`, hasta
+  `PAPARAZZI_VIDEO_MAX_PER_CYCLE` (2) por ciclo, sólo notas posteriores al corte
+  social y de menos de `PAPARAZZI_VIDEO_MAX_AGE_HOURS` (24). Render fallido ⇒
+  reintento (3) y dead-letter; nunca imagen. Comparte el dedup de
+  `paparazzi_reels_posted.json`. Semana al 15/10: 48 notas.
+- **Paparazzi sin video ⇒ relevancia ≥ 6/10** (`PUBLISH_PAPARAZZI_MIN_SCORE`).
+  Semana al 15/10: pasan 55 de 69.
+- **Falla de IA en la relevancia ⇒ sin puntaje** (antes 10): paparazzi sin puntaje
+  pasa pero al final de la fila; internacional sin puntaje no entra.
+- **Internacionales ⇒ balde propio de alto impacto**
+  (`PUBLISH_INTERNATIONAL_BUCKET_ENABLED`): `score_international_impact` (Gemini,
+  0–10, calculado en la reescritura) ≥ `PUBLISH_INTERNATIONAL_MIN_SCORE` (8), hasta
+  `PUBLISH_INTERNATIONAL_MAX_PER_RUN` (1) por ciclo, sin usar cupo local.
+  Calibración con las 22 de la semana: pasan 13 (Papa, Malvinas, Rusia-Ucrania,
+  aluvión en Chile, Lula, Ormuz); quedan afuera curiosidades y desastres lejanos.
+- **Instagram más selectivo que la Web; Facebook igual** (lleva tráfico a la Web):
+  locales sólo último momento + `IG_LOCAL_CATEGORIES` (policiales, sociedad) y
+  `IG_LOCAL_DAILY_MAX` (12) por día local, contado sobre `ig_posted.json`. Lo que
+  excede el tope queda `excluded` con motivo `policy_ig_local_daily_cap`, que el
+  bootstrap no reactiva (pasarlo al día siguiente publicaría noticias viejas).
+  Promociones manuales no cuentan para el tope. Datos: alcance mediano local
+  38–120 cuentas vs 1.240 de espectáculos; semana al 15/10: 9–17 candidatas por día.
+- **Deportes sigue excluido** del lote local por decisión del operador.
+- Lo que no entra queda en las colas hasta su TTL, como ya pasaba con deportes.
+
+**Revisar nuevamente cuando**: haya dos semanas de `ig_media_insights.json` con las
+reglas activas, para comparar alcance por publicación y ajustar categorías/tope.
+
+### 2026-10-16 — Paparazzi completo en la Web, Infobae con video sólo Reel, videos sin puntaje ni cupo
+
+**Contexto**: revisión del operador sobre la entrada anterior.
+
+**Decisión del operador** (reemplaza las partes de paparazzi de la entrada anterior
+y la del puntaje de X):
+
+- **Web publica todas las notas de paparazzi** (`PUBLISH_PAPARAZZI_WEB_ALL`), sin
+  cupo, con video o con relevancia baja incluidas. El cupo
+  `PUBLISH_PAPARAZZI_MAX_PER_RUN` queda sólo para redes. Las que no van a redes
+  quedan marcadas en el lote con `social_skip_reason` (`policy_video_reel_only`,
+  `policy_paparazzi_low_relevance`, `policy_paparazzi_social_cap`) y
+  `run_fb`/`run_ig` no las encolan.
+- **En redes, paparazzi con video sigue siendo sólo el Reel** y paparazzi sin
+  video sigue necesitando relevancia ≥ 6.
+- **Infobae Policiales conectado** (`KNOWN_ISSUES` 95, opción A): con video ⇒ sólo
+  Reel EditorialReel en redes (`INFOBAE_VIDEO_ONLY_ENABLED`, misma etapa
+  `meta/run_paparazzi_videos.py`) y artículo Web sin cupo, marcado
+  `policy_video_reel_only`; sin video ⇒ nota normal en su balde. El video fuente se recorta a 90 s como cualquier Reel.
+- **Todos los videos se publican, sin valoración y sin ocupar cupo**: puntaje
+  editorial apagado también para X (`REEL_EDITORIAL_SCORE_ENABLED=false`);
+  `X_VIDEO_MAX_PER_CYCLE=0` y `PAPARAZZI_VIDEO_MAX_PER_CYCLE=0` significan sin
+  tope por ciclo. Cada etapa de video corta por tiempo
+  (`VIDEO_STAGE_TIME_BUDGET_SECONDS`, 480 s: un Reel tarda hasta ~7 min y el timeout
+  de la etapa es 1200 s; con 900 s el 16/10 se cortó un Reel a mitad de subida) y
+  deja el resto pendiente para el ciclo siguiente. Los Reels no cuentan en
+  `IG_MAX_PER_RUN`, `PUBLISH_MAX_PER_RUN` ni `IG_LOCAL_DAILY_MAX`.

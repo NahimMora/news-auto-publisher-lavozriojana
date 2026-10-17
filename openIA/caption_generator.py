@@ -38,8 +38,8 @@ REGLAS CRÍTICAS:
 - NUNCA escribas etiquetas como "TITULO:", "Lo relevante:", "El detalle:", "CTA:", "📌 ¿Qué pasó?" — los emojis ya actúan como indicadores visuales.
 - titulo_instagram: el título limpio, SIN emojis, máximo 80 caracteres. Es solo para la imagen.
 - texto_instagram: el caption completo con la estructura de arriba, incluyendo emojis y título con emojis.
-- cta: solo la pregunta final (sin emoji, sin "CTA:", sin el ❓ — eso va dentro de texto_instagram).
-- Español rioplatense. Sin URLs, sin @menciones, sin hashtags dentro del texto.
+- cta: solo la pregunta final (sin emoji, sin "CTA:", sin el ❓ — eso va dentro de texto_instagram), entre "¿" y "?", sobre este hecho puntual y no una pregunta genérica.
+- Español rioplatense con voseo ("opinás", "creés"); nunca trates de "usted" al lector. Sin URLs, sin @menciones, sin hashtags dentro del texto.
 - No inventes datos, cifras ni nombres que no estén en la noticia.
 - Máximo 2000 caracteres en texto_instagram.
 """.strip()
@@ -244,7 +244,7 @@ Salida obligatoria: JSON válido con exactamente estas claves:
 {_LOCALITY_DECK_SCHEMA}
 
 - "locality": una localidad, departamento o ciudad de La Rioja (p.ej. "Chilecito", "Capital", "Famatina") SOLO si el texto la nombra explícitamente. Si no hay ninguna localidad riojana concreta y verificable en el texto, dejalo vacío ("").
-- "deck": una frase corta (máximo 90 caracteres) que funciona como bajada ANTES del título — agrega contexto o un dato (cuándo, quién, por qué importa), nunca repite ni parafrasea el título. Español rioplatense, sin emojis, sin comillas, sin punto final.
+- "deck": una frase corta (máximo 90 caracteres) que funciona como bajada ANTES del título — agrega contexto o un dato (cuándo, quién, por qué importa), nunca repite ni parafrasea el título. Español rioplatense, sin emojis, sin comillas, sin punto final. Empezá con mayúscula y escribí los nombres propios (personas, lugares, clubes, organismos) con mayúscula, como en el texto.
 - No inventes lugares, datos, cifras, armas, personas ni hechos que no estén en el texto.
 """.strip()
 
@@ -392,6 +392,44 @@ def select_highlight_phrase(title: str) -> str:
     return _select_highlight_phrase(title)
 
 
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _proper_forms(reference: str) -> dict[str, str]:
+    """Palabras que la fuente escribe como nombre propio en medio de una oración.
+
+    Se descartan títulos en MAYÚSCULAS ("DE", "EL"), artículos/preposiciones
+    (el "La" de "La Rioja" no vuelve mayúscula cada "la") y palabras que la
+    fuente también escribe en minúscula a mitad de oración.
+    """
+    forms: dict[str, str] = {}
+    lowercase_seen: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?:])\s+|\n+", str(reference or "")):
+        for word in _WORD_RE.findall(sentence)[1:]:
+            key = word.casefold()
+            if word == key:
+                lowercase_seen.add(key)
+            elif word[:1].isupper() and not word.isupper() and key not in _HIGHLIGHT_STOPWORDS:
+                forms.setdefault(key, word)
+    return {key: form for key, form in forms.items() if key not in lowercase_seen}
+
+
+def restore_deck_casing(deck: str, reference: str) -> str:
+    """Corrige una bajada que el modelo devolvió toda en minúsculas.
+
+    Gemini suele entregar la bajada en minúscula ("la periodista fue invitada al
+    programa de juana viale"). Sólo se tocan bajadas sin ninguna mayúscula: se
+    restauran los nombres propios tal como los escribe la fuente y se capitaliza
+    la primera letra. No agrega ni cambia palabras.
+    """
+    deck = str(deck or "").strip()
+    if not deck or any(ch.isupper() for ch in deck):
+        return deck
+    forms = _proper_forms(reference)
+    restored = _WORD_RE.sub(lambda m: forms.get(m.group(0).casefold(), m.group(0)), deck)
+    return restored[:1].upper() + restored[1:]
+
+
 def _locality_deck_fallback(reason: str, noticia: dict, *, include_highlight: bool = False) -> dict:
     result = {
         "locality": "",
@@ -444,7 +482,10 @@ def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False
             data = json.loads(content.strip())
             result = {
                 "locality": str(data.get("locality") or "").strip()[:40],
-                "deck":     str(data.get("deck") or "").strip()[:90],
+                "deck":     restore_deck_casing(
+                    str(data.get("deck") or "").strip()[:90],
+                    f"{noticia.get('titulo', '')}. {texto_body}",
+                ),
                 "locality_deck_fallback_used": False,
             }
             if include_highlight:

@@ -539,6 +539,35 @@ def _meta_get(
     return None, payload
 
 
+def _meta_token_scopes(
+    graph: str,
+    token: str,
+    *,
+    http_get: Callable,
+    timeout: int,
+) -> set[str] | None:
+    """Scopes de un token válido según debug_token, o None si no hay evidencia."""
+    try:
+        response = http_get(
+            f"{graph.rstrip('/')}/debug_token",
+            params={"input_token": token, "access_token": token},
+            timeout=timeout,
+        )
+    except requests.RequestException:
+        return None
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status < 200 or status >= 300:
+        return None
+    payload = _json_response(response)
+    data = (payload or {}).get("data")
+    if not isinstance(data, dict) or data.get("is_valid") is not True:
+        return None
+    scopes = data.get("scopes")
+    if not isinstance(scopes, list):
+        return None
+    return {str(scope) for scope in scopes}
+
+
 def _meta_permissions(
     stage: str,
     graph: str,
@@ -560,25 +589,31 @@ def _meta_permissions(
         return StageResult(stage, StageStatus.FAILED, failed=1, error_type=type(exc).__name__), []
     status = int(getattr(response, "status_code", 0) or 0)
     if status < 200 or status >= 300:
-        return _http_status_result(stage, status), []
-    payload = _json_response(response)
-    if payload is None:
-        return StageResult(stage, StageStatus.FAILED, failed=1, error_type="non_json_response"), []
-    data = payload.get("data")
-    if not isinstance(data, list):
-        return (
-            StageResult(
-                stage,
-                StageStatus.DEGRADED,
-                error_type="permission_evidence_unavailable",
-            ),
-            [],
-        )
-    granted = {
-        str(item.get("permission") or "")
-        for item in data
-        if isinstance(item, dict) and str(item.get("status") or "").lower() == "granted"
-    }
+        # Un Page Token no tiene /me/permissions (Graph responde #100); sus scopes
+        # se leen con debug_token sobre el mismo token.
+        scopes = _meta_token_scopes(graph, token, http_get=http_get, timeout=timeout)
+        if scopes is None:
+            return _http_status_result(stage, status), []
+        granted = scopes
+    else:
+        payload = _json_response(response)
+        if payload is None:
+            return StageResult(stage, StageStatus.FAILED, failed=1, error_type="non_json_response"), []
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return (
+                StageResult(
+                    stage,
+                    StageStatus.DEGRADED,
+                    error_type="permission_evidence_unavailable",
+                ),
+                [],
+            )
+        granted = {
+            str(item.get("permission") or "")
+            for item in data
+            if isinstance(item, dict) and str(item.get("status") or "").lower() == "granted"
+        }
     missing = sorted(required - granted)
     if missing:
         return (

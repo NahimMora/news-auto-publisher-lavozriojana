@@ -88,7 +88,14 @@ def _set_rate_limit_backoff() -> int:
 
 def _is_rate_limit_error(data: dict, status_code: int | None = None) -> bool:
     error = data.get("error") if isinstance(data.get("error"), dict) else {}
-    return status_code == 429 or int(error.get("code") or 0) in {4, 32, 613}
+    # code 9 / subcode 2207042: tope de publicaciones por 24 h de la cuenta.
+    # Meta rechaza el media_publish (no publica), así que es límite, no un
+    # outcome ambiguo: el ítem vuelve a pendiente y se respeta el backoff.
+    return (
+        status_code == 429
+        or int(error.get("code") or 0) in {4, 9, 32, 613}
+        or int(error.get("error_subcode") or 0) == 2207042
+    )
 
 
 def _is_credential_error(data: dict, status_code: int | None = None) -> bool:

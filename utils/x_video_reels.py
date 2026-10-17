@@ -108,7 +108,13 @@ def ingest(feed_items: list[dict], *, now: float | None = None) -> dict[str, int
 
     def mutate(state):
         jobs = state.setdefault("jobs", {})
-        known_urls = {job.get("url_key") for job in jobs.values() if job.get("status") != "skipped"}
+        # Un descarte editorial también bloquea la URL: no se vuelve a puntuar.
+        known_urls = {
+            job.get("url_key")
+            for job in jobs.values()
+            if job.get("status") != "skipped"
+            or job.get("reason") == "editorial_score_below_threshold"
+        }
         # Del más viejo al más nuevo, como recomienda el manual del backend.
         for entry in reversed(feed_items):
             if entry["job_id"] in jobs:
@@ -171,7 +177,8 @@ def pending_jobs(limit: int) -> list[tuple[str, dict]]:
     state = load_json(STATE_PATH, {"jobs": {}}, expected_type=dict)
     pending = [(job_id, job) for job_id, job in state.get("jobs", {}).items() if job.get("status") == "pending"]
     pending.sort(key=lambda pair: (pair[1].get("created_at") or "", pair[1].get("seen_at") or 0))
-    return pending[: max(0, limit)]
+    # 0 = sin tope por ciclo: la etapa corta por tiempo y deja el resto pendiente.
+    return pending[:limit] if limit > 0 else pending
 
 
 def _clean_tweet_text(text: str) -> str:

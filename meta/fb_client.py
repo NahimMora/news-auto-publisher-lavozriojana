@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from meta.facebook_token_manager import get_page_token
+from meta.facebook_token_manager import get_page_token, invalidate_cache
 from utils import r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
@@ -386,6 +386,9 @@ def _api_result(response) -> OperationResult:
     code = error.get("code") or response.status_code
     message = str(error.get("message") or "")
     if int(code or 0) == 190 or response.status_code == 401:
+        # El page token cacheado puede estar muerto aunque el token de origen siga
+        # válido: forzar re-derivación en el próximo intento.
+        invalidate_cache()
         return OperationResult(
             StageStatus.FAILED,
             error_type="invalid_credential",

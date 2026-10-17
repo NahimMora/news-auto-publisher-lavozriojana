@@ -24,7 +24,7 @@ $env:IG_PUBLISH_ENABLED = "true"
 $env:ARTICLE_NOT_BEFORE_DATE = ""
 # Reset de cola social del 2026-10-01 (queue-cutover --social-reset): ninguna
 # noticia ni promoción manual anterior a este epoch vuelve a entrar a FB/IG.
-$env:SOCIAL_BOOTSTRAP_NOT_BEFORE_TS = "1790829319"
+$env:SOCIAL_BOOTSTRAP_NOT_BEFORE_TS = "1792108924"
 $env:EDITORIAL_FINAL_ATTEMPT_ACTION = "publish_last_safe"
 $env:FB_LINK_PREWARM_ENABLED = "true"
 $env:FB_LINK_PREWARM_TIMEOUT_SECONDS = "20"
@@ -33,10 +33,42 @@ $env:FB_LINK_PREWARM_MAX_BYTES = "5242880"
 $env:FB_INTER_POST_DELAY_SECONDS = "30"
 # LVR-IMPROVEMENT-0001: caption de IG/FB desde la versión editorial web (sin IA extra).
 $env:IG_CAPTION_FROM_WEB_ENABLED = "true"
+# Imágenes estáticas de IG fuera de 0-7 h (alcance mediano de madrugada ~20 vs ~200
+# a la tarde); Reels sin cambios. Ver docs/DECISIONS.md (2026-10-04).
+$env:IG_STATIC_QUIET_HOURS = "0-7"
 # Videos de X enviados por el backend de HolaSalta (C:/sources/x_video_sources.json): sólo Reel.
 $env:X_VIDEO_REELS_ENABLED = "true"
-$env:X_VIDEO_MAX_PER_CYCLE = "2"
+# 0 = sin tope por ciclo: se publican todos los videos, cortando por tiempo
+# (VIDEO_STAGE_TIME_BUDGET_SECONDS) y dejando el resto para el ciclo siguiente.
+$env:X_VIDEO_MAX_PER_CYCLE = "0"
 $env:X_VIDEO_MAX_AGE_HOURS = "24"
+# Reels automáticos (X, paparazzi e Infobae): sólo plantilla Remotion, sin overlay
+# clásico de ffmpeg. Todos los videos se publican: sin puntaje editorial y fuera
+# de los cupos del lote. Ver docs/DECISIONS.md (2026-10-15 y 2026-10-16).
+$env:REEL_REQUIRE_REMOTION = "true"
+$env:REEL_SOURCE_NORMALIZE_ENABLED = "true"
+$env:REMOTION_REEL_TIMEOUT_MS = "120000"
+$env:REMOTION_REEL_ATTEMPTS = "2"
+$env:REEL_EDITORIAL_SCORE_ENABLED = "false"
+$env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "480"
+# Criterio editorial del lote (ver docs/DECISIONS.md 2026-10-16):
+# - paparazzi: todas a la Web, sin cupo;
+# - paparazzi con video: en redes sólo el Reel (sin link en Facebook ni imagen);
+# - paparazzi sin video: en redes sólo con relevancia >= 6/10;
+# - Infobae con video: Reel en redes y artículo Web; sin video, nota normal;
+# - internacionales: balde propio, sólo alto impacto (>= 8/10), 1 por ciclo;
+# - Instagram: locales sólo último momento, policiales y sociedad, máx. 12 por día.
+$env:PAPARAZZI_VIDEO_ONLY_ENABLED = "true"
+$env:PAPARAZZI_VIDEO_MAX_PER_CYCLE = "0"
+$env:PAPARAZZI_VIDEO_MAX_AGE_HOURS = "24"
+$env:PUBLISH_PAPARAZZI_WEB_ALL = "true"
+$env:INFOBAE_VIDEO_ONLY_ENABLED = "true"
+$env:PUBLISH_PAPARAZZI_MIN_SCORE = "6"
+$env:PUBLISH_INTERNATIONAL_BUCKET_ENABLED = "true"
+$env:PUBLISH_INTERNATIONAL_MIN_SCORE = "8"
+$env:PUBLISH_INTERNATIONAL_MAX_PER_RUN = "1"
+$env:IG_LOCAL_CATEGORIES = "policiales,sociedad"
+$env:IG_LOCAL_DAILY_MAX = "12"
 $env:CANARY_ENABLED = "false"
 $env:ALERTS_ENABLED = "true"
 $env:ALERT_WEBHOOK_URL = ""

@@ -9,6 +9,33 @@ import uuid
 from utils.file_manager import update_json
 from utils.paths import data_dir
 
+# Texto completo de la nota: no aporta al diagnóstico de un evento y hacía que
+# cada evento reescribiera un journal de ~40 MB (KNOWN_ISSUES 96). El evento
+# conserva identidad (título, URLs, fuente, sección), estado y motivos.
+HEAVY_ITEM_FIELDS = frozenset(
+    {
+        "parrafos",
+        "texto_instagram",
+        "caption",
+        "cta",
+        "deck",
+        "excerpt",
+        "highlight_terms",
+        "titulo_original",
+        "titulo_original_scrapeado",
+        "imagen",
+        "imagen_optimizada",
+        "web_editorial",
+        "contenido",
+        "html",
+    }
+)
+
+
+def compact_item(item: dict | None) -> dict:
+    """Copia de ``item`` sin los campos de texto pesado (idempotente)."""
+    return {key: copy.deepcopy(value) for key, value in (item or {}).items() if key not in HEAVY_ITEM_FIELDS}
+
 
 def events_path() -> str:
     configured = str(os.getenv("LVR_QUEUE_EVENTS_PATH") or "").strip()
@@ -29,7 +56,7 @@ def _build_event(
         "status": str(status),
         "reason": str(reason),
         "timestamp": int(time.time()),
-        "item": copy.deepcopy(item or {}),
+        "item": compact_item(item),
         "metadata": copy.deepcopy(metadata or {}),
     }
 
@@ -46,6 +73,11 @@ def _append_events(new_events: list[dict]) -> None:
         events.extend(new_events)
         if len(events) > retention:
             del events[: len(events) - retention]
+        # Eventos previos a la compactación: se achican al pasar (idempotente).
+        for event in events:
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and not HEAVY_ITEM_FIELDS.isdisjoint(item):
+                event["item"] = compact_item(item)
         return events
 
     update_json(events_path(), append, [], expected_type=list)

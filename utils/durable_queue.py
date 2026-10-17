@@ -14,6 +14,7 @@ from utils.file_manager import (
     load_json,
     update_json,
 )
+from utils.queue_events import HEAVY_ITEM_FIELDS, compact_item
 from utils.url_normalization import canonical_url
 
 
@@ -36,6 +37,11 @@ def durable_item_id(payload: dict) -> str:
 class DurableQueue:
     VERSION = 1
     BUCKETS = ("pending", "processing", "completed", "failed", "expired", "dead_letter")
+    # Terminales que nunca se reprocesan: su payload sólo sirve de registro (el
+    # ``id`` es el que deduplica). Se guardan sin el texto pesado de la nota para
+    # que cada escritura del estado no reescriba decenas de MB (KNOWN_ISSUES 96).
+    # ``failed`` y ``dead_letter`` conservan el payload completo para revisión.
+    COMPACT_BUCKETS = ("completed", "expired")
 
     def __init__(
         self,
@@ -67,6 +73,13 @@ class DurableQueue:
             if not isinstance(value, list):
                 raise ValueError(f"Estado durable inválido: {bucket} debe ser lista")
         return state
+
+    def _compact_terminal(self, state: dict) -> None:
+        for bucket in self.COMPACT_BUCKETS:
+            for job in state[bucket]:
+                payload = job.get("payload") if isinstance(job, dict) else None
+                if isinstance(payload, dict) and not HEAVY_ITEM_FIELDS.isdisjoint(payload):
+                    job["payload"] = compact_item(payload)
 
     def _known_ids(self, state: dict) -> set[str]:
         return {
@@ -162,6 +175,7 @@ class DurableQueue:
             if metadata:
                 job["result"] = copy.deepcopy(metadata)
             state["completed"].append(job)
+            self._compact_terminal(state)
             changed = True
             return state
 
@@ -219,6 +233,7 @@ class DurableQueue:
                 updated_at=int(self.clock()),
             )
             state["expired"].append(job)
+            self._compact_terminal(state)
             changed = True
             return state
 

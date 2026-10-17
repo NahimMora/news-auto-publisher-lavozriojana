@@ -16,12 +16,22 @@ from utils.deployment import deployment_plan
 from utils.file_manager import JsonStateError
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import delete_reel_upload, publish_facebook_reel, render_reel_item
+from utils.reel_editorial_score import score_reel_candidate
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 from utils import x_video_reels as xv
 
 logger = setup_logger("run_x_videos", "run_x_videos.log")
 
 MAX_ATTEMPTS = 3
+
+
+def _time_budget_seconds() -> float:
+    """Tiempo de la etapa para encadenar Reels; lo que no entra queda pendiente
+    para el próximo ciclo (menor que el timeout del supervisor, 1200 s)."""
+    try:
+        return max(60.0, float(os.getenv("VIDEO_STAGE_TIME_BUDGET_SECONDS", "480")))
+    except ValueError:
+        return 480.0
 
 
 def _enabled() -> bool:
@@ -39,13 +49,27 @@ def _retry_or_dead(job_id: str, job: dict, reason: str) -> None:
 
 
 def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
-    """Devuelve ``completed``, ``failed`` o ``deferred`` (rate limit)."""
+    """Devuelve ``completed``, ``skipped`` (puntaje editorial), ``failed`` o ``deferred``."""
     xv._transition(job_id, status="processing", attempts=int(job.get("attempts") or 0))
 
     noticia = xv.build_news_item(job, xv.fetch_x_metadata(job["url"]))
     if noticia is None:
         _retry_or_dead(job_id, job, "x_metadata_unavailable")
         return "failed"
+    decision = score_reel_candidate(noticia, origin="x_video")
+    if decision.status == "unavailable":
+        _retry_or_dead(job_id, job, "editorial_score_unavailable")
+        return "failed"
+    if not decision.allowed:
+        # Descarte editorial: terminal, no se reintenta ni se publica.
+        xv._transition(
+            job_id,
+            status="skipped",
+            reason="editorial_score_below_threshold",
+            editorial_score=decision.score,
+            editorial_reason=decision.reason,
+        )
+        return "skipped"
     rendered = render_reel_item(noticia)
     if rendered is None:
         _retry_or_dead(job_id, job, "reel_render_unavailable")
@@ -105,6 +129,7 @@ def main() -> StageResult:
         ambiguous = xv.recover_interrupted()
         feed, feed_issue = xv.read_feed()
         ingested = xv.ingest(feed) if feed else {"new": 0, "skipped_old": 0, "skipped_duplicate_url": 0}
+        # 0 = sin tope: se publican todos, cortando por tiempo (el resto, al próximo ciclo).
         selected = xv.pending_jobs(int(os.getenv("X_VIDEO_MAX_PER_CYCLE", "2")))
     except JsonStateError as exc:
         logger.error("Estado de videos de X ilegible: %s", exc)
@@ -126,9 +151,13 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
         )
 
-    succeeded = failed = deferred = processed = 0
+    succeeded = failed = deferred = processed = skipped = left_for_next_cycle = 0
     next_retry_at = None
+    budget = _time_budget_seconds()
     for index, (job_id, job) in enumerate(selected):
+        if processed and time.monotonic() - started >= budget:
+            left_for_next_cycle = len(selected) - index
+            break
         until = rate_limit_until() if instagram else 0
         if time.time() < until:
             deferred += len(selected) - index
@@ -138,6 +167,8 @@ def main() -> StageResult:
         processed += 1
         if outcome == "completed":
             succeeded += 1
+        elif outcome == "skipped":
+            skipped += 1
         elif outcome == "deferred":
             deferred += len(selected) - index
             break
@@ -147,14 +178,15 @@ def main() -> StageResult:
     result = result_from_counts(
         "x_videos",
         received=len(feed),
-        selected=len(selected),
-        processed=processed,
+        # Un descarte editorial es una decisión, no trabajo fallido ni pendiente.
+        selected=len(selected) - left_for_next_cycle - skipped,
+        processed=processed - skipped,
         succeeded=succeeded,
         failed=failed,
         deferred=deferred,
         next_retry_at=next_retry_at,
         duration_seconds=time.monotonic() - started,
-        details=details,
+        details={**details, "editorial_skipped": skipped, "left_for_next_cycle": left_for_next_cycle},
     )
     if deferred and result.status == StageStatus.SUCCESS:
         result.status = StageStatus.DEGRADED

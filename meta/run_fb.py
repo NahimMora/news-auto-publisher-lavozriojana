@@ -60,6 +60,9 @@ def _bootstrap_queue() -> int:
             continue
         if not noticia.get("selected_for_publish"):
             continue
+        # Seleccionada sólo para la Web (p. ej. paparazzi con video: sale como Reel).
+        if noticia.get("social_skip_reason"):
+            continue
         if is_too_old_for_bootstrap(noticia):
             too_old += 1
             continue

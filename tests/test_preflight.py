@@ -229,6 +229,63 @@ class ExternalPreflightTests(unittest.TestCase):
         self.assertEqual(StageStatus.SUCCESS, facebook.status)
         self.assertEqual(StageStatus.SUCCESS, instagram.status)
 
+    def test_page_token_permissions_fall_back_to_debug_token(self):
+        from utils.preflight import check_facebook, check_instagram
+        from utils.stage_result import StageStatus
+
+        env = {
+            "META_GRAPH_API": "https://8.8.8.8/v19.0",
+            "FB_PAGE_ID": "page-1",
+            "FB_PAGE_ACCESS_TOKEN": "page-token",
+            "IG_ACCOUNT_ID": "ig-1",
+            "IG_ACCESS_TOKEN": "page-token",
+        }
+
+        def build_get(debug_payload):
+            def get(url, **kwargs):
+                if url.endswith("/me/permissions"):
+                    return FakeResponse(
+                        400,
+                        payload={"error": {"code": 100, "message": "nonexisting field (permissions)"}},
+                    )
+                if url.endswith("/debug_token"):
+                    self.assertEqual("page-token", kwargs["params"]["input_token"])
+                    return FakeResponse(payload=debug_payload)
+                if url.endswith("/page-1") and kwargs["params"]["fields"] == "id,name":
+                    return FakeResponse(payload={"id": "page-1", "name": "Página"})
+                if url.endswith("/page-1"):
+                    return FakeResponse(
+                        payload={"id": "page-1", "instagram_business_account": {"id": "ig-1"}}
+                    )
+                return FakeResponse(payload={"id": "ig-1", "username": "lvr"})
+
+            return get
+
+        granted = build_get(
+            {
+                "data": {
+                    "is_valid": True,
+                    "type": "PAGE",
+                    "scopes": ["pages_manage_posts", "instagram_content_publish"],
+                }
+            }
+        )
+        facebook = check_facebook(env, http_get=granted)
+        instagram = check_instagram(env, http_get=granted)
+        self.assertEqual(StageStatus.SUCCESS, facebook.status)
+        self.assertTrue(facebook.details["publish_permission_verified"])
+        self.assertEqual(StageStatus.SUCCESS, instagram.status)
+
+        missing = build_get({"data": {"is_valid": True, "scopes": ["pages_show_list"]}})
+        result = check_facebook(env, http_get=missing)
+        self.assertEqual(StageStatus.FAILED, result.status)
+        self.assertEqual("missing_permission", result.error_type)
+
+        invalid = build_get({"data": {"is_valid": False, "scopes": ["pages_manage_posts"]}})
+        result = check_facebook(env, http_get=invalid)
+        self.assertEqual(StageStatus.FAILED, result.status)
+        self.assertEqual("http_error", result.error_type)
+
     def test_facebook_preflight_does_not_request_removed_tasks_field(self):
         from utils.preflight import check_facebook
         from utils.stage_result import StageStatus

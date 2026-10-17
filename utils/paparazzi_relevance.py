@@ -1,5 +1,8 @@
 """
-Filtro de relevancia editorial para la fuente paparazzi.com.ar.
+Filtro de relevancia editorial para paparazzi.com.ar y, con otro criterio,
+impacto de las noticias internacionales (``score_international_impact``).
+
+Fuente paparazzi.com.ar:
 A diferencia de las demás fuentes (con vínculo riojano confirmado por diseño
 editorial), paparazzi es farándula nacional sin curación local — este score
 es lo único que separa una nota de alto impacto de un relleno menor antes de
@@ -38,24 +41,52 @@ Texto: {texto}
 
 Puntaje:"""
 
-# Score aplicado cuando el modelo falla o no responde un número válido: la
-# meta es filtrar relleno, no perder notas por un problema de infraestructura,
-# así que una falla nunca debe bloquear la nota (fail-open).
-_FALLBACK_SCORE = 10
+_INTERNATIONAL_PROMPT = """Sos editor de "La Voz Riojana", un medio digital de noticias de La Rioja, Argentina. Recibís noticias internacionales que sólo se publican si son de ALTO IMPACTO para el público argentino.
+
+Puntuá del 0 al 10 el impacto de la siguiente noticia para una audiencia general argentina:
+
+- 9-10: hecho mundial mayor (catástrofe con muchas víctimas, guerra o ataque   de gran escala, muerte de una figura mundial, decisión que afecta   directamente a la Argentina o a argentinos en el exterior)
+- 7-8: hecho internacional relevante con repercusión en la Argentina o en la   región (elecciones o crisis en países vecinos, desastre natural grave)
+- 4-6: noticia internacional de interés moderado, sin efecto en la Argentina
+- 0-3: curiosidad, color o noticia lejana sin consecuencias para el público   argentino
+
+Evaluá sólo con el texto provisto; no inventes datos, víctimas, armas, personas ni hechos ajenos al original.
+
+Respondé ÚNICAMENTE con el número entero (0 a 10), sin texto adicional.
+
+Noticia:
+Título: {titulo}
+Texto: {texto}
+
+Puntaje:"""
+
+# Cuando el modelo falla o no responde un número válido la nota queda SIN
+# puntaje (None), no con 10: antes una falla la mandaba primera en la fila.
+# Qué hacer con una nota sin puntaje lo decide utils/publish_selection.py.
 
 
 @dataclass(frozen=True)
 class RelevanceResult:
-    score: int
+    score: int | None
     fallback_used: bool = False
     error_type: str | None = None
 
 
 def score_relevance(titulo: str, parrafos: list) -> RelevanceResult:
+    """Relevancia nacional de una nota de paparazzi (0-10)."""
+    return _score_with_prompt(_PROMPT, titulo, parrafos, label="Relevancia")
+
+
+def score_international_impact(titulo: str, parrafos: list) -> RelevanceResult:
+    """Impacto de una noticia internacional para el público argentino (0-10)."""
+    return _score_with_prompt(_INTERNATIONAL_PROMPT, titulo, parrafos, label="Impacto internacional")
+
+
+def _score_with_prompt(template: str, titulo: str, parrafos: list, *, label: str) -> RelevanceResult:
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key or api_key == "PENDIENTE":
-        logger.warning("GEMINI_API_KEY no configurada, usando score por defecto (fail-open)")
-        return RelevanceResult(_FALLBACK_SCORE, True, "credential_missing")
+        logger.warning("GEMINI_API_KEY no configurada; %s queda sin puntaje", label.lower())
+        return RelevanceResult(None, True, "credential_missing")
 
     retry_count = int(os.getenv("GEMINI_RETRY_COUNT", "3"))
     retry_sleep = float(os.getenv("GEMINI_RETRY_SLEEP", "2"))
@@ -65,7 +96,7 @@ def score_relevance(titulo: str, parrafos: list) -> RelevanceResult:
     from utils.ai_client import chat_completion
 
     texto = " ".join(parrafos[:3])[:1200]
-    prompt = _PROMPT.format(titulo=titulo, texto=texto)
+    prompt = template.format(titulo=titulo, texto=texto)
 
     for attempt in range(1, retry_count + 1):
         try:
@@ -80,14 +111,14 @@ def score_relevance(titulo: str, parrafos: list) -> RelevanceResult:
             digits = "".join(ch for ch in raw if ch.isdigit())
             if digits:
                 score = max(0, min(10, int(digits[:2])))
-                logger.info(f"Relevancia {score}/10: {titulo[:70]}")
+                logger.info(f"{label} {score}/10: {titulo[:70]}")
                 return RelevanceResult(score)
-            logger.warning(f"Respuesta no numérica '{raw}', usando score por defecto")
-            return RelevanceResult(_FALLBACK_SCORE, True, "invalid_model_response")
+            logger.warning(f"{label}: respuesta no numérica '{raw}', queda sin puntaje")
+            return RelevanceResult(None, True, "invalid_model_response")
         except Exception as e:
-            logger.warning(f"Score de relevancia intento {attempt}/{retry_count}: {e}")
+            logger.warning(f"{label} intento {attempt}/{retry_count}: {e}")
             if attempt < retry_count:
                 time.sleep(retry_sleep)
 
-    logger.error(f"Score de relevancia falló para: {titulo[:60]}, usando default (fail-open)")
-    return RelevanceResult(_FALLBACK_SCORE, True, "gemini_failed")
+    logger.error(f"{label} falló para: {titulo[:60]}; queda sin puntaje")
+    return RelevanceResult(None, True, "gemini_failed")

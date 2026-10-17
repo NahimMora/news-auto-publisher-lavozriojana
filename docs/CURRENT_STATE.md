@@ -3,6 +3,49 @@
 Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
 Registry; el resto del documento describe el estado previo y sigue vigente).
 
+## Token de Meta rotado y reset social (2026-10-15)
+
+- Desde 2026-10-14 01:16 FB/IG fallaban con `OAuthException 190/460` (sesión
+  invalidada). El operador generó un Page Token nuevo (vence 2026-12-14) y se
+  cargó en `FB_PAGE_ACCESS_TOKEN` e `IG_ACCESS_TOKEN`.
+- Rama `fix/meta-page-token`: Page Token directo, cache atada al token de origen,
+  invalidación ante 190 y preflight con `debug_token` (`KNOWN_ISSUES` 92).
+  Preflight facebook/instagram: `success`.
+- Con el supervisor detenido y `cli.py backup` previo: `queue-cutover
+  --social-reset --apply` excluyó 110 pendientes de Facebook y 118 de Instagram
+  (`cutoff_ts=1792108924`, fijado en el script de arranque). Web,
+  `noticias_meta.json` y la cola de videos de X (6 pendientes del mismo día, con
+  su propio corte de 24 h) no se tocaron.
+- Después, por pedido del operador, supervisor detenido y tarea `LaVozRiojana-24x7`
+  deshabilitada para revisar los reels: sólo plantilla Remotion
+  (`REEL_REQUIRE_REMOTION`, normalización de la fuente, timeout 120 s y 2 intentos)
+  y, después, todos los videos sin puntaje editorial ni tope por ciclo (corte por
+  tiempo de 480 s por etapa). Ver `KNOWN_ISSUES` 93 y `DECISIONS` 2026-10-15/16.
+- Criterio del lote (2026-10-16, `KNOWN_ISSUES` 94): todas las de paparazzi a la
+  Web; en redes, paparazzi con video sólo como Reel (etapa
+  `meta/run_paparazzi_videos.py`) y sin video con relevancia ≥ 6; internacionales
+  sólo de alto impacto (≥ 8, 1 por ciclo); Instagram con locales sólo de último
+  momento/policiales/sociedad y máximo 12 por día; Facebook sin cambios. Deportes
+  sigue excluido.
+- Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
+  Reel EditorialReel en redes y artículo Web; sin video, nota normal.
+- Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y
+  los terminales de la cola de reescritura ya no guardan el texto de cada nota.
+
+## Calidad de Instagram tras el deploy (2026-10-04)
+
+- PR #9 mergeado y supervisor reactivado el 02/10 23:39 (ciclo #753). Ciclos
+  #753–#773: FB/IG volvieron a publicar (93 posts IG en ~25 h), sin 429 del prewarm.
+- Revisión de los 93 captions publicados (reconstruidos con
+  `build_instagram_caption`, porque `ig_posted.json` guarda el `texto_instagram`
+  previo y no el caption final) y de alcance real (`ig_media_insights.json`):
+  Reels mediana 596 cuentas, imágenes estáticas 38; posts de 00–06 h, 15–21.
+- Corregido en el working tree de `main` (activo desde el ciclo siguiente, sin commit): caption desde la web sin chips como
+  viñetas, lead en oraciones completas, sin fallback crudo, hashtags sin repetir y
+  cierre "Nota completa en lavozriojana.com" (`KNOWN_ISSUES` 89); bajada de la card
+  con mayúsculas (90); tope diario de IG tratado como rate limit (91); horario
+  silencioso para imágenes estáticas `IG_STATIC_QUIET_HOURS=0-7` (perfil de producción).
+
 ## Integración del backlog del Segundo Cerebro (2026-10-01)
 
 - LVR-BUG-0001: contexto oficial acotado (54 % → 2 % de notas en replay).

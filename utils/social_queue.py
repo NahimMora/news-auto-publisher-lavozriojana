@@ -96,12 +96,14 @@ def _can_reactivate(item: dict, platform: Platform) -> bool:
     ``expired``, ``completed``, ``dead_letter`` y ``processing`` nunca se
     reactivan: reactivar ``expired`` generaba un bucle (el TTL la vencía y el
     bootstrap la reactivaba en cada corrida). Una exclusión hecha por un corte
-    de operador (motivo ``operator_*``) tampoco se revierte sola.
+    de operador (motivo ``operator_*``) o por una política editorial ya
+    aplicada (``policy_*``, p. ej. el tope diario de Instagram) tampoco se
+    revierte sola.
     """
     if platform_state(item, platform) != "excluded":
         return False
     reason = str(item.get(f"{platform}_reason") or "")
-    return not reason.startswith("operator_")
+    return not reason.startswith(("operator_", "policy_"))
 
 
 def bootstrap_not_before() -> int:
@@ -332,6 +334,28 @@ def mark_pending(noticia: dict, platform: Platform, reason: str) -> None:
         return queue
 
     update_json(QUEUE_PATH, mutate, [], expected_type=list)
+
+
+def mark_policy_excluded(noticia: dict, platform: Platform, reason: str) -> None:
+    """Descarte editorial terminal (motivo ``policy_*``): no se publica ni se reactiva."""
+    if not reason.startswith("policy_"):
+        raise ValueError("El motivo de una exclusión por política debe empezar con 'policy_'")
+    keys = _item_keys(noticia)
+    recorded: dict | None = None
+
+    def mutate(queue):
+        nonlocal recorded
+        for item in queue:
+            if isinstance(item, dict) and (_item_keys(item) & keys):
+                if platform_state(item, platform) == "pending":
+                    _set_platform_state(item, platform, "excluded", reason=reason)
+                    recorded = dict(item)
+                break
+        return queue
+
+    update_json(QUEUE_PATH, mutate, [], expected_type=list)
+    if recorded is not None:
+        record_queue_event(stage=platform, status="excluded", reason=reason, item=recorded)
 
 
 def mark_dead_letter(

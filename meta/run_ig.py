@@ -18,7 +18,7 @@ from meta.ig_client import (
     post_to_instagram_detailed,
     rate_limit_until,
 )
-from utils.editorial_priority import item_source
+from utils.editorial_priority import item_category, item_is_breaking, item_source
 from utils.editorial_router import manual_automatic_candidates
 from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
@@ -34,6 +34,7 @@ from utils.social_queue import (
     mark_dead_letter,
     mark_done,
     mark_pending,
+    mark_policy_excluded,
     recover_ambiguous_processing,
     sync_done_from_posted_state,
 )
@@ -87,6 +88,143 @@ def _promoted_at(candidate: dict) -> int:
         except (TypeError, ValueError):
             continue
     return latest
+
+
+def _quiet_hours_window() -> tuple[int, int] | None:
+    """Lee ``IG_STATIC_QUIET_HOURS`` ("0-7": desde las 0 hasta antes de las 7).
+
+    Vacío o inválido = apagado (comportamiento previo). Las imágenes estáticas
+    publicadas de madrugada tienen un alcance mediano de ~20 cuentas contra
+    ~200 a la tarde (``cli.py kpis``) y consumen el tope diario de la cuenta.
+    """
+    raw = os.getenv("IG_STATIC_QUIET_HOURS", "").strip()
+    if not raw:
+        return None
+    try:
+        start_raw, end_raw = raw.split("-", 1)
+        start, end = int(start_raw), int(end_raw)
+    except ValueError:
+        logger.warning("IG_STATIC_QUIET_HOURS inválido (%r); horario silencioso apagado", raw)
+        return None
+    if not (0 <= start <= 23 and 0 <= end <= 24) or start == end:
+        logger.warning("IG_STATIC_QUIET_HOURS fuera de rango (%r); horario silencioso apagado", raw)
+        return None
+    return start, end
+
+
+def _in_quiet_hours(hour: int, window: tuple[int, int]) -> bool:
+    start, end = window
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def _is_static_post(noticia: dict) -> bool:
+    return not (
+        str(noticia.get("media_type") or "").lower() == "video"
+        or noticia.get("video_url")
+    )
+
+
+def _split_quiet_hours(selected: list[dict]) -> tuple[list[dict], int]:
+    """Difiere imágenes estáticas en horario silencioso sin tomarlas de la cola.
+
+    No hace ``claim``: quedan pendientes y entran en el primer ciclo fuera del
+    horario. Reels y videos no se difieren.
+    """
+    window = _quiet_hours_window()
+    if window is None or not _in_quiet_hours(time.localtime().tm_hour, window):
+        return selected, 0
+    kept = [noticia for noticia in selected if not _is_static_post(noticia)]
+    deferred = len(selected) - len(kept)
+    if deferred:
+        logger.info(
+            "Horario silencioso IG (%s-%s h): %s imágenes estáticas quedan para más tarde",
+            window[0],
+            window[1],
+            deferred,
+        )
+    return kept, deferred
+
+
+_LOCAL_EXCLUDED_SOURCE_MARKERS = ("paparazzi", "infobae", "internacional")
+
+
+def _is_local_news(noticia: dict) -> bool:
+    """Nota local (Nueva Rioja, Tiempo Popular): ni farándula, ni Infobae, ni internacional."""
+    source = item_source(noticia)
+    return not any(marker in source for marker in _LOCAL_EXCLUDED_SOURCE_MARKERS)
+
+
+def _local_categories() -> set[str]:
+    """``IG_LOCAL_CATEGORIES``: categorías locales que van a Instagram (vacío = todas).
+
+    Las imágenes locales tienen un alcance mediano de 40-120 cuentas contra
+    ~1.240 de espectáculos (ver docs/DECISIONS.md 2026-10-16). Último momento
+    siempre pasa. Facebook no aplica este filtro: lleva tráfico a la web.
+    """
+    raw = os.getenv("IG_LOCAL_CATEGORIES", "")
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _local_allowed_by_category(noticia: dict) -> bool:
+    allowed = _local_categories()
+    if not allowed or not _is_local_news(noticia):
+        return True
+    return item_is_breaking(noticia) or item_category(noticia) in allowed
+
+
+def _local_daily_max() -> int:
+    try:
+        return max(0, int(os.getenv("IG_LOCAL_DAILY_MAX", "0")))
+    except ValueError:
+        return 0
+
+
+def _local_posted_today(now: float | None = None) -> int:
+    """Notas locales ya publicadas hoy (día local) según ``ig_posted.json``."""
+    current = time.localtime(now if now is not None else time.time())
+    midnight = time.mktime((current.tm_year, current.tm_mon, current.tm_mday, 0, 0, 0, 0, 0, -1))
+    state = load_json(IG_STATE_PATH, {"posted": {}}, expected_type=dict)
+    posted = state.get("posted")
+    if not isinstance(posted, dict):
+        return 0
+    return sum(
+        1
+        for record in posted.values()
+        if isinstance(record, dict)
+        and int(record.get("posted_at") or 0) >= midnight
+        and str(record.get("media_type") or "").lower() not in {"reel", "video"}
+        and _is_local_news(record)
+    )
+
+
+def _apply_local_daily_cap(selected: list[dict]) -> tuple[list[dict], int]:
+    """Tope diario de notas locales (``IG_LOCAL_DAILY_MAX``, 0 = sin tope).
+
+    ``selected`` ya viene en orden de prioridad (último momento y policiales
+    primero). Lo que excede el tope se descarta para Instagram (sigue en Web y
+    Facebook): pasarlo al día siguiente publicaría noticias viejas.
+    """
+    cap = _local_daily_max()
+    if not cap:
+        return selected, 0
+    budget = max(0, cap - _local_posted_today())
+    kept: list[dict] = []
+    excluded = 0
+    for noticia in selected:
+        # Sin ``selected_for_publish`` sólo entra por promoción manual: no se topea.
+        if not noticia.get("selected_for_publish") or not _is_local_news(noticia):
+            kept.append(noticia)
+        elif budget > 0:
+            kept.append(noticia)
+            budget -= 1
+        else:
+            mark_policy_excluded(noticia, "instagram", "policy_ig_local_daily_cap")
+            excluded += 1
+    if excluded:
+        logger.info("Tope diario de notas locales en IG (%s): %s descartadas para Instagram", cap, excluded)
+    return kept, excluded
 
 
 def _publish_paparazzi(noticia: dict):
@@ -155,7 +293,14 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
         if not manual_override and not noticia.get("selected_for_publish"):
             omitted_by_policy += 1
             continue
+        # Seleccionada sólo para la Web (p. ej. paparazzi con video: sale como Reel).
+        if not manual_override and noticia.get("social_skip_reason"):
+            omitted_by_policy += 1
+            continue
         if not manual_override and _is_suppressed(noticia):
+            omitted_by_policy += 1
+            continue
+        if not manual_override and not _local_allowed_by_category(noticia):
             omitted_by_policy += 1
             continue
         if not manual_override and is_too_old_for_bootstrap(noticia):
@@ -281,6 +426,8 @@ def main() -> StageResult:
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
         selected = get_pending("instagram", max_items=limit)
+        selected, quiet_deferred = _split_quiet_hours(selected)
+        selected, local_cap_excluded = _apply_local_daily_cap(selected)
     except JsonStateError as exc:
         logger.error("Estado social de Instagram ilegible: %s", exc)
         return StageResult(
@@ -299,6 +446,8 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
             details={
                 "included": included,
+                "quiet_hours_deferred": quiet_deferred,
+                "local_daily_cap_excluded": local_cap_excluded,
                 "included_by_manual_override": manual_overrides,
                 "manual_override_without_web_url": manual_without_web_url,
                 "restored_from_candidate_store": restored_from_candidates,
@@ -373,6 +522,8 @@ def main() -> StageResult:
         error_type=error_type,
         next_retry_at=next_retry_at,
         details={
+            "quiet_hours_deferred": quiet_deferred,
+            "local_daily_cap_excluded": local_cap_excluded,
             "included_by_manual_override": manual_overrides,
             "manual_override_without_web_url": manual_without_web_url,
             "restored_from_candidate_store": restored_from_candidates,

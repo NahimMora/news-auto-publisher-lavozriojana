@@ -1217,3 +1217,172 @@
   re-scrape por el resto de la corrida (antes: hasta 8 llamadas fallidas por ciclo).
 - Pendiente: revisar la app en Meta for Developers (permisos y acceso a la
   funcionalidad de URL scraping). El Sharing Debugger manual sigue disponible.
+
+## 89. Caption de IG/FB desde la web con chips como viñetas y lead cortado — CORREGIDO 2026-10-04
+
+- ID: observado tras activar `IG_CAPTION_FROM_WEB_ENABLED=true` (LVR-IMPROVEMENT-0001);
+  severidad media (calidad visible en todas las publicaciones).
+- Reproducción: los 93 captions publicados entre el 02/10 y el 04/10 listaban como
+  "▪️" los `key_points` de la web, que son chips de ≤32 caracteres ("▪️ Policiales",
+  "▪️ La Rioja", "▪️ Convenio de cooperación ambient..."); el lead llegaba cortado por
+  `clean_text` ("…la presencia te..."); `#LaRioja` se repetía; en notas con fallback
+  editorial el caption mostraba el primer párrafo crudo de la fuente, ajeno al
+  título (China Suárez → "El desempleo lo persigue…"). Diagnóstico extra:
+  `ig_posted.json` guarda el `texto_instagram` previo, no el caption final.
+- Corrección: `utils/social_caption.py` lista sólo puntos de ≥4 palabras que no
+  repiten el lead y sólo si hay dos o más; lead recortado a oraciones completas;
+  pregunta normalizada con "¿"; cierre "📲 Nota completa en lavozriojana.com";
+  hashtags sin duplicados. `web_editorial.source_fallback` (campo opcional nuevo)
+  marca el fallback con texto original y redes vuelven al caption propio. El prompt
+  del caption pide voseo y una pregunta específica.
+- Tests: `tests.test_caption_from_web`. Replay sobre los 105 registros reales con
+  `web_editorial`: 0 viñetas basura, 0 cortes, 0 hashtags repetidos.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 90. Bajada (`deck`) de la card de Instagram toda en minúsculas — CORREGIDO 2026-10-04
+
+- ID: severidad media (visible en la pieza). 196 de las últimas 200 bajadas de
+  Gemini llegaban en minúscula, nombres propios incluidos ("la periodista fue
+  invitada al programa de juana viale").
+- Corrección: el prompt pide mayúscula inicial y nombres propios;
+  `openIA/caption_generator.py::restore_deck_casing` restaura, sólo en bajadas sin
+  ninguna mayúscula, los nombres propios tal como la fuente los escribe a mitad de
+  oración (ignora títulos en MAYÚSCULAS, artículos y palabras que la fuente también
+  escribe en minúscula). Se aplica al generar y al renderizar
+  (`layout/image_generator.py::_deck_for_render`), así cubre lo ya encolado. No
+  agrega ni cambia palabras.
+- Tests: `tests.test_ig_quality_fixes.DeckCasingTests`; replay de 12 bajadas reales
+  correctas.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 91. Tope diario de publicaciones de Instagram mandaba ítems a dead-letter — CORREGIDO 2026-10-04
+
+- ID: severidad alta operativa. Ciclos #771 y #772: 8 rechazos
+  `OAuthException code 9 / subcode 2207042` (tope de posts por 24 h de la cuenta)
+  en `media_publish`, clasificados como `request_rejected` con outcome `unknown`:
+  cada ítem fue a dead-letter y el ciclo siguiente volvió a chocar con el tope.
+- Corrección: `meta/ig_client.py::_is_rate_limit_error` incluye code 9 y subcode
+  2207042: backoff compartido (`IG_RATE_LIMIT_BACKOFF_SECONDS`), el ítem vuelve a
+  pendiente y la etapa corta el lote. Meta rechaza la publicación antes de
+  publicar, por eso no es un outcome ambiguo.
+- Tests: `tests.test_ig_quality_fixes.InstagramDailyLimitTests`.
+- Riesgo residual: los 8 ítems ya en dead-letter no se recuperan solos; requieren
+  decisión del operador.
+- Estado actual: **corregido; activo en el host desde el ciclo siguiente al 04/10 01:40 (working tree de `main`, sin commit todavía)**.
+
+## 92. Sesión de Meta invalidada y page token cacheado sin invalidar — CORREGIDO 2026-10-15
+
+- ID: severidad alta operativa. Desde 2026-10-14 01:16 todo Graph respondió
+  `OAuthException 190 / subcode 460` (sesión invalidada por cambio de contraseña):
+  ni Facebook ni Instagram publicaron por ~44 h y la cola social acumuló 110/118
+  pendientes.
+- Causas que impedían recuperarse con sólo rotar el `.env`:
+  1. `meta/facebook_token_manager.py` reutilizaba `fb_token_cache.json` (del 29/06)
+     sin verificar de qué token se derivó, y nada lo invalidaba ante un 190.
+  2. Con un Page Token en `FB_PAGE_ACCESS_TOKEN`, `/me/accounts` falla: sólo
+     funcionaban user tokens.
+  3. `preflight --scope facebook|instagram` consultaba `/me/permissions`, que no
+     existe para Page Tokens: falso `failed (400)` con un token válido.
+  4. El supervisor carga `.env` al arrancar y los hijos heredan esas variables
+     (`load_dotenv()` no las pisa): rotar un token exige reiniciar el supervisor.
+- Corrección: la cache guarda `source_fingerprint` (SHA-256 del token de origen) y
+  se ignora si no coincide; si `/me` del token configurado es `FB_PAGE_ID` se usa
+  directo; `fb_client._api_result` invalida la cache ante 190/401; el preflight cae
+  a `debug_token` (scopes del propio token) cuando `/me/permissions` no existe.
+- Tests: `tests.test_facebook_token_manager`,
+  `tests.test_preflight...test_page_token_permissions_fall_back_to_debug_token`,
+  `tests.test_meta_contracts` (invalidación ante 190).
+- Riesgo residual: el Page Token nuevo vence el **2026-12-14** (derivado de un user
+  token de 60 días). Renovarlo antes y reiniciar el supervisor. El punto 4 sigue
+  vigente por diseño.
+- Estado actual: **corregido en `fix/meta-page-token`; activo en el host desde el
+  reinicio del supervisor del 2026-10-15**.
+
+## 93. Reels automáticos publicados con la plantilla clásica de ffmpeg — CORREGIDO 2026-10-15
+
+- ID: severidad media (marca). Entre 1 y 3 reels por día (`logs/video_renderer.log`,
+  09/10–15/10) salían con el overlay clásico PIL+ffmpeg en vez de `EditorialReel`:
+  `render_video` caía al fallback cuando Remotion fallaba y `render_reel_item` sólo
+  exigía `source_used == "video"`, no el motor.
+- Causas de la falla de Remotion: `Timeout while extracting frame` / `delayRender ...
+  not cleared after 28000ms` sobre videos fuente de X/paparazzi (HEVC, VFR, GOP
+  largo) y `Timed out after 30000ms while setting up the headless browser`.
+- Corrección (flags apagados por defecto, activos en el script de producción):
+  `REEL_SOURCE_NORMALIZE_ENABLED` re-encodea la fuente a H.264 CFR 30 fps, ≤1080 px,
+  GOP 15; `REMOTION_REEL_TIMEOUT_MS` (120000) se pasa como `--timeout`;
+  `REMOTION_REEL_ATTEMPTS` (2) reintenta; `REEL_REQUIRE_REMOTION` hace que los reels
+  automáticos nunca usen el fallback (`ReelTemplateUnavailable`): el job de X vuelve
+  a pendiente (3 intentos) y la nota de paparazzi sale como imagen. La UI manual
+  (`video_reel_manager.py`) conserva el fallback.
+- QA: render real de un HEVC 1920×1080 GOP 240 generado con `testsrc2`: normalizado,
+  `EditorialReel` en 32 s, H.264 1080×1920 30 fps.
+- Tests: `tests.test_reel_quality_gates`.
+- Estado actual: **corregido en `fix/meta-page-token`; activo desde el reinicio del
+  supervisor posterior al 2026-10-15 21:30**.
+
+## 94. El lote publicaba casi todo: el puntaje de paparazzi no filtraba — CORREGIDO 2026-10-16
+
+- ID: severidad media (editorial). Últimos 7 días al 15/10 (`noticias_meta.json`):
+  entraron 440 notas y se seleccionaron 345; sin deportes, el 99%. Paparazzi:
+  111/119 publicadas, 25 con relevancia ≤ 4 (p. ej. recomendaciones de miniseries
+  de Netflix con 1/10). El puntaje sólo ordenaba: lo no elegido en un ciclo volvía
+  a competir en el siguiente.
+- Además: `nuevarioja_internacionales` competía como "local" (21/22 publicadas,
+  p. ej. un candidato peruano llamado Hitler Mussolini); una falla de IA en la
+  relevancia de paparazzi asignaba 10 y mandaba la nota primera; Instagram
+  publicaba todas las locales (alcance mediano 38–120 cuentas, contra 1.240 de
+  espectáculos, `ig_media_insights.json`, 632 posts en 14 días).
+- Corrección (flags apagados por defecto, activados en el script de producción):
+  `PAPARAZZI_VIDEO_ONLY_ENABLED`, `PUBLISH_PAPARAZZI_MIN_SCORE=6`,
+  `PUBLISH_INTERNATIONAL_BUCKET_ENABLED` (umbral 8, 1 por ciclo),
+  `IG_LOCAL_CATEGORIES=policiales,sociedad` + `IG_LOCAL_DAILY_MAX=12`; una falla de
+  IA deja la nota sin puntaje (pasa al final de la fila; internacional sin puntaje
+  no entra). Ver `DECISIONS` 2026-10-16.
+- Tests: `tests.test_editorial_criteria`.
+- Estado actual: **corregido en `fix/meta-page-token`; activo desde el próximo
+  arranque del supervisor**.
+
+## 95. Fuente Infobae Policiales nunca llegó a la reescritura — CORREGIDO 2026-10-16
+
+- ID: severidad media. `main_infobae_policiales.py` corre desde `71a80ad` y deja
+  sus notas en `data/noticias_norewrite_infobae_policiales.json`, pero
+  `openIA/rewrite_news.py::INPUT_FILES` nunca incluyó ese archivo: 408 notas
+  acumuladas (26/08–15/10), ninguna procesada ni publicada.
+- 406 de 408 traen video propio de Infobae (`cdn.jwplayer.com`, hasta ~4 min). Si
+  se conecta tal cual, `post_to_instagram_detailed` publicaría ese MP4 crudo como
+  Reel (sin plantilla EditorialReel, material de Infobae) y Facebook un link.
+- Al conectarlo, `ARTICLE_MAX_AGE_DAYS=1` expira las 408 viejas antes de la IA
+  (sin publicar).
+- Corrección: el archivo se agregó a `INPUT_FILES`; por decisión del operador
+  (`DECISIONS` 2026-10-16), la nota con video sale sólo como Reel EditorialReel
+  (`INFOBAE_VIDEO_ONLY_ENABLED`, etapa `meta/run_paparazzi_videos.py`), nunca el
+  MP4 crudo, más artículo Web; sin video, nota normal. Simulación al 16/10: de las
+  408, sólo 5 (del 15/10, todas con video) pasan la antigüedad.
+- Verificado en producción el 16/10 (ciclos #1009-#1010): 9 notas reescritas;
+  Reels publicados en IG y FB (acoso digital, cambista de Pehuajó, inhibidores en
+  Mar del Plata). Un video de jwplayer devolvió 404: reintenta y, si sigue sin
+  video, queda en dead-letter sin publicarse en redes como imagen.
+- Estado actual: **corregido y verificado**.
+
+## 96. Estado JSON sobredimensionado: cada evento reescribía ~75 MB — CORREGIDO 2026-10-17
+
+- ID: severidad media (rendimiento). `data/queue_events.json` (41,5 MB, 10.000
+  eventos) y `data/rewrite_queue_state.json` (34 MB, 7.018 `completed` nunca
+  podados) guardaban el texto completo de cada nota (`parrafos`,
+  `texto_instagram`, etc.). Cada transición de la reescritura reescribía ambos.
+- Evidencia: ciclo #1008 (16/10 20:47–21:17) gastó los 1.800 s de la reescritura
+  expirando las ~400 notas viejas de Infobae a ~7 s cada una, sin reescribir nada.
+- Corrección: `utils/queue_events.py::compact_item` saca el texto pesado de cada
+  evento (conserva identidad, estado y motivos) y `DurableQueue` compacta el
+  payload de `completed`/`expired` (el `id` sigue deduplicando; `failed` y
+  `dead_letter` conservan el payload completo para revisión). Lo existente se
+  compacta en la siguiente escritura (idempotente). Sobre copia de los datos
+  reales: 41,5 → 18,8 MB y 33,9 → 12,5 MB. Backups previos en `data/backups/`
+  (`*.20261017T0438*`). Tests: `tests/test_state_compaction.py`.
+- Incidente durante el despliegue: el supervisor ejecuta el working copy de
+  `C:\LVR`; el ciclo #1011 (17/10 01:36) tomó `durable_queue.py` editado a medias
+  (`NameError: HEAVY_ITEM_FIELDS`) y la reescritura falló tras reescribir 1 nota,
+  que quedó en `processing` y `recover_processing` la devuelve a `pending`. No
+  editar archivos del repo con el supervisor activo: preparar en otra rama o
+  worktree y aplicar entre ciclos.
+- Estado actual: **corregido en código; pendiente de verificar en producción**.

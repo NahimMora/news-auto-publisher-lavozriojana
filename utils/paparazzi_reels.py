@@ -98,8 +98,18 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         "imagen_url": noticia.get("imagen_url") or "",
     }
 
+    from utils.video_renderer import ReelTemplateUnavailable
+
     try:
-        video_path, _video_id, _duration, render_info = render_video(render_item)
+        # Con REEL_REQUIRE_REMOTION, un reel automático sale sólo con la plantilla
+        # EditorialReel/Main: nunca con el overlay clásico de ffmpeg.
+        video_path, _video_id, _duration, render_info = render_video(
+            render_item,
+            allow_ffmpeg_fallback=not _enabled("REEL_REQUIRE_REMOTION"),
+        )
+    except ReelTemplateUnavailable as exc:
+        logger.warning("Reel no publicado: %s", exc)
+        return None
     except Exception as exc:
         logger.warning("No se pudo renderizar el reel: %s", exc)
         return None
