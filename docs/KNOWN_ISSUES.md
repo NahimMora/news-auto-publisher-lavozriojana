@@ -1379,4 +1379,10 @@
   compacta en la siguiente escritura (idempotente). Sobre copia de los datos
   reales: 41,5 → 18,8 MB y 33,9 → 12,5 MB. Backups previos en `data/backups/`
   (`*.20261017T0438*`). Tests: `tests/test_state_compaction.py`.
+- Incidente durante el despliegue: el supervisor ejecuta el working copy de
+  `C:\LVR`; el ciclo #1011 (17/10 01:36) tomó `durable_queue.py` editado a medias
+  (`NameError: HEAVY_ITEM_FIELDS`) y la reescritura falló tras reescribir 1 nota,
+  que quedó en `processing` y `recover_processing` la devuelve a `pending`. No
+  editar archivos del repo con el supervisor activo: preparar en otra rama o
+  worktree y aplicar entre ciclos.
 - Estado actual: **corregido en código; pendiente de verificar en producción**.
