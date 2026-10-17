@@ -2267,3 +2267,19 @@ generado no se persiste: un reintento de la misma nota vuelve a pedirlo.
 
 **Revertir**: `LOCALITY_DECK_LAZY_ENABLED=false` (o quitar la línea del script).
 Las notas ya marcadas siguen completándose al renderizar.
+
+### 2026-10-17 — Activación de Visual System V2 en Reel, card de IG y OG
+
+**Contexto**: V2 se evaluó contra V1 en la galería y el artifact de comparación
+(Reel policial, sin hook de cifra). El responsable editorial lo aprobó y autorizó
+el despliegue.
+
+**Decisión**: selector `utils/visual_version.py` cableado en los tres call sites
+de render; `VISUAL_STYLE_VERSION=v2` en el script de arranque y el `.env` del
+host. El código mantiene `v1` como default y las composiciones V1 intactas.
+
+**Descartado**: reemplazar las composiciones V1 (impide el rollback por variable);
+activar sólo un canal (la identidad debe coincidir entre Reel, post y link).
+
+**Rollback**: `VISUAL_STYLE_VERSION=v1` (script y `.env`), borrar
+`remotion/.render-cache` y reiniciar supervisor y UI manual.

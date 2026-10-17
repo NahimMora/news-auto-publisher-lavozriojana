@@ -37,6 +37,10 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   notas que renderizan la card estática de Instagram, con el extracto y el caption
   como contexto. El caption sigue generándose en la reescritura (`titulo_instagram`
   es el título web y el CTA alimenta el caption desde la web).
+- Visual System V2 activo (2026-10-17, `docs/design/VISUAL_SYSTEM_V2.md`):
+  `VISUAL_STYLE_VERSION=v2` cambia Reels (`EditorialReelV2`), card automática de
+  IG (`AutomaticInstagramCardV2`) y OG (`FacebookOgCardV2`). La caída a Pillow de
+  las imágenes estáticas sigue siendo V1; los Reels sin Remotion no se publican.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

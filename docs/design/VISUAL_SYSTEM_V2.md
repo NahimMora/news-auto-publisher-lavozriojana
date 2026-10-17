@@ -1,8 +1,10 @@
 # La Voz Riojana — Visual System V2
 
-Estado: **prototipo en evaluación. NO activo en producción.** Rama
-`feature/visual-system-v2`. Producción sigue en V1 y el default del selector es
-`v1`. La activación requiere aprobación explícita del responsable editorial.
+Estado: **activo en producción desde el 2026-10-17** (aprobado por el responsable
+editorial). `VISUAL_STYLE_VERSION=v2` en `scripts/start_24x7_production.ps1` y en
+el `.env` del host; el default del código sigue siendo `v1`. Rollback:
+`VISUAL_STYLE_VERSION=v1`, reiniciar supervisor y UI manual y borrar
+`remotion/.render-cache` (ver sección 8).
 
 ## 1. Concepto: "Regla y tinta"
 
@@ -144,9 +146,15 @@ regeneran. `as_metadata()` devuelve lo necesario para reproducir el render
 (versión, composición, origen de la decisión); junto con los props guardados
 permite re-renderizar igual.
 
-## 8. Activación futura (NO ejecutada)
+## 8. Activación (ejecutada el 2026-10-17)
 
-Cuando se apruebe V2:
+Selector cableado en `utils/video_renderer.py::_render_remotion_main` (todos los
+Reels: X, paparazzi/Infobae y UI manual pasan por `render_video`),
+`layout/image_generator.py::_generate_instagram_remotion` y
+`_generate_facebook_remotion`. La card V2 de IG siempre renderiza a 2× y se
+guarda en JPEG 95 4:4:4. El Reel V2 incluye su cierre (no se concatena el outro
+histórico) y `info` registra `visual_style_version`/`composition`. Pasos que se
+siguieron:
 
 1. Merge de la rama con el selector cableado en los tres call sites
    (`utils/video_renderer.py::_render_remotion_main`,
