@@ -259,6 +259,124 @@ class AutomaticVisualStyleFlagTests(unittest.TestCase):
         )
 
 
+class LazyLocalityDeckTests(unittest.TestCase):
+    _ARTICLE = {
+        "titulo": "El Gobierno anunció un plan integral de obras",
+        "parrafos": ["El anuncio fue confirmado por autoridades."],
+        "seccion": "politica",
+        "url": "https://example.com/plan-obras",
+        "source": "fixture",
+    }
+
+    def _rewrite(self, env: dict):
+        from openIA import rewrite_news
+
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            rewrite_news, "_call_gemini", return_value=(self._ARTICLE["titulo"], "")
+        ), patch.object(
+            rewrite_news,
+            "clasificar_con_resultado",
+            return_value=SimpleNamespace(category="politica", fallback_used=False),
+        ), patch.object(
+            rewrite_news, "generate_caption", return_value={"caption_fallback_used": False}
+        ), patch.object(rewrite_news, "generate_locality_and_deck") as locality_mock:
+            rewritten = rewrite_news.rewrite_noticia(
+                {**self._ARTICLE, "highlight_terms": ["viejo"], "deck": "vieja"}
+            )
+        return rewrite_news, rewritten, locality_mock
+
+    def test_flag_off_keeps_generating_during_rewrite(self):
+        _, rewritten, locality_mock = self._rewrite({"LOCALITY_DECK_LAZY_ENABLED": "false"})
+        self.assertEqual(locality_mock.call_count, 1)
+        self.assertNotIn("locality_deck_deferred", rewritten)
+
+    def test_flag_on_defers_without_calling_gemini_and_survives_meta_queue(self):
+        rewrite_news, rewritten, locality_mock = self._rewrite({"LOCALITY_DECK_LAZY_ENABLED": "true"})
+        locality_mock.assert_not_called()
+        self.assertTrue(rewritten["locality_deck_deferred"])
+        self.assertNotIn("deck", rewritten)
+        self.assertNotIn("highlight_terms", rewritten)
+        self.assertNotIn("locality_deck", rewritten["fallbacks_used"])
+        self.assertTrue(rewrite_news.build_meta_item(rewritten)["locality_deck_deferred"])
+
+    def test_ensure_completes_deferred_item_from_excerpt_and_caption(self):
+        from openIA.caption_generator import ensure_locality_and_deck
+
+        payload = {"locality": "Chilecito", "deck": "Obras para el oeste", "highlight_phrase": "plan integral"}
+        mock_chat = _gemini_chat_mock(json.dumps(payload))
+        item = {
+            "titulo": self._ARTICLE["titulo"],
+            "excerpt": "Primer párrafo en Chilecito.",
+            "texto_instagram": "Caption de la nota.",
+            "locality_deck_deferred": True,
+        }
+        with patch.dict(
+            os.environ,
+            {"GEMINI_API_KEY": "test-only", "GEMINI_RETRY_COUNT": "1", "AUTOMATIC_MANUAL_VISUAL_STYLE_ENABLED": "true"},
+            clear=False,
+        ), patch("utils.ai_client.chat_completion", mock_chat):
+            self.assertTrue(ensure_locality_and_deck(item))
+            # Segunda vez no vuelve a llamar a Gemini.
+            self.assertFalse(ensure_locality_and_deck(item))
+
+        self.assertEqual(mock_chat.call_count, 1)
+        user_prompt = mock_chat.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("Primer párrafo en Chilecito.", user_prompt)
+        self.assertIn("Caption de la nota.", user_prompt)
+        self.assertEqual(item["locality"], "Chilecito")
+        self.assertEqual(item["deck"], "Obras para el oeste")
+        self.assertEqual(item["highlight_terms"], ["plan integral"])
+        self.assertNotIn("locality_deck_deferred", item)
+
+    def test_ensure_is_noop_for_items_generated_during_rewrite(self):
+        from openIA.caption_generator import ensure_locality_and_deck
+
+        mock_chat = Mock()
+        item = {"titulo": "Nota", "locality": "", "deck": "Ya generada"}
+        with patch("utils.ai_client.chat_completion", mock_chat):
+            self.assertFalse(ensure_locality_and_deck(item))
+        mock_chat.assert_not_called()
+        self.assertEqual(item["deck"], "Ya generada")
+
+    def test_ensure_failure_leaves_card_without_deck(self):
+        from openIA.caption_generator import ensure_locality_and_deck
+
+        item = {"titulo": "Nota", "excerpt": "Texto", "locality_deck_deferred": True}
+        with patch.dict(
+            os.environ,
+            {"GEMINI_API_KEY": "test-only", "GEMINI_RETRY_COUNT": "1", "GEMINI_RETRY_SLEEP": "0"},
+            clear=False,
+        ), patch("utils.ai_client.chat_completion", Mock(side_effect=RuntimeError("boom"))):
+            self.assertTrue(ensure_locality_and_deck(item))
+        self.assertEqual(item["deck"], "")
+        self.assertEqual(item["locality"], "")
+
+    def test_ig_render_requests_deferred_fields_before_rendering(self):
+        from meta import ig_client
+
+        item = {"titulo": "Nota", "excerpt": "Texto", "locality_deck_deferred": True}
+        seen: dict = {}
+
+        def fake_render(noticia, **_kwargs):
+            seen["deck"] = noticia.get("deck")
+            raise RuntimeError("render cortado por el test")
+
+        def fake_ensure(noticia):
+            noticia["deck"] = "Bajada diferida"
+            noticia.pop("locality_deck_deferred", None)
+            return True
+
+        with patch.object(ig_client.r2_storage, "is_configured", return_value=True), patch(
+            "layout.image_generator.generate_instagram_with_engine", side_effect=fake_render
+        ), patch("openIA.caption_generator.ensure_locality_and_deck", side_effect=fake_ensure), patch.dict(
+            os.environ, {"IG_ALLOW_ORIGINAL_IMAGE_FALLBACK": "false"}, clear=False
+        ):
+            result, _url, _key = ig_client._prepare_image(item)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(seen["deck"], "Bajada diferida")
+
+
 class CustomPostVisualMetadataTests(unittest.TestCase):
     def test_custom_post_enforces_the_web_title_limit(self):
         from pipeline.custom_post import CUSTOM_TITLE_MAX_CHARS, build_custom_noticia

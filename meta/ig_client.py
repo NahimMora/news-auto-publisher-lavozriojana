@@ -362,6 +362,15 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
     try:
         from layout.image_generator import generate_instagram_with_engine
 
+        # Localidad/bajada diferidas por LOCALITY_DECK_LAZY_ENABLED: se piden
+        # recién acá, sólo para notas que efectivamente renderizan la card.
+        try:
+            from openIA.caption_generator import ensure_locality_and_deck
+
+            ensure_locality_and_deck(noticia)
+        except Exception as exc:
+            logger.warning("Localidad/bajada diferidas no disponibles (%s); card sin bajada", type(exc).__name__)
+
         local_image = str(noticia.get("imagen") or noticia.get("imagen_optimizada") or "")
         if local_image and os.path.isfile(local_image):
             from PIL import Image

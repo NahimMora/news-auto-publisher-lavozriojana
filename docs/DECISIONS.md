@@ -2230,3 +2230,40 @@ y la del puntaje de X):
   de la etapa es 1200 s; con 900 s el 16/10 se cortó un Reel a mitad de subida) y
   deja el resto pendiente para el ciclo siguiente. Los Reels no cuentan en
   `IG_MAX_PER_RUN`, `PUBLISH_MAX_PER_RUN` ni `IG_LOCAL_DAILY_MAX`.
+
+### 2026-10-17 — Localidad/bajada de Gemini sólo para notas que renderizan la card de IG
+
+**Contexto**: el operador pidió bajar el gasto de Gemini desde el próximo ciclo.
+Mediciones (logs y `ai_call_metrics`, 01–17/10): el modelo
+(`gemini-3.1-flash-lite`) y el volumen diario no cambiaron; no hay más reintentos.
+Cada nota reescrita hace ~5 llamadas: título, clasificación, caption, localidad/bajada
+y redacción web (1,56 en promedio con revisiones), más relevancia de paparazzi e
+impacto internacional cuando aplica. Instagram publica ~25–50 estáticas de ~50–100
+notas reescritas por día, pero la localidad/bajada (que sólo usa la card estática de
+IG, `AutomaticInstagramCard`) se pedía para todas.
+
+**Decisión**: `LOCALITY_DECK_LAZY_ENABLED` (default `false`, activado en
+`scripts/start_24x7_production.ps1` y en el `.env` del host). Con el flag, la
+reescritura marca `locality_deck_deferred` (persistido en `META_FIELDS`) y
+`meta/ig_client.py::_prepare_image` llama a
+`openIA/caption_generator.py::ensure_locality_and_deck` justo antes de renderizar.
+La cola social no guarda los párrafos: el contexto es `excerpt` + `texto_instagram`
+(o los párrafos, si la nota viene del almacén de candidatas). Un fallo deja la card
+sin bajada, igual que el fallback anterior; nunca bloquea la publicación. Lo
+generado no se persiste: un reintento de la misma nota vuelve a pedirlo.
+
+**Descartado**:
+
+- Diferir el caption: `titulo_instagram` es el título del artículo web
+  (`build_web_item`) y el CTA alimenta el caption desde la web; Facebook también lo
+  usa.
+- Filtrar por ruta `candidate`: Instagram ya no se decide por ruta sino por
+  `selected_for_publish`.
+- Cortar la revisión editorial ante `revision_no_material_change`: desde el 01/10
+  habría ahorrado 16 de 1352 llamadas (~1 %) y, en 18 de los 21 casos, un intento
+  posterior salió bien; el corte los habría degradado a fallback. Las primeras
+  revisiones se deben a warnings factuales (`invented_proper_noun`,
+  `invented_number`), que no se relajan.
+
+**Revertir**: `LOCALITY_DECK_LAZY_ENABLED=false` (o quitar la línea del script).
+Las notas ya marcadas siguen completándose al renderizar.

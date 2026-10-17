@@ -31,6 +31,12 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y
   los terminales de la cola de reescritura ya no guardan el texto de cada nota.
+- Gasto de Gemini (2026-10-17, `DECISIONS` 2026-10-17): con
+  `LOCALITY_DECK_LAZY_ENABLED=true` (script de arranque) la reescritura ya no pide
+  localidad/bajada; se piden en `meta/ig_client.py::_prepare_image` sólo para las
+  notas que renderizan la card estática de Instagram, con el extracto y el caption
+  como contexto. El caption sigue generándose en la reescritura (`titulo_instagram`
+  es el título web y el CTA alimenta el caption desde la web).
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

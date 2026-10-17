@@ -33,6 +33,8 @@ $env:FB_LINK_PREWARM_MAX_BYTES = "5242880"
 $env:FB_INTER_POST_DELAY_SECONDS = "30"
 # LVR-IMPROVEMENT-0001: caption de IG/FB desde la versión editorial web (sin IA extra).
 $env:IG_CAPTION_FROM_WEB_ENABLED = "true"
+# Gemini: localidad/bajada sólo para notas que renderizan la card de IG (2026-10-17).
+$env:LOCALITY_DECK_LAZY_ENABLED = "true"
 # Imágenes estáticas de IG fuera de 0-7 h (alcance mediano de madrugada ~20 vs ~200
 # a la tarde); Reels sin cambios. Ver docs/DECISIONS.md (2026-10-04).
 $env:IG_STATIC_QUIET_HOURS = "0-7"

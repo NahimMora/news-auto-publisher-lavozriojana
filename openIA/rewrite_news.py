@@ -35,7 +35,11 @@ from utils.queue_events import record_queue_event
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 from utils.url_normalization import url_hash
 from utils.visual_style import automatic_manual_visual_style_enabled
-from openIA.caption_generator import generate_caption, generate_locality_and_deck
+from openIA.caption_generator import (
+    generate_caption,
+    generate_locality_and_deck,
+    locality_deck_lazy_enabled,
+)
 
 logger = setup_logger("rewrite_news", "rewrite_news.log")
 
@@ -79,6 +83,7 @@ META_FIELDS = (
     "locality",
     "deck",
     "highlight_terms",
+    "locality_deck_deferred",
     "queued_at",
     "fallbacks_used",
     "fallback_policy",
@@ -245,21 +250,28 @@ def rewrite_noticia(noticia: dict) -> dict:
     # Completar localidad/bajada para la card automática de una sola imagen
     # (AutomaticInstagramCard.tsx) — nunca bloquea la cola si falla: vacío
     # es un resultado válido, no un error de publicación.
-    shared_visual_style = automatic_manual_visual_style_enabled()
-    locality_deck_data = generate_locality_and_deck(
-        noticia,
-        include_highlight=shared_visual_style,
-    )
-    noticia["locality"] = locality_deck_data["locality"]
-    noticia["deck"] = locality_deck_data["deck"]
-    if shared_visual_style and locality_deck_data.get("highlight_phrase"):
-        noticia["highlight_terms"] = [locality_deck_data["highlight_phrase"]]
+    if locality_deck_lazy_enabled():
+        # Sólo la card estática de IG usa estos campos: se generan al
+        # renderizarla (meta/ig_client.py::_prepare_image), no por cada nota.
+        noticia["locality_deck_deferred"] = True
+        for field in ("locality", "deck", "highlight_terms"):
+            noticia.pop(field, None)
     else:
-        # Mantiene el flag reversible incluso si se reprocesa una entrada
-        # creada mientras la paridad visual estaba activa.
-        noticia.pop("highlight_terms", None)
-    if locality_deck_data.get("locality_deck_fallback_used"):
-        fallbacks_used["locality_deck"] = True
+        shared_visual_style = automatic_manual_visual_style_enabled()
+        locality_deck_data = generate_locality_and_deck(
+            noticia,
+            include_highlight=shared_visual_style,
+        )
+        noticia["locality"] = locality_deck_data["locality"]
+        noticia["deck"] = locality_deck_data["deck"]
+        if shared_visual_style and locality_deck_data.get("highlight_phrase"):
+            noticia["highlight_terms"] = [locality_deck_data["highlight_phrase"]]
+        else:
+            # Mantiene el flag reversible incluso si se reprocesa una entrada
+            # creada mientras la paridad visual estaba activa.
+            noticia.pop("highlight_terms", None)
+        if locality_deck_data.get("locality_deck_fallback_used"):
+            fallbacks_used["locality_deck"] = True
 
     noticia.setdefault("queued_at", int(time.time()))
     noticia["fallbacks_used"] = fallbacks_used

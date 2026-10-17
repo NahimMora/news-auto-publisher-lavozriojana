@@ -503,3 +503,49 @@ def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False
 
     logger.error(f"Locality/deck falló para: {noticia.get('titulo', '')[:60]}, usando vacío")
     return _locality_deck_fallback("gemini_failed", noticia, include_highlight=include_highlight)
+
+
+def locality_deck_lazy_enabled() -> bool:
+    """``LOCALITY_DECK_LAZY_ENABLED``: diferir localidad/bajada hasta la card de IG.
+
+    Default ``False``: desplegar el código no cambia producción hasta que el
+    host active el flag.
+    """
+    return os.getenv("LOCALITY_DECK_LAZY_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def ensure_locality_and_deck(noticia: dict) -> bool:
+    """Completa localidad/bajada diferidas justo antes de renderizar la card de IG.
+
+    Con ``LOCALITY_DECK_LAZY_ENABLED`` la reescritura no llama a Gemini para
+    esto y marca ``locality_deck_deferred``: sólo la card estática de
+    Instagram usa estos campos y buena parte de las notas nunca llega a
+    renderizarla. La cola social no guarda los párrafos, así que el contexto
+    es el extracto + el caption ya generado sobre la nota original. Nunca
+    bloquea la publicación: un fallo deja la card sin bajada, como antes.
+    Devuelve True si completó los campos.
+    """
+    if not noticia.get("locality_deck_deferred"):
+        return False
+    from utils.visual_style import automatic_manual_visual_style_enabled
+
+    parrafos = [str(p) for p in noticia.get("parrafos") or [] if str(p).strip()]
+    if not parrafos:
+        parrafos = [
+            str(noticia.get(field) or "").strip()
+            for field in ("excerpt", "texto_instagram")
+            if str(noticia.get(field) or "").strip()
+        ]
+    include_highlight = automatic_manual_visual_style_enabled()
+    data = generate_locality_and_deck(
+        {"titulo": noticia.get("titulo", ""), "parrafos": parrafos},
+        include_highlight=include_highlight,
+    )
+    noticia["locality"] = data["locality"]
+    noticia["deck"] = data["deck"]
+    if include_highlight and data.get("highlight_phrase") and not noticia.get("highlight_terms"):
+        noticia["highlight_terms"] = [data["highlight_phrase"]]
+    noticia.pop("locality_deck_deferred", None)
+    return True
