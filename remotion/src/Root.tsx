@@ -19,6 +19,7 @@ import {
   PAPARAZZI_CLIP_H,
   PAPARAZZI_CLIP_W,
 } from "./PaparazziClip";
+import { V2Compositions } from "./v2/register";
 
 const calculateMainMetadata: CalculateMetadataFunction<MainProps> = ({
   props,
@@ -149,6 +150,8 @@ export const RemotionRoot: React.FC = () => {
           publicationStyle: "automatic",
         }}
       />
+      {/* Visual System V2 — composiciones separadas, no reemplazan a V1 */}
+      <V2Compositions />
     </>
   );
 };
