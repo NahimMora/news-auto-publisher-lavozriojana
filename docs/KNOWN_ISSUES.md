@@ -1358,4 +1358,25 @@
   (`INFOBAE_VIDEO_ONLY_ENABLED`, etapa `meta/run_paparazzi_videos.py`), nunca el
   MP4 crudo, más artículo Web; sin video, nota normal. Simulación al 16/10: de las
   408, sólo 5 (del 15/10, todas con video) pasan la antigüedad.
+- Verificado en producción el 16/10 (ciclos #1009-#1010): 9 notas reescritas;
+  Reels publicados en IG y FB (acoso digital, cambista de Pehuajó, inhibidores en
+  Mar del Plata). Un video de jwplayer devolvió 404: reintenta y, si sigue sin
+  video, queda en dead-letter sin publicarse en redes como imagen.
+- Estado actual: **corregido y verificado**.
+
+## 96. Estado JSON sobredimensionado: cada evento reescribía ~75 MB — CORREGIDO 2026-10-17
+
+- ID: severidad media (rendimiento). `data/queue_events.json` (41,5 MB, 10.000
+  eventos) y `data/rewrite_queue_state.json` (34 MB, 7.018 `completed` nunca
+  podados) guardaban el texto completo de cada nota (`parrafos`,
+  `texto_instagram`, etc.). Cada transición de la reescritura reescribía ambos.
+- Evidencia: ciclo #1008 (16/10 20:47–21:17) gastó los 1.800 s de la reescritura
+  expirando las ~400 notas viejas de Infobae a ~7 s cada una, sin reescribir nada.
+- Corrección: `utils/queue_events.py::compact_item` saca el texto pesado de cada
+  evento (conserva identidad, estado y motivos) y `DurableQueue` compacta el
+  payload de `completed`/`expired` (el `id` sigue deduplicando; `failed` y
+  `dead_letter` conservan el payload completo para revisión). Lo existente se
+  compacta en la siguiente escritura (idempotente). Sobre copia de los datos
+  reales: 41,5 → 18,8 MB y 33,9 → 12,5 MB. Backups previos en `data/backups/`
+  (`*.20261017T0438*`). Tests: `tests/test_state_compaction.py`.
 - Estado actual: **corregido en código; pendiente de verificar en producción**.

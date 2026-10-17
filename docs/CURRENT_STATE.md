@@ -29,6 +29,8 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   sigue excluido.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
+- Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y
+  los terminales de la cola de reescritura ya no guardan el texto de cada nota.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 
