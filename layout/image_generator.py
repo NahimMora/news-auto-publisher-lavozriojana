@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from utils.logging_setup import setup_logger
 from utils.safe_http import safe_get
 from utils.visual_style import uses_manual_publication_visual_style
+from utils.visual_version import resolve_visual_version
 
 logger = setup_logger("image_generator", "image_generator.log")
 
@@ -498,38 +499,21 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
     )
     local_path, orientation, cleanup = _materialize_image_for_remotion(article, preloaded_img=preloaded_img)
     try:
-        props = {
-            "titulo": article.get("titulo", ""),
-            "seccion": article.get("seccion", ""),
-            "assetFile": "",
-            "highlightTerms": highlight_terms,
-            # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
-            # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
-            "locality": str(article.get("locality") or ""),
-            "deck": _deck_for_render(article),
-            # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
-            # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
-            # esto todavía con "image_treatment" seteado; queda disponible
-            # para cuando exista una señal real (p.ej. origen "screenshot"
-            # en media_library.py) sin requerir otro cambio acá.
-            "imageTreatment": str(article.get("image_treatment") or "auto"),
-            # Publicaciones siempre lo activa. El lote automático adopta el
-            # mismo paquete sólo con su flag explícito apagado por default.
-            "publicationStyle": (
-                "manual_publication"
-                if publication_visual_style
-                else "automatic"
-            ),
-        }
-        if orientation:
-            props["assetOrientation"] = orientation
-        asset_paths = {"assetFile": local_path} if local_path else {}
-        png_bytes, _metadata = render_still(
-            "AutomaticInstagramCard",
-            props,
-            asset_paths=asset_paths,
-            scale=2 if publication_visual_style else 1,
-        )
+        decision = resolve_visual_version("instagram", article)
+        if decision.version == "v2":
+            from utils.visual_v2_props import instagram_props_v2
+
+            props = instagram_props_v2(article, asset_file="", asset_size=_image_size(local_path))
+            props["imageTreatment"] = str(article.get("image_treatment") or "auto")
+            props["publicationStyle"] = "manual_publication" if publication_visual_style else "automatic"
+            asset_paths = {"assetFile": local_path} if local_path else {}
+            # V2 siempre renderiza a 2× (bordes de texto finos en el feed).
+            png_bytes, _metadata = render_still(decision.composition, props, asset_paths=asset_paths, scale=2)
+            publication_visual_style = True
+        else:
+            png_bytes = _render_instagram_v1(
+                article, local_path, orientation, highlight_terms, publication_visual_style,
+            )
     finally:
         cleanup()
 
@@ -542,6 +526,60 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
             jpeg_options.update({"quality": 95, "subsampling": 0})
         opened.convert("RGB").save(buffer, format="JPEG", **jpeg_options)
         return buffer.getvalue()
+
+
+def _image_size(path: str | None) -> tuple[int, int] | None:
+    if not path:
+        return None
+    try:
+        with Image.open(path) as opened:
+            return opened.size
+    except (OSError, ValueError):
+        return None
+
+
+def _render_instagram_v1(
+    article: dict,
+    local_path: str | None,
+    orientation: str | None,
+    highlight_terms: list[str],
+    publication_visual_style: bool,
+) -> bytes:
+    from utils.remotion_renderer import render_still
+
+    props = {
+        "titulo": article.get("titulo", ""),
+        "seccion": article.get("seccion", ""),
+        "assetFile": "",
+        "highlightTerms": highlight_terms,
+        # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
+        # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
+        "locality": str(article.get("locality") or ""),
+        "deck": _deck_for_render(article),
+        # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
+        # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
+        # esto todavía con "image_treatment" seteado; queda disponible
+        # para cuando exista una señal real (p.ej. origen "screenshot"
+        # en media_library.py) sin requerir otro cambio acá.
+        "imageTreatment": str(article.get("image_treatment") or "auto"),
+        # Publicaciones siempre lo activa. El lote automático adopta el
+        # mismo paquete sólo con su flag explícito apagado por default.
+        "publicationStyle": (
+            "manual_publication"
+            if publication_visual_style
+            else "automatic"
+        ),
+    }
+    if orientation:
+        props["assetOrientation"] = orientation
+    asset_paths = {"assetFile": local_path} if local_path else {}
+    png_bytes, _metadata = render_still(
+        "AutomaticInstagramCard",
+        props,
+        asset_paths=asset_paths,
+        scale=2 if publication_visual_style else 1,
+    )
+    return png_bytes
 
 
 def generate_instagram_with_engine(
@@ -608,7 +646,13 @@ def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | 
             ),
         }
         asset_paths = {"assetFile": local_path} if local_path else {}
-        png_bytes, _metadata = render_still("FacebookOgCard", props, asset_paths=asset_paths)
+        decision = resolve_visual_version("og", article)
+        if decision.version == "v2":
+            from utils.visual_v2_props import og_props_v2
+
+            props = og_props_v2(article, asset_file="")
+            props["publicationStyle"] = "manual_publication" if publication_visual_style else "automatic"
+        png_bytes, _metadata = render_still(decision.composition, props, asset_paths=asset_paths)
     finally:
         cleanup()
 

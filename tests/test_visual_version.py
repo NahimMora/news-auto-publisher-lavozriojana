@@ -120,3 +120,109 @@ class ReelV2HookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _png_bytes(size=(8, 10)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (10, 20, 30)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+class VisualVersionWiringTests(unittest.TestCase):
+    """El selector decide la composición en los tres call sites productivos."""
+
+    ARTICLE = {"titulo": "Detuvieron a un hombre en Chilecito", "seccion": "policiales", "imagen_url": ""}
+
+    def _render_static(self, func_name: str, env: dict) -> tuple[str, dict]:
+        import os
+        from unittest import mock
+
+        from layout import image_generator
+
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            image_generator, "_materialize_image_for_remotion", return_value=(None, None, lambda: None)
+        ), mock.patch(
+            "utils.remotion_renderer.render_still", return_value=(_png_bytes(), {})
+        ) as render:
+            jpeg = getattr(image_generator, func_name)(dict(self.ARTICLE))
+        self.assertTrue(jpeg.startswith(b"\xff\xd8"))
+        args, kwargs = render.call_args
+        return args[0], {"props": args[1], **kwargs}
+
+    def _env(self, version: str | None) -> dict:
+        base = {"REEL_VISUAL_STYLE_VERSION": "", "INSTAGRAM_VISUAL_STYLE_VERSION": "", "OG_VISUAL_STYLE_VERSION": ""}
+        base["VISUAL_STYLE_VERSION"] = version or ""
+        return base
+
+    def test_instagram_card_default_keeps_v1(self):
+        composition, call = self._render_static("_generate_instagram_remotion", self._env(None))
+        self.assertEqual(composition, "AutomaticInstagramCard")
+        self.assertNotIn("layout", call["props"])
+
+    def test_instagram_card_v2(self):
+        composition, call = self._render_static("_generate_instagram_remotion", self._env("v2"))
+        self.assertEqual(composition, "AutomaticInstagramCardV2")
+        self.assertEqual(call["scale"], 2)
+        self.assertEqual(call["props"]["layout"], "auto")
+        self.assertEqual(call["props"]["titulo"], self.ARTICLE["titulo"])
+
+    def test_og_card_default_keeps_v1_and_v2_switches(self):
+        self.assertEqual(self._render_static("_generate_facebook_remotion", self._env(None))[0], "FacebookOgCard")
+        composition, call = self._render_static("_generate_facebook_remotion", self._env("v2"))
+        self.assertEqual(composition, "FacebookOgCardV2")
+        self.assertIn("breaking", call["props"])
+
+    def test_reel_v2_uses_v2_composition_and_props(self):
+        import json as _json
+        import os
+        import tempfile
+        from unittest import mock
+
+        from utils import video_renderer
+
+        seen = {}
+
+        def fake_run(cmd, **_kwargs):
+            props_arg = next(arg for arg in cmd if str(arg).startswith("--props="))
+            with open(props_arg.split("=", 1)[1], encoding="utf-8") as handle:
+                seen["props"] = _json.load(handle)
+            seen["composition"] = cmd[cmd.index("render") + 1]
+            output = cmd[cmd.index("render") + 2]
+            Path(output).write_bytes(b"mp4")
+            return mock.Mock(returncode=0, stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            video_renderer, "RENDERS_DIR", tmp
+        ), mock.patch.object(video_renderer.subprocess, "run", side_effect=fake_run):
+            item = {"titulo_reel": "ESCAPÓ EN CONTRAMANO", "seccion": "policiales"}
+            path = video_renderer._render_remotion_main(
+                item, "vid1", 10, None, "none", 0, cinematic_style=True, visual_version="v2",
+            )
+            self.assertTrue(path and os.path.isfile(path))
+        self.assertEqual(seen["composition"], "EditorialReelV2")
+        self.assertEqual(seen["props"]["assetType"], "none")
+        self.assertEqual(seen["props"]["durationInFrames"], 300)
+        self.assertIn("hookStyle", seen["props"])
+
+    def test_reel_default_keeps_editorial_reel(self):
+        from unittest import mock
+
+        from utils import video_renderer
+
+        captured = {}
+
+        def fake_run(cmd, **_kwargs):
+            captured["composition"] = cmd[cmd.index("render") + 1]
+            return mock.Mock(returncode=1, stderr="x")
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            video_renderer, "RENDERS_DIR", tmp
+        ), mock.patch.object(video_renderer.subprocess, "run", side_effect=fake_run):
+            video_renderer._render_remotion_main({"titulo": "T"}, "vid2", 5, None, "none", 0, cinematic_style=True)
+        self.assertEqual(captured["composition"], "EditorialReel")

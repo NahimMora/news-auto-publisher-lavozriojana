@@ -12,6 +12,19 @@ from pipeline.node_webapp import media
 from utils import image_processor
 
 
+# Estas pruebas cubren las composiciones V1: se aíslan de un host que tenga
+# VISUAL_STYLE_VERSION=v2 (el cableado V2 se prueba en test_visual_version).
+_VISUAL_V1_ENV = patch.dict(os.environ, {"VISUAL_STYLE_VERSION": "v1", "INSTAGRAM_VISUAL_STYLE_VERSION": "", "OG_VISUAL_STYLE_VERSION": ""})
+
+
+def setUpModule():
+    _VISUAL_V1_ENV.start()
+
+
+def tearDownModule():
+    _VISUAL_V1_ENV.stop()
+
+
 def image_bytes(fmt="PNG", size=(800, 600), color=(20, 40, 60)):
     buffer = io.BytesIO()
     Image.new("RGB", size, color).save(buffer, fmt)

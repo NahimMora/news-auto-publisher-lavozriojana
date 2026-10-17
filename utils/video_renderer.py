@@ -38,6 +38,7 @@ from utils.paths import output_dir
 from utils.safe_http import safe_get, validate_public_http_url
 from utils.stage_result import StageStatus
 from utils.visual_style import reel_cinematic_visual_style_enabled
+from utils.visual_version import resolve_visual_version
 
 logger = setup_logger("video_renderer", "video_renderer.log")
 
@@ -753,6 +754,28 @@ def get_video_duration(path: str) -> float | None:
     return None
 
 
+def get_media_size(path: str) -> tuple[int, int] | None:
+    """Ancho y alto del primer stream de video (o de la imagen) con ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 0:
+        try:
+            width, height = (int(v) for v in result.stdout.strip().split("x")[:2])
+            return width, height
+        except (ValueError, AttributeError):
+            pass
+    return None
+
+
 def _npx_args(args: list[str]) -> list[str]:
     """En Windows, npx es un .cmd — subprocess sin shell no lo ejecuta directamente."""
     if os.name == "nt":
@@ -829,7 +852,7 @@ def _append_outro(main_path: str, video_id: str) -> bool:
 def _render_remotion_main(
     item: dict, video_id: str, duration: int,
     asset_path: str | None, asset_type: str, ken_burns_variant: int,
-    *, cinematic_style: bool = False,
+    *, cinematic_style: bool = False, visual_version: str = "v1",
 ) -> str | None:
     """
     Renderiza la composición "Main" de Remotion, que reemplaza todo el compositing de
@@ -850,7 +873,7 @@ def _render_remotion_main(
     titulo = str(item.get("titulo_reel") or item.get("titulo") or "").upper()
     seccion = str(item.get("seccion") or "sociedad").upper()
     frames = max(1, duration * 30)
-    composition = "EditorialReel" if cinematic_style else "Main"
+    composition = "EditorialReelV2" if visual_version == "v2" else "EditorialReel" if cinematic_style else "Main"
 
     highlight_terms = item.get("highlight_terms") or item.get("highlightTerms") or []
     if isinstance(highlight_terms, str):
@@ -878,19 +901,34 @@ def _render_remotion_main(
     else:
         effective_type = "none"
 
+    props = {
+        "titulo": titulo,
+        "seccion": seccion,
+        "assetType": effective_type,
+        "assetFile": asset_file,
+        "kenBurnsVariant": ken_burns_variant,
+        "durationInFrames": frames,
+        "highlightTerms": highlight_terms,
+    }
+    if visual_version == "v2":
+        from utils.visual_v2_props import reel_props_v2
+
+        # V2 recibe el titular en caja de oración y elige sus destacados sobre
+        # ese mismo texto; las dimensiones definen doble plano o vertical.
+        props = reel_props_v2(
+            item,
+            duration_frames=frames,
+            asset_type=effective_type,
+            asset_file=asset_file,
+            asset_size=get_media_size(asset_path) if asset_path else None,
+        )
+        props["kenBurnsVariant"] = ken_burns_variant
+
     props_path = os.path.join(RENDERS_DIR, f"_mainprops_{video_id}.json")
     output_path = os.path.join(RENDERS_DIR, f"_main_{video_id}.mp4")
     try:
         with open(props_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "titulo": titulo,
-                "seccion": seccion,
-                "assetType": effective_type,
-                "assetFile": asset_file,
-                "kenBurnsVariant": ken_burns_variant,
-                "durationInFrames": frames,
-                "highlightTerms": highlight_terms,
-            }, f)
+            json.dump(props, f)
         result = subprocess.run(
             _npx_args([
                 "remotion", "render", composition, output_path,
@@ -988,6 +1026,7 @@ def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str
 
     fallback_duration = max(3, min(90, int(item.get("duration_seconds") or 15)))
     cinematic_style = reel_cinematic_visual_style_enabled()
+    visual = resolve_visual_version("reel", item, reel_cinematic=cinematic_style)
     os.makedirs(RENDERS_DIR, exist_ok=True)
 
     video_id = new_render_id()
@@ -1070,6 +1109,7 @@ def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str
                 asset_type,
                 ken_burns_variant,
                 cinematic_style=cinematic_style,
+                visual_version=visual.version,
             )
             if main_path:
                 break
@@ -1087,10 +1127,8 @@ def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str
             os.replace(main_path, output_path)
             info["engine"] = "remotion"
             info["visual_style"] = "editorial_cinematic_v2" if cinematic_style else "legacy"
-            logger.info(
-                "Reel renderizado con Remotion (%s)",
-                "EditorialReel" if cinematic_style else "Main",
-            )
+            info.update(visual.as_metadata())
+            logger.info("Reel renderizado con Remotion (%s)", visual.composition)
         else:
             info["engine"] = "ffmpeg_fallback"
             logger.info("Remotion no disponible/falló — usando pipeline clásico (PIL + ffmpeg)")
@@ -1108,7 +1146,7 @@ def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str
                 logger.info("Sin imagen ni video — generando solo overlay sobre negro")
                 _ffmpeg_overlay_only(overlay_path, output_path, duration)
 
-        if main_path and cinematic_style:
+        if main_path and (cinematic_style or visual.version == "v2"):
             # EditorialReel incorpora su propio cierre dentro de la misma
             # composición para que timing, tipografía y color sean continuos.
             info["outro_added"] = True
