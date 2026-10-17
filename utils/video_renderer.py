@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from utils.jwplayer import alternative_mp4
 from utils.logging_setup import setup_logger
 from utils.operation_result import OperationResult
 from utils.paths import output_dir
@@ -417,6 +418,12 @@ def get_source_video(item: dict) -> tuple[str | None, OperationResult]:
         if _is_direct_video(url):
             logger.info("Descargando MP4 directo: %s", url[:80])
             result = _download_direct_video(url, dest)
+            if not result.ok:
+                # Enlace de JWPlayer a una versión inexistente (Infobae): otra versión.
+                alternative = alternative_mp4(url)
+                if alternative:
+                    logger.info("Reintentando con otra versión del video: %s", alternative[:80])
+                    result = _download_direct_video(alternative, dest)
         else:
             logger.info("Descargando con yt-dlp: %s", url[:80])
             result = _download_ytdlp(url, dest)

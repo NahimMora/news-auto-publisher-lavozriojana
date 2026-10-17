@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 
 from pipeline.node_webapp.editorial import clean_text, source_display_name
 from utils import r2_storage
+from utils.jwplayer import alternative_mp4
 from utils.logging_setup import setup_logger
 from utils.paths import output_dir
 from utils.safe_http import safe_get, safe_head, validate_public_http_url
@@ -104,7 +105,7 @@ def _download_remote_image(url: str) -> Path | None:
         return None
 
 
-def _download_remote_video(url: str) -> Path | None:
+def _download_remote_video(url: str, *, allow_alternative: bool = True) -> Path | None:
     if not _is_http_url(url):
         return None
     try:
@@ -131,6 +132,11 @@ def _download_remote_video(url: str) -> Path | None:
         return dest
     except Exception as exc:
         logger.error("Could not download video %s: %s", url, exc)
+        # Enlace de JWPlayer a una versión inexistente (Infobae): otra versión.
+        alternative = alternative_mp4(url) if allow_alternative else None
+        if alternative:
+            logger.info("Reintentando video con otra versión: %s", alternative)
+            return _download_remote_video(alternative, allow_alternative=False)
         return None
 
 
