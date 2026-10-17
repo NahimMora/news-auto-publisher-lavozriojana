@@ -1385,4 +1385,27 @@
   que quedó en `processing` y `recover_processing` la devuelve a `pending`. No
   editar archivos del repo con el supervisor activo: preparar en otra rama o
   worktree y aplicar entre ciclos.
-- Estado actual: **corregido en código; pendiente de verificar en producción**.
+- Verificado en producción (ciclo #1012, 17/10 02:54): `queue_events.json`
+  18,8 MB y `rewrite_queue_state.json` 12,5 MB, sin `parrafos`; la reescritura
+  tardó ~1 min y recuperó la nota que había quedado en `processing`.
+- Estado actual: **corregido y verificado**.
+
+## 97. Videos de Infobae con enlace a una versión inexistente (404) — CORREGIDO 2026-10-17
+
+- ID: severidad media. Infobae publica en su JSON-LD un `contentUrl` de JWPlayer
+  (`cdn.jwplayer.com/videos/{MEDIA_ID}-{VERSION}.mp4`); con la versión `a9NdgpIU`
+  el archivo no existe aunque el video sí. El 16-17/10, 2 de 9 notas de Infobae
+  (Tucumán, cine de Entre Ríos) quedaron sin Reel y sin video en la Web.
+- Corrección: `utils/jwplayer.py::alternative_mp4` consulta la API pública de
+  JWPlayer (`v2/media/{MEDIA_ID}`, la misma que usa paparazzi) y elige otra
+  versión MP4 (540p primero). La usan la descarga del Reel
+  (`utils/video_renderer.get_source_video`) y la del video Web
+  (`pipeline/node_webapp/media._download_remote_video`) cuando el enlace original
+  falla. Verificado con los dos videos reales: ambos resuelven a una versión
+  existente. Tests: `tests/test_jwplayer.py`.
+- El job de Tucumán ya había quedado en dead-letter antes del arreglo y no se
+  reintenta.
+- Verificado en producción (ciclo #1012, 17/10 03:06): el video de Entre Ríos dio
+  404, se reintentó con la versión 540p y el Reel salió en IG y FB.
+- Estado actual: **corregido y verificado**.
+
