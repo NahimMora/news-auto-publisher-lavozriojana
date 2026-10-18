@@ -41,6 +41,7 @@ REGLAS CRÍTICAS:
 - cta: solo la pregunta final (sin emoji, sin "CTA:", sin el ❓ — eso va dentro de texto_instagram), entre "¿" y "?", sobre este hecho puntual y no una pregunta genérica.
 - Español rioplatense con voseo ("opinás", "creés"); nunca trates de "usted" al lector. Sin URLs, sin @menciones, sin hashtags dentro del texto.
 - No inventes datos, cifras ni nombres que no estén en la noticia.
+- Ubicación: La Voz Riojana también publica noticias nacionales, internacionales y videos virales. Mencioná La Rioja, "riojanos" o una localidad riojana SOLO si el texto original lo dice explícitamente. Si el hecho ocurre en otro lugar o no dice dónde, no lo ubiques en La Rioja, no lo presentes como local y no inventes un lugar.
 - Máximo 2000 caracteres en texto_instagram.
 """.strip()
 
@@ -58,7 +59,7 @@ ESTRUCTURA EXACTA del campo texto_instagram:
 
 📌 [Quién, qué, dónde, cuándo. 2-3 oraciones concretas.]
 
-🔑 [Impacto para los riojanos, contexto, dato clave. 2-3 oraciones.]
+🔑 [Contexto, impacto o dato clave. 2-3 oraciones. Hablá del impacto para La Rioja solo si el hecho ocurre en La Rioja.]
 
 💬 [Cifra, declaración textual o hecho sorpresivo. 1-2 oraciones.]
 
@@ -183,13 +184,16 @@ def generate_caption(noticia: dict) -> dict:
         f"Seccion: {seccion}\n"
         f"Noticia:\n{texto_body}"
     )
+    source_text = f"{noticia.get('titulo', '')}\n{texto_body}"
+    correction = ""
+    invented: set[str] = set()
 
     for attempt in range(1, retry_count + 1):
         try:
             content = chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_content},
+                    {"role": "user",   "content": user_content + correction},
                 ],
                 model=model,
                 api_key=api_key,
@@ -205,6 +209,20 @@ def generate_caption(noticia: dict) -> dict:
                 "cta":              data.get("cta") or "¿Qué opinás?",
                 "caption_fallback_used": False,
             }
+            invented = invented_riojan_reference(
+                source_text,
+                "\n".join((result["titulo_instagram"], result["texto_instagram"], result["cta"])),
+            )
+            if invented:
+                logger.warning(
+                    "Caption intento %s/%s ubicó en La Rioja un hecho sin vínculo riojano (%s); se reintenta",
+                    attempt, retry_count, ", ".join(sorted(invented)),
+                )
+                correction = (
+                    "\n\nCORRECCIÓN: el texto original no menciona La Rioja ni ninguna localidad riojana. "
+                    "No ubiques el hecho en La Rioja, no uses \"riojano/a\" y no hables de impacto para los riojanos."
+                )
+                continue
             logger.info(f"Caption OK: {result['titulo_instagram'][:60]}")
             return result
         except Exception as e:
@@ -212,8 +230,38 @@ def generate_caption(noticia: dict) -> dict:
             if attempt < retry_count:
                 time.sleep(retry_sleep)
 
+    if invented:
+        # Mejor el texto de la fuente que un caption que ubica mal el hecho.
+        logger.error(f"Caption sin vínculo riojano verificable para: {noticia.get('titulo', '')[:60]}, usando fallback")
+        return _fallback(noticia, "riojan_reference_invented")
     logger.error(f"Caption falló para: {noticia.get('titulo', '')[:60]}, usando fallback")
     return _fallback(noticia, "gemini_failed")
+
+
+# ── Guardia de ubicación ──────────────────────────────────────
+# La pauta presenta al redactor como medio riojano y el modelo tiende a
+# "localizar" en La Rioja hechos de otros lugares (p.ej. un video viral
+# ajeno titulado "El bebé riojano…"). Se detecta sin IA: términos riojanos
+# en la salida que no aparecen en la fuente. "La Voz Riojana" es la marca.
+_BRAND_RE = re.compile(r"la\s+voz\s+riojana", re.IGNORECASE)
+
+
+def _riojan_terms(text: str) -> set[str]:
+    from utils.editorial_router import RIOJAN_LOCALITY_TERMS, _ascii_lower
+
+    folded = _ascii_lower(_BRAND_RE.sub(" ", str(text or "")))
+    folded = " " + re.sub(r"[^a-z0-9]+", " ", folded) + " "
+    return {term for term in RIOJAN_LOCALITY_TERMS if f" {_ascii_lower(term)} " in folded}
+
+
+def invented_riojan_reference(source: str, output: str) -> set[str]:
+    """Términos riojanos de ``output`` sin respaldo en ``source``.
+
+    Si la fuente ya tiene un vínculo riojano no se marca nada: el control
+    sólo evita ubicar en La Rioja hechos cuya fuente no la menciona."""
+    if _riojan_terms(source):
+        return set()
+    return _riojan_terms(output)
 
 
 # ── Localidad + bajada para piezas de una sola imagen ──────────
