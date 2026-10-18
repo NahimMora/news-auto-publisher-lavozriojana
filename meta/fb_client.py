@@ -757,6 +757,53 @@ def post_reel_video_to_facebook(item: dict) -> OperationResult:
     return result
 
 
+_THUMB_MAX_BYTES = 8 * 1024 * 1024
+
+
+def set_video_thumbnail(video_id: str, image_url: str) -> OperationResult:
+    """Miniatura propia de un video/reel ya publicado (POST /{video-id}/thumbnails).
+
+    Best-effort y sin reintentos: nunca publica ni modifica el video; un
+    fallo sólo deja la miniatura que eligió Facebook.
+    """
+    if not video_id or not image_url:
+        return OperationResult(StageStatus.NO_WORK, error_type="missing_input")
+    try:
+        token = get_page_token()
+    except ValueError:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        image = safe_get(image_url, timeout=30)
+        image.raise_for_status()
+        content = image.content
+    except (UnsafeURLError, requests.RequestException) as exc:
+        logger.warning("Miniatura del reel no descargada: %s", type(exc).__name__)
+        return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_download_failed")
+    if not content or len(content) > _THUMB_MAX_BYTES:
+        return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_invalid_size")
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{video_id}/thumbnails",
+            data={"is_preferred": "true", "access_token": token},
+            files={"source": ("cover.jpg", content, "image/jpeg")},
+            timeout=int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Miniatura del reel no aplicada (red): %s", type(exc).__name__)
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error")
+    # El endpoint responde {"success": true} (sin id): no se usa _api_result.
+    data = _safe_json(response)
+    if response.status_code == 200 and data.get("success") is not False:
+        logger.info("Miniatura propia aplicada al reel de Facebook %s", video_id)
+        return OperationResult(StageStatus.SUCCESS, external_id=video_id, response=data)
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    logger.warning(
+        "Facebook no aceptó la miniatura del reel (HTTP %s, code %s)",
+        response.status_code, error.get("code"),
+    )
+    return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_rejected", error_code=error.get("code") or response.status_code)
+
+
 # ── Media directa premium (Fase 3): social-only, sin link, sin CMS ────────
 # El backoff se comparte con el flujo automático (misma página/cuenta real
 # de Meta, vía ``_load_state``/``_backoff_until``/``_set_backoff`` sobre

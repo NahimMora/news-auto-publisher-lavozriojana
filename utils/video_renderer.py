@@ -911,18 +911,7 @@ def _render_remotion_main(
         "highlightTerms": highlight_terms,
     }
     if visual_version == "v2":
-        from utils.visual_v2_props import reel_props_v2
-
-        # V2 recibe el titular en caja de oración y elige sus destacados sobre
-        # ese mismo texto; las dimensiones definen doble plano o vertical.
-        props = reel_props_v2(
-            item,
-            duration_frames=frames,
-            asset_type=effective_type,
-            asset_file=asset_file,
-            asset_size=get_media_size(asset_path) if asset_path else None,
-        )
-        props["kenBurnsVariant"] = ken_burns_variant
+        props = _reel_v2_props(item, frames, effective_type, asset_file, asset_path, ken_burns_variant)
 
     props_path = os.path.join(RENDERS_DIR, f"_mainprops_{video_id}.json")
     output_path = os.path.join(RENDERS_DIR, f"_main_{video_id}.mp4")
@@ -955,6 +944,80 @@ def _render_remotion_main(
             try:
                 os.remove(tmp_asset_path)
             except Exception:
+                pass
+
+
+def _reel_v2_props(
+    item: dict, frames: int, asset_type: str, asset_file: str, asset_path: str | None, ken_burns_variant: int,
+) -> dict:
+    """Props de EditorialReelV2/ReelCoverV2: titular con su caja original,
+    bajada y crédito; las dimensiones definen doble plano o vertical."""
+    from utils.visual_v2_props import reel_props_v2
+
+    props = reel_props_v2(
+        item,
+        duration_frames=frames,
+        asset_type=asset_type,
+        asset_file=asset_file,
+        asset_size=get_media_size(asset_path) if asset_path else None,
+    )
+    props["kenBurnsVariant"] = ken_burns_variant
+    return props
+
+
+def _extract_cover_frame(source_video: str, video_id: str, duration: int) -> str | None:
+    """Cuadro representativo del video fuente para la portada (≈1,5 s o un
+    tercio de la duración, lo que ocurra antes: evita negros de inicio)."""
+    at = max(0.0, min(1.5, duration / 3))
+    frame_path = os.path.join(RENDERS_DIR, f"_coverframe_{video_id}.jpg")
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", source_video, "-frames:v", "1", "-q:v", "2", frame_path],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("No se pudo extraer el cuadro de portada: %s", type(exc).__name__)
+        return None
+    if result.returncode != 0 or not os.path.isfile(frame_path):
+        logger.warning("ffmpeg no extrajo el cuadro de portada: %s", result.stderr[-300:])
+        return None
+    return frame_path
+
+
+def render_reel_cover(
+    item: dict, video_id: str, duration: int, asset_path: str | None, asset_type: str, ken_burns_variant: int = 0,
+) -> str | None:
+    """Portada 1080×1920 (ReelCoverV2) con lo esencial dentro del recorte 4:5
+    del feed. Devuelve la ruta del JPEG o None (best-effort: sin portada el
+    Reel se publica igual, con el cuadro elegido por la plataforma)."""
+    from utils.remotion_renderer import RemotionRenderError, render_still
+
+    temp: list[str] = []
+    try:
+        image_path = asset_path
+        if asset_path and asset_type == "video":
+            image_path = _extract_cover_frame(asset_path, video_id, duration)
+            if image_path:
+                temp.append(image_path)
+        cover_type = "image" if image_path else "none"
+        props = _reel_v2_props(item, max(1, duration * 30), cover_type, "", image_path, ken_burns_variant)
+        # assetFile lo completa render_still a partir de asset_paths.
+        props["assetType"] = cover_type
+        props["still"] = True
+        asset_paths = {"assetFile": image_path} if image_path else {}
+        png_bytes, _metadata = render_still("ReelCoverV2", props, asset_paths=asset_paths)
+        cover_path = os.path.join(RENDERS_DIR, f"{video_id}_cover.jpg")
+        with Image.open(io.BytesIO(png_bytes)) as opened:
+            opened.convert("RGB").save(cover_path, "JPEG", quality=92, optimize=True)
+        return cover_path
+    except (RemotionRenderError, OSError, ValueError) as exc:
+        logger.warning("No se pudo renderizar la portada del reel: %s", exc)
+        return None
+    finally:
+        for path in temp:
+            try:
+                os.remove(path)
+            except OSError:
                 pass
 
 
@@ -1129,6 +1192,10 @@ def render_video(item: dict, *, allow_ffmpeg_fallback: bool = True) -> tuple[str
             info["visual_style"] = "editorial_cinematic_v2" if cinematic_style else "legacy"
             info.update(visual.as_metadata())
             logger.info("Reel renderizado con Remotion (%s)", visual.composition)
+            if visual.version == "v2" and _env_flag("REEL_COVER_ENABLED"):
+                cover_path = render_reel_cover(item, video_id, duration, asset_path, asset_type, ken_burns_variant)
+                if cover_path:
+                    info["cover_path"] = cover_path
         else:
             info["engine"] = "ffmpeg_fallback"
             logger.info("Remotion no disponible/falló — usando pipeline clásico (PIL + ffmpeg)")

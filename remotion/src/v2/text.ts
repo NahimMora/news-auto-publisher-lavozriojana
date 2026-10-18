@@ -2,8 +2,6 @@
 // Todo es determinístico y se apoya SOLO en el texto recibido: nunca se
 // inventa una cifra, una frase ni un destacado que no esté en el titular.
 
-export type HookStyle = "cinematic_editorial";
-
 export interface Token {
   value: string;
   highlighted: boolean;
@@ -48,9 +46,16 @@ export function splitByLines(lines: string[], tokens: Token[]): Token[][] {
   });
 }
 
-// Versión "oración" del titular para lectura cómoda: si llega todo en
-// mayúsculas (cola de Reels histórica) se baja a minúsculas conservando la
-// primera letra y las siglas cortas conocidas.
+// Titular tal como se muestra. El pipeline manda el título con su caja
+// original (nombres propios en mayúscula); si sólo llega en MAYÚSCULAS se
+// conserva así: bajarlo a minúsculas rompía los nombres propios
+// ("charlotte caniggia").
+export function displayTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim();
+}
+
+// Versión "oración" de un titular en mayúsculas (sólo para QA/galería: no
+// distingue nombres propios).
 const KEEP_UPPER = new Set(["AFA", "INDEC", "ANSES", "PAMI", "UNLaR", "UNLAR", "IPV", "EPEC", "FMI", "IA", "ESPN", "TV", "NOA", "VTV", "DNI", "AFIP", "ARCA", "LAM"]);
 
 export function sentenceCase(title: string): string {

@@ -37,6 +37,9 @@ $env:IG_CAPTION_FROM_WEB_ENABLED = "true"
 $env:LOCALITY_DECK_LAZY_ENABLED = "true"
 # Visual System V2 aprobado el 2026-10-17 (Reel, card IG y OG). Rollback: "v1".
 $env:VISUAL_STYLE_VERSION = "v2"
+# Portada propia de Reels (2026-10-18): cover_url en IG, miniatura en FB.
+$env:REEL_COVER_ENABLED = "true"
+$env:REEL_COVER_FACEBOOK_ENABLED = "true"
 # Imágenes estáticas de IG fuera de 0-7 h (alcance mediano de madrugada ~20 vs ~200
 # a la tarde); Reels sin cambios. Ver docs/DECISIONS.md (2026-10-04).
 $env:IG_STATIC_QUIET_HOURS = "0-7"

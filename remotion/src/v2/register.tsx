@@ -3,7 +3,7 @@
 // FacebookOgCard, Main, Outro, ...) quedan exactamente igual.
 import React from "react";
 import { CalculateMetadataFunction, Composition, Still } from "remotion";
-import { EditorialReelV2, EditorialReelV2Props, EditorialReelV2Schema, REEL_V2_OUTRO_FRAMES } from "./EditorialReelV2";
+import { EditorialReelV2, EditorialReelV2Props, EditorialReelV2Schema, REEL_V2_OUTRO_FRAMES, ReelCoverV2 } from "./EditorialReelV2";
 import { AUTOMATIC_IG_V2_H, AUTOMATIC_IG_V2_W, AutomaticInstagramCardV2, AutomaticInstagramCardV2Schema } from "./AutomaticInstagramCardV2";
 import { FB_OG_V2_H, FB_OG_V2_W, FacebookOgCardV2, FacebookOgCardV2Schema } from "./FacebookOgCardV2";
 import { REEL } from "./tokens";
@@ -35,8 +35,35 @@ export const V2Compositions: React.FC = () => (
         locality: "",
         breaking: false,
         hookStyle: "auto" as const,
+        deck: "",
+        credit: "",
+        still: false,
       }}
       calculateMetadata={reelMetadata}
+    />
+    <Still
+      id="ReelCoverV2"
+      component={ReelCoverV2}
+      width={REEL.w}
+      height={REEL.h}
+      schema={EditorialReelV2Schema}
+      defaultProps={{
+        titulo: "La Legislatura aprobó el presupuesto 2026 tras un debate de diez horas",
+        seccion: "Política",
+        assetType: "image" as const,
+        assetFile: "",
+        kenBurnsVariant: 0,
+        durationInFrames: 150,
+        highlightTerms: ["aprobó el presupuesto"],
+        assetWidth: 0,
+        assetHeight: 0,
+        locality: "",
+        breaking: false,
+        hookStyle: "auto" as const,
+        deck: "",
+        credit: "",
+        still: true,
+      }}
     />
     <Still
       id="AutomaticInstagramCardV2"
@@ -57,6 +84,7 @@ export const V2Compositions: React.FC = () => (
         assetHeight: 0,
         breaking: false,
         layout: "auto" as const,
+        dateLabel: "",
       }}
     />
     <Still

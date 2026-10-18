@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 
 _WORD = re.compile(r"[\w%$]+", re.UNICODE)
 
@@ -57,6 +58,43 @@ def deck_for(item: Mapping[str, object]) -> str:
     return _deck_for_render(dict(item))
 
 
+_EMOJI_PREFIX = re.compile(r"^[^\w¿¡\"«(]+", re.UNICODE)
+_DECK_MAX_CHARS = 170
+
+
+def reel_deck_from_caption(caption: str) -> str:
+    """Primera oración del párrafo 📌 del caption (qué pasó), sin emojis.
+
+    Es texto ya publicado en el mismo Reel: no se genera nada nuevo. Si la
+    oración es demasiado larga para la pieza, no se recorta con "…": se
+    omite la bajada."""
+    for raw in str(caption or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("📌"):
+            continue
+        text = _EMOJI_PREFIX.sub("", line).strip()
+        match = re.search(r"^(.+?[.!?])(\s|$)", text)
+        sentence = (match.group(1) if match else text).strip()
+        return sentence if 20 <= len(sentence) <= _DECK_MAX_CHARS else ""
+    return ""
+
+
+def reel_credit(source_url: str, uploader: str = "") -> str:
+    """Crédito verificable del video a partir de su URL de origen."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(str(source_url or ""))
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host in {"x.com", "twitter.com", "mobile.twitter.com"}:
+        handle = uploader.strip().lstrip("@") or (parsed.path.strip("/").split("/") or [""])[0]
+        return f"Video: X / @{handle}" if handle and handle != "i" else "Video: X"
+    known = {"infobae.com": "Infobae", "paparazzi.com.ar": "Paparazzi"}
+    for domain, label in known.items():
+        if host == domain or host.endswith("." + domain):
+            return f"Video: {label}"
+    return ""
+
+
 def reel_props_v2(
     item: Mapping[str, object],
     *,
@@ -65,7 +103,9 @@ def reel_props_v2(
     asset_file: str,
     asset_size: tuple[int, int] | None = None,
 ) -> dict:
-    title = str(item.get("titulo_reel") or item.get("titulo") or "").strip()
+    # ``titulo_display`` conserva la caja original (nombres propios); el
+    # ``titulo_reel`` histórico llega en MAYÚSCULAS.
+    title = str(item.get("titulo_display") or item.get("titulo_reel") or item.get("titulo") or "").strip()
     width, height = asset_size or (0, 0)
     return {
         "titulo": title,
@@ -80,7 +120,25 @@ def reel_props_v2(
         "locality": locality_for(item),
         "breaking": bool(item.get("breaking")),
         "hookStyle": "auto",
+        "deck": str(item.get("reel_deck") or "").strip(),
+        "credit": str(item.get("reel_credit") or "").strip(),
+        "still": False,
     }
+
+
+# Argentina no tiene horario de verano: UTC−3 fijo (sin depender de tzdata).
+_AR_TZ = timezone(timedelta(hours=-3))
+_DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+_MESES = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+
+def date_label(now: datetime | None = None) -> str:
+    """Fecha de publicación para la banda de pie ("sábado 18 de octubre")."""
+    moment = (now or datetime.now(_AR_TZ)).astimezone(_AR_TZ)
+    return f"{_DIAS[moment.weekday()]} {moment.day} de {_MESES[moment.month - 1]}"
 
 
 def instagram_props_v2(
@@ -102,6 +160,7 @@ def instagram_props_v2(
         "assetHeight": int(height or 0),
         "breaking": bool(article.get("breaking")),
         "layout": "auto",
+        "dateLabel": date_label(),
     }
     if width and height:
         props["assetOrientation"] = "landscape" if width > height else "portrait" if height > width else "square"

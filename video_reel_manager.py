@@ -2378,6 +2378,16 @@ def _publish_background(job_id: str, video_path: str, item: dict) -> None:
         item["video_url"] = public_url
         log(f"Video subido: {public_url[:60]}…")
 
+        # Portada V2 generada junto al render ({video_id}_cover.jpg).
+        cover_path = os.path.splitext(video_path)[0] + "_cover.jpg"
+        if os.path.isfile(cover_path):
+            try:
+                cover_url, _cover_key = r2_storage.upload_temp(cover_path, ttl_hint="reel")
+                item["cover_url"] = cover_url
+                log("Portada subida")
+            except RuntimeError as exc:
+                log(f"Portada no disponible: {exc}")
+
         # 2. Publicar en Instagram
         log("Publicando en Instagram (puede tardar hasta 5 min)…")
         try:
