@@ -752,6 +752,9 @@ def cmd_report(args) -> int:
     """Reporte operativo (correo cada 3 días). Sin --send sólo lo muestra."""
     from utils import mailer, ops_report
 
+    if args.send and not mailer.configured():
+        print(red("Falta configurar el correo en .env (REPORT_EMAIL_TO, SMTP_USER, SMTP_PASSWORD)."))
+        return 3
     report = ops_report.build(args.days, use_ai=not args.no_ai)
     if not args.send:
         print(report["subject"])
