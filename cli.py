@@ -748,6 +748,63 @@ def cmd_videos(args) -> int:
     return completed.returncode
 
 
+def cmd_report(args) -> int:
+    """Reporte operativo (correo cada 3 días). Sin --send sólo lo muestra."""
+    from utils import mailer, ops_report
+
+    report = ops_report.build(args.days, use_ai=not args.no_ai)
+    if not args.send:
+        print(report["subject"])
+        print()
+        print(report["text"])
+        return 0
+    if not args.force and time.time() - ops_report.last_sent("report") < (args.days * 86400 - 3600):
+        print(yellow("El último reporte se envió hace menos de un período; no se reenvía (usar --force)."))
+        return 0
+    result = mailer.send_email(report["subject"], report["html"], report["text"])
+    if result.ok:
+        ops_report.mark_sent("report")
+        print(green(f"Reporte enviado: {report['subject']}"))
+        return 0
+    print(red(f"No se pudo enviar el reporte: {result.error_type}"))
+    return 3 if result.error_type == "smtp_not_configured" else 1
+
+
+def cmd_watchdog(args) -> int:
+    """Vigilante del supervisor: avisa por correo si deja de funcionar y
+    cuando vuelve (un aviso por incidente)."""
+    from utils import mailer, ops_report
+
+    news = ops_report.watchdog_check(args.stale_minutes)
+    if news is None:
+        return 0
+    subject, text = news
+    result = mailer.send_email(subject, f"<p style=\"font-family:Arial,sans-serif;font-size:15px\">{text}</p>", text)
+    print(subject if result.ok else red(f"Aviso no enviado: {result.error_type}"))
+    return 0 if result.ok else 1
+
+
+def cmd_comment_replies(args) -> int:
+    from utils import comment_replies as cr
+
+    if args.action == "list":
+        pending = [(k, v) for k, v in (cr.load_state().get("comments") or {}).items() if v.get("status") == "suggested"]
+        if not pending:
+            print("No hay respuestas sugeridas para revisar.")
+        for key, entry in pending:
+            print(key)
+            print(f"  Pregunta: {entry.get('question')}")
+            print(f"  Respuesta: {entry.get('reply')}")
+            print()
+        return 0
+    if not args.key:
+        print(red("Indicá el comentario (por ejemplo instagram:1789...)."))
+        return 1
+    outcome = cr.approve(args.key) if args.action == "approve" else cr.reject(args.key)
+    print(outcome)
+    return 0 if outcome in {"replied", "rejected"} else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python cli.py",
@@ -926,6 +983,19 @@ def main(argv: list[str] | None = None) -> int:
     stats_parser.add_argument("--since-hours", type=int, default=24, dest="since_hours")
     stats_parser.add_argument("--since-days", type=int, default=7, dest="since_days")
 
+    report_parser = sub.add_parser("report", help="Reporte operativo (correo cada 3 días)")
+    report_parser.add_argument("--days", type=int, default=3)
+    report_parser.add_argument("--send", action="store_true", help="Envía el correo (si no, sólo lo muestra)")
+    report_parser.add_argument("--force", action="store_true", help="Reenvía aunque no haya pasado el período")
+    report_parser.add_argument("--no-ai", action="store_true", dest="no_ai", help="Sin resumen de Gemini")
+
+    watchdog_parser = sub.add_parser("watchdog", help="Avisa por correo si el supervisor deja de funcionar")
+    watchdog_parser.add_argument("--stale-minutes", type=int, default=120, dest="stale_minutes")
+
+    replies_parser = sub.add_parser("comment-replies", help="Revisa respuestas sugeridas a comentarios")
+    replies_parser.add_argument("action", choices=["list", "approve", "reject"])
+    replies_parser.add_argument("key", nargs="?", default="")
+
     args = parser.parse_args(argv)
     commands = {
         "start": cmd_start,
@@ -948,6 +1018,9 @@ def main(argv: list[str] | None = None) -> int:
         "restore": cmd_restore,
         "source-probe": cmd_source_probe,
         "archive-index": cmd_archive_index,
+        "report": cmd_report,
+        "watchdog": cmd_watchdog,
+        "comment-replies": cmd_comment_replies,
     }
     if args.cmd not in commands:
         parser.print_help()

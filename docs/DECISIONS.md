@@ -2314,3 +2314,37 @@ controla qué queda dentro del 4:5).
 **Rollback**: `REEL_COVER_ENABLED=false` / `REEL_COVER_FACEBOOK_ENABLED=false`
 quitan las portadas; `VISUAL_STYLE_VERSION=v1` vuelve todo a V1. La guardia de
 ubicación no tiene flag: es una corrección factual.
+
+### 2026-10-18 — Formatos sociales, fuentes de servicio y reporte por correo
+
+**Contexto**: el responsable del medio aprobó (con correcciones sobre una
+maqueta con datos reales) historias en Instagram y Facebook, contenido de
+servicio para La Rioja, el carrusel de las 8, un Reel semanal rediseñado,
+seguimiento de noticias, respuestas a preguntas y un reporte cada 3 días,
+pidiendo no aumentar el costo de Gemini. Descartó Threads, Telegram,
+subtítulos, TikTok, YouTube, X, WhatsApp y Bluesky. Ver
+`docs/SOCIAL_FORMATS.md`.
+
+**Decisión**:
+- Historias sólo de publicaciones de Instagram ya hechas, con la pieza tal
+  cual salió (la API no permite adjuntar el post); la misma imagen en
+  Facebook (`/photo_stories`). Cupo propio (20/día, 6/ciclo).
+- Sin IA en historias, carrusel, resumen semanal y seguimiento: todo sale de
+  fuentes verificables. IA sólo en respuestas (Flash-Lite, tope 15/día) y en
+  el resumen del reporte (1 llamada cada 3 días).
+- Seguimiento: comentario en el post de Instagram (no se puede editar su
+  texto por API) y edición del texto del post de Facebook.
+- Respuestas: primera semana en modo sugerencia.
+- Fuentes: datos abiertos del SMN, dolarapi, calendario oficial de feriados;
+  cortes y rutas desde notas propias. `gobierno_larioja` y `hacienda_larioja`
+  pasan a APIs JSON; `smn_news` se deshabilita.
+- Reporte y vigilante como tareas programadas propias, fuera del supervisor
+  (si el supervisor se cae, el vigilante igual avisa).
+
+**Descartado**: compartir el post con sticker (no existe en la API); usar la
+OG del sitio como foto (ya trae el titular); deducir cortes de los sitios de
+EDELaR/Aguas Riojanas (no publican listados); responder en policiales,
+política o espectáculos.
+
+**Rollback**: interruptores por formato en
+`scripts/start_24x7_production.ps1`; `schtasks /delete` para las tareas.

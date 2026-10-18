@@ -40,6 +40,17 @@ $env:VISUAL_STYLE_VERSION = "v2"
 # Portada propia de Reels (2026-10-18): cover_url en IG, miniatura en FB.
 $env:REEL_COVER_ENABLED = "true"
 $env:REEL_COVER_FACEBOOK_ENABLED = "true"
+# Formatos sociales (2026-10-18): historias IG+FB (misma imagen), servicio
+# para La Rioja, carrusel de las 8, Reel de los domingos y seguimiento.
+$env:IG_STORIES_ENABLED = "true"
+$env:FB_STORIES_ENABLED = "true"
+$env:SOCIAL_FORMATS_INSTAGRAM_ENABLED = "true"
+$env:SOCIAL_FORMATS_FACEBOOK_ENABLED = "true"
+$env:MORNING_BRIEF_ENABLED = "true"
+$env:WEEKLY_RECAP_ENABLED = "true"
+$env:STORY_UPDATES_ENABLED = "true"
+# Primera semana: las respuestas se proponen y se revisan (cli.py comment-replies).
+$env:COMMENT_REPLIES_MODE = "suggest"
 # Imágenes estáticas de IG fuera de 0-7 h (alcance mediano de madrugada ~20 vs ~200
 # a la tarde); Reels sin cambios. Ver docs/DECISIONS.md (2026-10-04).
 $env:IG_STATIC_QUIET_HOURS = "0-7"

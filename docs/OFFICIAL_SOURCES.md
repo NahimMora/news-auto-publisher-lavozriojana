@@ -24,11 +24,11 @@ por sección le gana a sitemap ahí pese al orden de preferencia genérico
 | `policia_larioja` | www.facebook.com | CRITICAL | DISCOVERY | DISABLED | ❌ | — |
 | `mpf_larioja` | www.mpflarioja.gob.ar | CRITICAL | BOTH | RSS | ✅ | 30 min |
 | `justicia_larioja` | www.justicialarioja.gob.ar | CRITICAL | BOTH | RSS | ✅ | 30 min |
-| `gobierno_larioja` | larioja.gob.ar | HIGH | BOTH | HTML_INDEX | ✅ | 1 h |
+| `gobierno_larioja` | larioja.neotec.com.ar (API) | HIGH | BOTH | JSON_API | ✅ | 1 h |
 | `secretaria_justicia_larioja` | secretariadejusticia.larioja.gob.ar | HIGH | BOTH | UNCONFIRMED | ❌ | 1 h |
 | `legislatura_larioja` | legislaturalarioja.gob.ar | HIGH | BOTH | HTML_INDEX | ✅ | 1 h |
 | `salud_larioja` | salud.larioja.gob.ar | HIGH | BOTH | DISABLED | ❌ | 1 h |
-| `hacienda_larioja` | hacienda.larioja.gob.ar | HIGH | BOTH | HTML_INDEX | ✅ | 1 h |
+| `hacienda_larioja` | hacienda.larioja.gob.ar (wp-json) | HIGH | BOTH | JSON_API | ✅ | 1 h |
 | `turismo_larioja` | turismo.larioja.gob.ar | MEDIUM | BOTH | RSS | ✅ | 6 h |
 | `agua_energia_larioja` | aguayenergia.larioja.gob.ar | MEDIUM | BOTH | HTML_INDEX | ✅ | 6 h |
 | `estadisticas_larioja` | estadisticas.larioja.gob.ar | MEDIUM | REFERENCE_ONLY | HTML_INDEX | ✅ | 1 d |
@@ -44,7 +44,7 @@ por sección le gana a sitemap ahí pese al orden de preferencia genérico
 | `indec` | www.indec.gob.ar | HIGH | BOTH | UNCONFIRMED | ❌ | 6 h |
 | `arca` | www.argentina.gob.ar | HIGH | ENRICHMENT | HTML_INDEX | ✅ | 6 h |
 | `senasa` | www.argentina.gob.ar | HIGH | ENRICHMENT | HTML_INDEX | ✅ | 12 h |
-| `smn_news` | ws2.smn.gob.ar | MEDIUM | ENRICHMENT | HTML_INDEX | ✅ | 6 h |
+| `smn_news` | — | MEDIUM | ENRICHMENT | DISABLED | ❌ | — |
 | `smn_alerts` | ws2.smn.gob.ar | CRITICAL* | ENRICHMENT | UNCONFIRMED | ❌ | 15 min |
 | `energia_nacion` | www.argentina.gob.ar | MEDIUM | ENRICHMENT | HTML_INDEX | ✅ | 12 h |
 | `prefectura` | www.argentina.gob.ar | LOW | ENRICHMENT | HTML_INDEX | ✅ | 1 d |
@@ -77,9 +77,11 @@ genérico da 404; el feed real vive en la categoría de noticias
 (`?format=feed&type=rss`, confirmado con 9 items). El plan original decía
 `path=/`; corregido con evidencia real.
 
-**`gobierno_larioja`** — sin RSS (`/feed/` → 404). HTML_INDEX confirmado
-sobre `/noticias/`. Alternativa descartada: sitemap (no hay uno específico
-de noticias visible, y el genérico no es más barato que el índice HTML).
+**`gobierno_larioja`** — sin RSS (`/feed/` → 404). Desde 2026-10 el listado
+de `/noticias/` se arma con JavaScript y el HTML estático no trae notas (129
+fallas de parseo en una semana). Estrategia `neotec_json` sobre
+`larioja.neotec.com.ar/api/v1/obtener_noticias.php`; el artículo se abre en
+`larioja.gob.ar/noticias/noticia.php?idnoticia=<id>` (2026-10-18).
 
 **`secretaria_justicia_larioja`** — la home no expone un listado de
 noticias real navegable en el fetch (sólo un anchor `#actividades`).
@@ -99,9 +101,10 @@ sitio; deshabilitada con `reason=site_under_maintenance`. Reintentar el
 probe (`cli.py source-probe --source salud_larioja --json`) periódicamente
 antes de habilitar.
 
-**`hacienda_larioja`** — WordPress con RSS aparentemente desactivado
-(`/feed/` devuelve el HTML de la home en vez de XML). HTML_INDEX
-confirmado sobre la home.
+**`hacienda_larioja`** — WordPress con RSS desactivado; la home dejó de
+listar notas parseables. Estrategia `wordpress_json` sobre
+`/wp-json/wp/v2/posts?_fields=date,link,title` (2026-10-18). Publica además
+el cronograma de pagos a estatales.
 
 **`turismo_larioja`** — el plan original decía `path=/noticias/feed/`; el
 custom post type real con contenido vive en `/novedades/` (RSS confirmado
@@ -148,8 +151,11 @@ descartarlas del todo, un próximo paso es probar con `requests` +
 User-Agent de navegador real desde `sources/http_client.py` (no sólo el
 fetch usado para este relevamiento).
 
-**`smn_news`** — HTML_INDEX confirmado, paginado, fechas visibles en el
-listado.
+**`smn_news`** — deshabilitada el 2026-10-18: `ws2.smn.gob.ar` no resuelve
+DNS desde el 2026-09-24, `www.smn.gob.ar` responde 403 a bots y
+`argentina.gob.ar/smn/noticias` no se actualiza desde abril de 2025. El
+clima, el pronóstico y las alertas se leen de los datos abiertos del SMN
+(`utils/service_data.py`, ver `docs/SOCIAL_FORMATS.md`).
 
 **`smn_alerts`** — el contenido de alertas se carga vía JS; no hay
 endpoint JSON público visible en el HTML estático. CRITICAL sólo cuando

@@ -49,6 +49,16 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
 - Ubicación (2026-10-18): los captions no ubican en La Rioja hechos cuya fuente no
   la menciona (regla en la pauta + control sin IA con reintento y fallback a la
   fuente); sin vínculo riojano verificable los hashtags son neutros.
+- Formatos sociales (2026-10-18, `docs/SOCIAL_FORMATS.md`): historias de cada
+  publicación de Instagram (misma imagen en Facebook) y de servicio (clima y
+  alertas del SMN, dólar, feriados, cortes, rutas); carrusel "Lo que tenés que
+  saber hoy" a las 8; Reel "La semana en cinco" los domingos; seguimiento de
+  noticias en desarrollo; respuestas a preguntas (modo sugerencia la primera
+  semana); reporte por correo cada 3 días y vigilante del supervisor.
+- Fuentes (2026-10-18): `gobierno_larioja` lee la API JSON del portal
+  (`neotec_json`), `hacienda_larioja` la API de WordPress (`wordpress_json`);
+  `smn_news` deshabilitada (sin DNS / 403 / sin novedades): clima y alertas
+  salen de los datos abiertos del SMN.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 

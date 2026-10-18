@@ -16,6 +16,7 @@ from sources import metrics as source_metrics
 from sources.contract import OfficialSourceItem
 from sources.registry import SourceDefinition
 from sources.strategies.html_index import parse_html_index
+from sources.strategies.json_api import parse_neotec_json, parse_wordpress_json
 from sources.strategies.rss import parse_rss
 from utils.logging_setup import setup_logger
 
@@ -60,6 +61,10 @@ def _parse_items(source: SourceDefinition, text: str) -> list[OfficialSourceItem
         return parse_rss(text, source_id=source.source_id, category=category)
     if source.fetch_strategy == "html_index_generic":
         return parse_html_index(text, source_id=source.source_id, base_url=source.url, category=category)
+    if source.fetch_strategy == "wordpress_json":
+        return parse_wordpress_json(text, source_id=source.source_id, category=category)
+    if source.fetch_strategy == "neotec_json":
+        return parse_neotec_json(text, source_id=source.source_id, category=category)
     return []
 
 

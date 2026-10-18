@@ -118,6 +118,19 @@ Verifique:
 
 Un log inexistente es “sin evidencia”, no “sano”.
 
+## Reporte cada 3 días y vigilante (2026-10-18)
+
+- `python cli.py report` muestra el reporte; `--send` lo manda por correo
+  (`--force` para reenviar antes de los 3 días, `--no-ai` sin resumen de
+  Gemini). `python cli.py watchdog` avisa si el heartbeat tiene más de 2 h.
+- Tareas: `LaVozRiojana-Report` (cada 3 días, 9 h) y `LaVozRiojana-Watchdog`
+  (cada 15 min), ambas con `scripts/run_ops_task.ps1`.
+- Sin `SMTP_USER`/`SMTP_PASSWORD`/`REPORT_EMAIL_TO` en `.env` el comando sale
+  con código 3 (`smtp_not_configured`). `smtp_auth_failed`: con Gmail hace falta
+  una contraseña de aplicación, no la clave de la cuenta.
+- Respuestas sugeridas a comentarios: `python cli.py comment-replies list`,
+  `approve <clave>` o `reject <clave>`.
+
 ## Supervisor stale o detenido
 
 1. Ejecute `status`; el comando es de sólo lectura y no elimina PIDs.

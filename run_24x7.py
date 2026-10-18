@@ -41,6 +41,13 @@ CYCLE_STEPS = [
     ("meta/run_x_videos.py", "instagram"),
     # Notas de paparazzi con video: sólo Reel, estado propio.
     ("meta/run_paparazzi_videos.py", "instagram"),
+    # Formatos propios (carrusel de las 8, resumen de los domingos,
+    # seguimiento), historias y respuestas: estado y cupos propios, cada uno
+    # con su interruptor apagado por defecto. Las historias van después de
+    # todo lo que publica en el feed para tomar las publicaciones del ciclo.
+    ("meta/run_social_formats.py", "instagram"),
+    ("meta/run_stories.py", "instagram"),
+    ("meta/run_comment_replies.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
 ]
 _STEP_TIMEOUTS = {
@@ -56,6 +63,10 @@ _STEP_TIMEOUTS = {
     "meta/run_x_videos.py": 1200,
     # Hasta PAPARAZZI_VIDEO_MAX_PER_CYCLE reels: descarga + render + proceso en Meta.
     "meta/run_paparazzi_videos.py": 1200,
+    # El Reel de los domingos renderiza ~30 s de video (hasta 15 min) y el
+    # carrusel de la mañana 7 láminas a 2×.
+    "meta/run_social_formats.py": 1500,
+    "meta/run_stories.py": 900,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

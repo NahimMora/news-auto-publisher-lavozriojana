@@ -7,6 +7,13 @@ import { EditorialReelV2, EditorialReelV2Props, EditorialReelV2Schema, REEL_V2_O
 import { AUTOMATIC_IG_V2_H, AUTOMATIC_IG_V2_W, AutomaticInstagramCardV2, AutomaticInstagramCardV2Schema } from "./AutomaticInstagramCardV2";
 import { FB_OG_V2_H, FB_OG_V2_W, FacebookOgCardV2, FacebookOgCardV2Schema } from "./FacebookOgCardV2";
 import { REEL } from "./tokens";
+import { StoryV2, StoryV2Schema } from "./social/StoryV2";
+import { MorningBriefV2, MorningBriefV2Schema } from "./social/MorningBriefV2";
+import { WeeklyRecapV2, WeeklyRecapV2Props, WeeklyRecapV2Schema, recapDuration } from "./social/WeeklyRecapV2";
+
+const recapMetadata: CalculateMetadataFunction<WeeklyRecapV2Props> = ({ props }) => ({
+  durationInFrames: recapDuration(Math.min(5, props.entries.length)),
+});
 
 const reelMetadata: CalculateMetadataFunction<EditorialReelV2Props> = ({ props }) => ({
   durationInFrames: props.durationInFrames + REEL_V2_OUTRO_FRAMES,
@@ -64,6 +71,33 @@ export const V2Compositions: React.FC = () => (
         credit: "",
         still: true,
       }}
+    />
+    <Still
+      id="StoryV2"
+      component={StoryV2}
+      width={1080}
+      height={1920}
+      schema={StoryV2Schema}
+      defaultProps={StoryV2Schema.parse({ kind: "post" })}
+    />
+    <Still
+      id="MorningBriefV2"
+      component={MorningBriefV2}
+      width={1080}
+      height={1350}
+      schema={MorningBriefV2Schema}
+      defaultProps={MorningBriefV2Schema.parse({ slide: "cover" })}
+    />
+    <Composition
+      id="WeeklyRecapV2"
+      component={WeeklyRecapV2}
+      durationInFrames={recapDuration(5)}
+      fps={REEL.fps}
+      width={REEL.w}
+      height={REEL.h}
+      schema={WeeklyRecapV2Schema}
+      defaultProps={{ rangeLabel: "12 al 18 de octubre", entries: [] }}
+      calculateMetadata={recapMetadata}
     />
     <Still
       id="AutomaticInstagramCardV2"

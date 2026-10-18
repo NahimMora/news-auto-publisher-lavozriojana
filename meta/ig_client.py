@@ -1063,3 +1063,135 @@ def post_paparazzi_carousel_to_instagram(noticia: dict) -> OperationResult:
                 os.unlink(clip_path)
             except OSError:
                 pass
+
+
+# ── Formatos sociales: historias, carrusel diario, comentarios ────────────
+# Sin dedup propio: cada llamador (utils/story_publisher.py,
+# utils/morning_brief.py, utils/comment_replies.py, ...) es dueño de su
+# estado e idempotencia. Comparten el backoff de rate limit de la cuenta.
+def _guard() -> OperationResult | None:
+    if not IG_ACCOUNT_ID or IG_ACCOUNT_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if not IG_ACCESS_TOKEN or IG_ACCESS_TOKEN == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        until = rate_limit_until()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(StageStatus.DEGRADED, error_type="rate_limit", retryable=True, next_retry_at=until)
+    return None
+
+
+def post_story_image(image_url: str) -> OperationResult:
+    """Historia de imagen (``media_type=STORIES``). La API no admite stickers
+    de link ni compartir un post propio: la pieza lleva su propio llamado."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not _is_http_url(image_url):
+        return OperationResult(StageStatus.FAILED, error_type="missing_public_image")
+    created = _create_container({"image_url": image_url, "media_type": "STORIES", "access_token": IG_ACCESS_TOKEN})
+    if not created.ok:
+        return created
+    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
+    if delay > 0:
+        time.sleep(delay)
+    published = _publish_container(created.external_id)
+    if published.ok:
+        logger.info("Historia publicada en Instagram: %s", published.external_id)
+    return published
+
+
+def post_image_carousel(image_urls: list[str], caption: str) -> OperationResult:
+    """Carrusel de 2 a 10 imágenes ya hosteadas (carrusel de la mañana)."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not 2 <= len(image_urls) <= 10 or not all(_is_http_url(u) for u in image_urls):
+        return OperationResult(StageStatus.FAILED, error_type="invalid_slide_count")
+    children: list[str] = []
+    for url in image_urls:
+        child = _create_container({"image_url": url, "is_carousel_item": "true", "access_token": IG_ACCESS_TOKEN})
+        if not child.ok:
+            return child
+        children.append(child.external_id)
+    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
+    if delay > 0:
+        time.sleep(delay)
+    parent = _create_container({
+        "media_type": "CAROUSEL",
+        "children": ",".join(children),
+        "caption": caption,
+        "access_token": IG_ACCESS_TOKEN,
+    })
+    if not parent.ok:
+        return parent
+    if delay > 0:
+        time.sleep(delay)
+    published = _publish_container(parent.external_id)
+    if published.ok:
+        logger.info("Carrusel publicado en Instagram: %s (%s láminas)", published.external_id, len(children))
+    return published
+
+
+def _graph_post(path: str, data: dict) -> OperationResult:
+    blocked = _guard()
+    if blocked:
+        return blocked
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{path}",
+            data={**data, "access_token": IG_ACCESS_TOKEN},
+            timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    payload = _safe_json(response)
+    external_id = str(payload.get("id") or "")
+    if response.status_code in {200, 201} and external_id:
+        return OperationResult(StageStatus.SUCCESS, external_id=external_id, response=payload)
+    return _error_result(response, outcome="unknown")
+
+
+def comment_on_media(media_id: str, message: str) -> OperationResult:
+    """Comentario de la cuenta en una publicación propia (actualizaciones)."""
+    return _graph_post(f"{media_id}/comments", {"message": message})
+
+
+def reply_to_comment(comment_id: str, message: str) -> OperationResult:
+    return _graph_post(f"{comment_id}/replies", {"message": message})
+
+
+def graph_get(path: str, params: dict) -> dict | None:
+    """Lectura simple (sin efectos). ``None`` si falla."""
+    try:
+        response = requests.get(
+            f"{GRAPH_API}/{path}",
+            params={**params, "access_token": IG_ACCESS_TOKEN},
+            timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Lectura de Instagram fallida: %s", type(exc).__name__)
+        return None
+    data = _safe_json(response)
+    if response.status_code != 200:
+        if _is_rate_limit_error(data, response.status_code):
+            _set_rate_limit_backoff()
+        logger.warning("Lectura de Instagram rechazada: http %s", response.status_code)
+        return None
+    return data
+
+
+def media_info(media_id: str) -> dict | None:
+    return graph_get(media_id, {"fields": "id,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp"})
+
+
+def media_comments(media_id: str, limit: int = 50) -> list[dict]:
+    data = graph_get(f"{media_id}/comments", {"fields": "id,text,timestamp,username,like_count,replies{id,username}", "limit": limit})
+    return list((data or {}).get("data") or [])
+
+
+def account_username() -> str:
+    data = graph_get(IG_ACCOUNT_ID, {"fields": "username"}) if IG_ACCOUNT_ID else None
+    return str((data or {}).get("username") or "")
