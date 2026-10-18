@@ -53,61 +53,67 @@ El único archivo V1 modificado es `Root.tsx` (+3 líneas para registrar las
 composiciones nuevas). Ningún call site productivo (`video_renderer.py`,
 `image_generator.py`, `media.py`, `meta/*`) fue tocado en esta fase.
 
-## 3. Reel V2 (`EditorialReelV2`, 1080×1920, 30 fps)
+## 3. Reel V2 (`EditorialReelV2`, 1080×1920, 30 fps) — revisión 2026-10-18
 
-Estados:
+La primera versión (hook que mostraba el titular grande, lo borraba y lo volvía
+a mostrar compacto; tipografía partida) se descartó por pedido editorial: el
+titular entraba dos veces, la animación partida se veía rota en los primeros
+cuadros y el fondo desenfocado quedaba vacío. La composición actual es estable
+desde el cuadro 0:
 
-- **A · Hook (0–1,7 s).** El video arranca en el frame 0 con su audio. Uno de tres
-  hooks:
-  - `kinetic_breaking` — policiales o `breaking=true`: barrido de acento de 0,4 s,
-    titular en mayúsculas condensadas palabra por palabra (resorte), etiqueta de
-    sección en caja, caja de destaque al final.
-  - `cinematic_editorial` — general: el video se abre como obturador desde una regla
-    horizontal (0,3 s), cámara virtual 1,10→1,0, titular en tipografía partida
-    (cada línea se arma desde dos mitades).
-  - `visual_statement` — si el titular contiene una cifra verificable (`%`, `$`,
-    miles con punto, "millones"): la cifra en 160–330 px sobre caja de acento y el
-    titular completo debajo. **La cifra se extrae literalmente del titular**; si no
-    hay, el hook no se usa.
-  Selección determinística (`v2/text.ts::chooseHook`): `hookStyle` explícito →
-  breaking/policiales → cifra → editorial. Nunca aleatoria.
-- **B · Reorganización (~0,7 s).** El titular grande sale por máscara hacia arriba,
-  el oscurecimiento se retira, la cámara se detiene y entra el titular compacto.
-- **C · Video protagonista.** Firma superior compacta (sello + wordmark + sección) y
-  regla de progreso de 3 px. Titular compacto:
-  - videos horizontales/cuadrados → **doble plano**: video entero arriba, titular
-    debajo, nunca encima del video;
-  - videos verticales → bloque sólido compacto en la zona segura inferior que se
-    retira tras ≥ 4 s (35 % de la duración) y **vuelve en los últimos 4 s** de
-    videos ≥ 25 s.
-- **D · Cierre (1,8 s, antes 3 s).** Campo de color de sección sube por máscara,
-  sello circular, wordmark, regla y "Seguinos en @lavozriojana". Se agrega
-  después del video: no recorta contenido.
+- **Encabezado** (y=330): sello + wordmark a la izquierda, pestaña de sección
+  (+ localidad) en el color de la sección a la derecha; regla con barra de
+  progreso debajo.
+- **Titular**: entra UNA vez (línea por línea por máscara, ~0,4 s) y queda fijo
+  todo el video; caja de destaque al terminar. Se muestra con su caja original
+  (`titulo_display`): ya no se pasa a minúsculas un titular en MAYÚSCULAS
+  (rompía nombres propios). Si sobra aire, el titular crece hasta 104 px.
+- **Video** horizontal/cuadrado a todo el ancho (nunca recortado), con regla de
+  acento arriba y crédito verificable abajo ("Video: X / @usuario",
+  "Video: Infobae", "Video: Paparazzi", derivado de la URL de origen).
+- **Bajada**: primera oración del párrafo 📌 del caption del mismo Reel (texto
+  ya publicado; si es muy larga se omite, nunca se corta con "…"), con barra
+  de acento; "Nota completa en lavozriojana.com →" si hay lugar.
+- **Fondo**: el mismo material desenfocado (a ¼ de resolución), velo de tinta,
+  tinte de sección, trama de puntos y la sección como marca de agua debajo de
+  la zona segura. Visible desde el primer cuadro.
+- **Verticales**: video a pantalla completa (cover sólo si es ~9:16), titular
+  compacto fijo arriba sobre un velo, crédito abajo.
+- **Cierre** de 1,8 s sin cambios.
 
-Fuente nunca recortada: horizontales y cuadrados se escalan enteros; verticales
-usan `cover` sólo si difieren < 4 % de 9:16 (p. ej. 540×960 exacto). El fondo es
-el mismo material desenfocado, pintado a ¼ de resolución (el desenfoque cuesta
-16× menos que en V1).
+Zonas: todo el texto propio entre y=330 y y=1540 — entra en el recorte 4:5
+del feed (y 285–1635) y en la zona segura de pantalla completa (x ≤ 940).
 
-Zonas seguras: todo el texto propio queda entre y=210 y y=1540 y x≤952 (la UI de
-Instagram/Facebook cubre ~380 px abajo y la columna de botones a la derecha). V1
-ubicaba el footer en y≈1784, debajo de esa UI.
+### Portada (`ReelCoverV2`, still 1080×1920)
 
-## 4. Post Instagram V2 (`AutomaticInstagramCardV2`, 1080×1350, render 2×)
+La misma composición en su estado final, con un cuadro del video fuente
+(≈1,5 s) como imagen y una insignia "▶ VIDEO". Lo esencial queda dentro del
+4:5 del feed y del 3:4 de la grilla. `REEL_COVER_ENABLED=true` la genera en
+`render_video` (`info["cover_path"]`); `utils/paparazzi_reels.py` la sube a R2
+y la pasa como `cover_url` (Instagram la prioriza sobre `thumb_offset`). Con
+`REEL_COVER_FACEBOOK_ENABLED=true`, después de publicar el Reel en Facebook se
+aplica como miniatura (`POST /{video-id}/thumbnails`, best-effort: un fallo
+nunca cambia el resultado de la publicación). La UI manual sube
+`{video_id}_cover.jpg` si existe. Si la portada falla, el Reel sale igual con
+el cuadro por offset.
 
-Composición elegida por reglas (`resolveCardLayout`):
+## 4. Post Instagram V2 (`AutomaticInstagramCardV2`, 1080×1350, render 2×) — revisión 2026-10-18
 
-| Layout | Cuándo | Idea |
+Formato "portada" con más elementos (la primera versión se veía como
+plantilla y vacía):
+
+| Variante | Cuándo | Idea |
 |---|---|---|
-| `papel` | foto horizontal/cuadrada, sección de tono papel | página editorial clara: foto con margen, regla de acento, titular en tinta, bajada serif |
-| `tinta` | foto horizontal/cuadrada, policiales/deportes/espectáculos/breaking | misma retícula sobre tinta, foto a sangre |
-| `cintas` | foto vertical (ancho/alto ≤ 0,87) | foto a sangre, titular en cintas sólidas por línea |
-| `poster` | sin foto | campo de color de sección, titular protagonista |
+| foto arriba (`papel`/`tinta`) | foto horizontal/cuadrada | foto a sangre que se funde con el fondo; el titular monta su borde; texto anclado abajo y la foto crece hasta alcanzarlo (recorte ≤ ~40 %) |
+| foto completa (`cintas`) | foto vertical (ancho/alto ≤ 0,87) | foto a pantalla completa, texto sobre un velo inferior |
+| póster | sin foto | campo de color de sección, trama, sección como marca de agua |
 
-Longitud variable: la foto crece mientras el titular conserve ≥ 76 px; luego se
-acepta el mínimo (52 px); si aun así no entra, se omite la bajada antes que
-achicar el titular; último recurso 40 px / 6 líneas. Recorte máximo de la foto:
-~25 % sobre su proporción natural.
+Elementos comunes: pestaña de marca (sello + LA VOZ RIOJANA) y pestaña de
+sección (+ localidad) sobre la foto, franja de acento a la izquierda, bajada
+con barra, trama de puntos y banda de pie en el color de la sección con
+"Nota completa en lavozriojana.com →" y la fecha de publicación (hora
+argentina, `dateLabel`). El titular manda: primero se reduce la bajada, nunca
+se corta el titular.
 
 ## 5. Open Graph V2 (`FacebookOgCardV2`, 1200×630)
 

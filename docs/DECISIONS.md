@@ -2283,3 +2283,34 @@ activar sólo un canal (la identidad debe coincidir entre Reel, post y link).
 
 **Rollback**: `VISUAL_STYLE_VERSION=v1` (script y `.env`), borrar
 `remotion/.render-cache` y reiniciar supervisor y UI manual.
+
+### 2026-10-18 — Revisión V2: Reel sin hook, portadas propias, post más completo y guardia de ubicación
+
+**Contexto**: tras el primer día de V2 en producción, el responsable editorial
+pidió: (1) no referenciar La Rioja en hechos ajenos (Reel de X "El bebé
+riojano…", fuente de una cuenta extranjera); (2) eliminar el titular que se
+muestra, se borra y vuelve a mostrarse, la animación partida y el fondo vacío
+del Reel; (3) portadas compatibles con 9:16 y el recorte 4:5 del feed; (4) posts
+menos "plantilla".
+
+**Decisión**:
+- Pauta del caption: regla explícita de ubicación y "impacto para La Rioja sólo
+  si ocurre en La Rioja". Control determinístico
+  (`invented_riojan_reference`): términos riojanos en la salida que no están en
+  la fuente → reintento con corrección; si persiste, fallback al texto de la
+  fuente (`caption_fallback_reason=riojan_reference_invented`). Hashtags
+  riojanos sólo con vínculo verificable (`detect_riojan_link`, localidad o medio
+  riojano).
+- Reel: composición estable desde el cuadro 0 (ver
+  `docs/design/VISUAL_SYSTEM_V2.md` §3). Portada `ReelCoverV2` como
+  `cover_url` y miniatura de Facebook best-effort, detrás de flags.
+- Post: formato "portada" (§4).
+
+**Descartado**: mantener el hook con una animación corregida (el pedido es no
+repetir el titular); generar la bajada del Reel con otra llamada a IA (se usa la
+primera oración del caption ya publicado); usar `thumb_offset` como portada (no
+controla qué queda dentro del 4:5).
+
+**Rollback**: `REEL_COVER_ENABLED=false` / `REEL_COVER_FACEBOOK_ENABLED=false`
+quitan las portadas; `VISUAL_STYLE_VERSION=v1` vuelve todo a V1. La guardia de
+ubicación no tiene flag: es una corrección factual.

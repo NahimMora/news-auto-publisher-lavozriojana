@@ -41,6 +41,14 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   `VISUAL_STYLE_VERSION=v2` cambia Reels (`EditorialReelV2`), card automática de
   IG (`AutomaticInstagramCardV2`) y OG (`FacebookOgCardV2`). La caída a Pillow de
   las imágenes estáticas sigue siendo V1; los Reels sin Remotion no se publican.
+- Revisión V2 (2026-10-18): Reel con titular fijo desde el cuadro 0 (sin hook que
+  se borra), video a todo el ancho, crédito, bajada y fondo con textura; portada
+  propia `ReelCoverV2` (`REEL_COVER_ENABLED`, `REEL_COVER_FACEBOOK_ENABLED`)
+  apta para el recorte 4:5; post "portada" con pestañas, bajada con barra y banda
+  de pie con CTA y fecha.
+- Ubicación (2026-10-18): los captions no ubican en La Rioja hechos cuya fuente no
+  la menciona (regla en la pauta + control sin IA con reintento y fallback a la
+  fuente); sin vínculo riojano verificable los hashtags son neutros.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 
