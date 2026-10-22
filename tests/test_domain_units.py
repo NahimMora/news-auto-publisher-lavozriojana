@@ -35,6 +35,77 @@ class DedupTests(unittest.TestCase):
         b = {"titulo": "Vialidad mejoró las rutas de Aimogasta"}
         self.assertIsNotNone(duplicate_reason(a, [b], threshold=0.5))
 
+    def test_similarity_filter_skips_title_match_but_keeps_exact_key(self):
+        a = {"titulo": "Vialidad mejora rutas en Aimogasta", "url": "https://x/1"}
+        b = {"titulo": "Vialidad mejoró las rutas de Aimogasta", "url": "https://x/2"}
+        c = {"titulo": "Otra cosa", "url": "https://x/1"}
+        never = lambda _record: False
+        self.assertIsNone(duplicate_reason(a, [b], threshold=0.5, similarity_filter=never))
+        self.assertEqual(
+            duplicate_reason(a, [c], key_fields=("url",), threshold=0.5, similarity_filter=never),
+            "same_url",
+        )
+
+
+class InstagramPostedDedupWindowTests(unittest.TestCase):
+    # Reproducción real 22/10: un corte de luz en Famatina quedó bloqueado por
+    # un post de ~61 días antes (similar_title:0.67).
+    def _state(self, posted_at):
+        return {
+            "posted": {
+                "k1": {
+                    "titulo": "Famatina: corte de luz programado por EDELaR",
+                    "url": "https://fuente/viejo",
+                    "posted_at": posted_at,
+                }
+            }
+        }
+
+    def _noticia(self):
+        return {
+            "titulo": "Corte de luz programado en Famatina",
+            "url": "https://fuente/nuevo",
+        }
+
+    def test_without_window_keeps_historic_behavior(self):
+        from meta import ig_client
+
+        with patch.object(ig_client, "IG_POSTED_DEDUP_WINDOW_HOURS", 0):
+            reason = ig_client._posted_duplicate_reason(self._state(1.0), self._noticia())
+        self.assertTrue(str(reason).startswith("similar_title:"), reason)
+
+    def test_old_similar_post_outside_window_is_not_a_duplicate(self):
+        import time
+        from meta import ig_client
+
+        old = time.time() - 61 * 86400
+        with patch.object(ig_client, "IG_POSTED_DEDUP_WINDOW_HOURS", 72):
+            self.assertIsNone(ig_client._posted_duplicate_reason(self._state(old), self._noticia()))
+
+    def test_recent_similar_post_inside_window_is_still_a_duplicate(self):
+        import time
+        from meta import ig_client
+
+        recent = time.time() - 3600
+        with patch.object(ig_client, "IG_POSTED_DEDUP_WINDOW_HOURS", 72):
+            reason = ig_client._posted_duplicate_reason(self._state(recent), self._noticia())
+        self.assertTrue(str(reason).startswith("similar_title:"), reason)
+
+    def test_record_without_posted_at_is_still_compared(self):
+        from meta import ig_client
+
+        with patch.object(ig_client, "IG_POSTED_DEDUP_WINDOW_HOURS", 72):
+            reason = ig_client._posted_duplicate_reason(self._state(None), self._noticia())
+        self.assertTrue(str(reason).startswith("similar_title:"), reason)
+
+    def test_exact_url_match_ignores_window(self):
+        from meta import ig_client
+
+        state = self._state(1.0)
+        noticia = dict(self._noticia(), titulo="Título totalmente distinto", url="https://fuente/viejo")
+        with patch.object(ig_client, "IG_POSTED_DEDUP_WINDOW_HOURS", 72):
+            self.assertEqual(ig_client._posted_duplicate_reason(state, noticia), "same_url")
+
 
 class EditorialFallbackUnitTests(unittest.TestCase):
     def test_classifier_fallback_is_explicit(self):

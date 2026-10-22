@@ -12,7 +12,7 @@ import requests
 from utils import r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
-from utils.news_dedup import duplicate_reason
+from utils.news_dedup import find_duplicate
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
 from utils.social_caption import build_instagram_caption
@@ -44,6 +44,8 @@ IG_POSTED_DEDUP_THRESHOLD = float(
         os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.5"),
     )
 )
+# 0 = sin ventana (comportamiento histórico: compara contra todo ig_posted.json).
+IG_POSTED_DEDUP_WINDOW_HOURS = float(os.getenv("IG_POSTED_DEDUP_WINDOW_HOURS", "0"))
 
 
 class IGRateLimitError(Exception):
@@ -147,8 +149,22 @@ def _posted_records(state: dict) -> list[dict]:
     return records
 
 
+def _within_dedup_window(record: dict) -> bool:
+    if IG_POSTED_DEDUP_WINDOW_HOURS <= 0:
+        return True
+    try:
+        posted_at = float(record.get("posted_at"))
+    except (TypeError, ValueError):
+        # Sin fecha durable no se puede descartar: se sigue comparando.
+        return True
+    return posted_at >= time.time() - IG_POSTED_DEDUP_WINDOW_HOURS * 3600
+
+
 def _posted_duplicate_reason(state: dict, noticia: dict) -> str | None:
-    return duplicate_reason(
+    # La similitud de título sólo se compara dentro de la ventana: temas
+    # recurrentes (cortes de luz, fechas deportivas) no son la misma noticia
+    # semanas después. La coincidencia exacta por clave/URL no tiene ventana.
+    match = find_duplicate(
         noticia,
         _posted_records(state),
         key_fields=(
@@ -159,7 +175,19 @@ def _posted_duplicate_reason(state: dict, noticia: dict) -> str | None:
             "url",
         ),
         threshold=IG_POSTED_DEDUP_THRESHOLD,
+        similarity_filter=_within_dedup_window,
     )
+    if not match:
+        return None
+    reason, existing = match
+    logger.info(
+        "Duplicado de Instagram (%s): '%s' coincide con '%s' (posted_at=%s)",
+        reason,
+        str(noticia.get("titulo") or "")[:90],
+        str(existing.get("titulo") or existing.get("titulo_instagram") or "")[:90],
+        existing.get("posted_at"),
+    )
+    return reason
 
 
 def _is_http_url(value: object) -> bool:

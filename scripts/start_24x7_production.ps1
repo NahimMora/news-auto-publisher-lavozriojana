@@ -37,6 +37,8 @@ $env:IG_CAPTION_FROM_WEB_ENABLED = "true"
 $env:LOCALITY_DECK_LAZY_ENABLED = "true"
 # Visual System V2 aprobado el 2026-10-17 (Reel, card IG y OG). Rollback: "v1".
 $env:VISUAL_STYLE_VERSION = "v2"
+# LVR-BUG-0006 (2026-10-22): dedup de IG por título sólo dentro de 72 h. Rollback: "0".
+$env:IG_POSTED_DEDUP_WINDOW_HOURS = "72"
 # Portada propia de Reels (2026-10-18): cover_url en IG, miniatura en FB.
 $env:REEL_COVER_ENABLED = "true"
 $env:REEL_COVER_FACEBOOK_ENABLED = "true"

@@ -1217,6 +1217,8 @@
   re-scrape por el resto de la corrida (antes: hasta 8 llamadas fallidas por ciclo).
 - Pendiente: revisar la app en Meta for Developers (permisos y acceso a la
   funcionalidad de URL scraping). El Sharing Debugger manual sigue disponible.
+- 2026-10-22: sigue igual en todas las corridas (06:33, 07:36, 08:46); registrado
+  como `LVR-BUG-0007`.
 
 ## 89. Caption de IG/FB desde la web con chips como viñetas y lead cortado — CORREGIDO 2026-10-04
 
@@ -1409,3 +1411,45 @@
   404, se reintentó con la versión 540p y el Reel salió en IG y FB.
 - Estado actual: **corregido y verificado**.
 
+
+## 98. Falsos positivos del validador editorial al comienzo de línea y con "uno" — CORREGIDO 2026-10-22
+
+- ID: `LVR-BUG-0005`; severidad media. Entre el 19 y el 21/10 los fallbacks editoriales
+  pasaron de 1 a 3 por día (ciclos #1100, #1103 y #1104 `degraded`). En 7 días hubo
+  7 bloqueos duros por `invented_number` y 5 por `invented_proper_noun`, y la nota
+  salió con el texto casi crudo de la fuente.
+- Causa raíz (a): `_match_starts_sentence` hacía `rstrip()` antes de comparar con
+  `\n`, así que la excepción de #64 nunca se aplicaba a la primera palabra de una
+  línea (tras un título sin punto, la bajada o una viñeta). Tampoco contemplaba
+  `¿ ¡ « "`. Casos reales: `Buscar`, `Posible`, `Retomar` (Icardi) y `Versiones`,
+  `Informes`, `Reportes` (Bellingham).
+- Causa raíz (b): `uno` se traducía a `1` también en el texto generado, donde casi
+  siempre es pronombre ("uno de los conductores", "cada uno"). Caso real: choques
+  de Famatina/Anguinán y de La Llama (`invented_number:1` durante seis intentos).
+- Corrección: el salto de línea y los signos de apertura después de un límite de
+  oración cuentan como comienzo de oración. `uno` sigue contando en el original
+  (permite `1` en la salida) pero no en el texto generado. Los nombres dentro de la
+  oración, incluso entre paréntesis ("(Kremlin)"), siguen validándose.
+- Tests: `test_first_word_of_a_line_or_after_opening_marks_is_not_a_proper_name`,
+  `test_opening_marks_inside_a_sentence_still_validate_names`,
+  `test_validation_does_not_treat_pronoun_uno_as_numeric_one`,
+  `test_source_uno_still_allows_digit_one`.
+- Riesgo residual: igual que en #64, un nombre inventado de una sola palabra usado
+  sólo al comienzo de una línea u oración puede no detectarse.
+
+## 99. Dedup de Instagram contra todo el historial, sin ventana de tiempo — CORREGIDO 2026-10-22
+
+- ID: `LVR-BUG-0006`; severidad media. `_posted_duplicate_reason` comparaba el
+  título (Jaccard >= 0.5) contra los 3457 posts de `ig_posted.json`. El 22/10 se
+  omitieron, entre otras, un corte de luz en Famatina (0.67 contra un post de hace
+  ~61 días), Rugby Chelcos-CRAR (0.50, ~70 días) y una fecha del básquet de
+  Chilecito (0.60). Esas notas quedan `SUCCESS deduplicated` y no se reintentan.
+  El log no decía qué nota ni contra cuál.
+- Corrección: `IG_POSTED_DEDUP_WINDOW_HOURS` (default `0` = comportamiento
+  histórico) limita sólo la comparación por título a los posts con `posted_at` dentro
+  de la ventana. La coincidencia exacta por clave/URL no tiene ventana, y los
+  registros sin `posted_at` se siguen comparando. Se loguean ambos títulos.
+  Producción: `72` en `scripts/start_24x7_production.ps1`.
+- Tests: `InstagramPostedDedupWindowTests`,
+  `test_similarity_filter_skips_title_match_but_keeps_exact_key`.
+- Rollback: `IG_POSTED_DEDUP_WINDOW_HOURS=0`.

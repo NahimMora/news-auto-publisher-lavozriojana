@@ -418,18 +418,20 @@ def _result_factual_text(result: EditorialResult) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _extract_numbers(text: str) -> set[str]:
+def _extract_numbers(text: str, *, include_uno: bool = True) -> set[str]:
     numbers = {
         re.sub(r"\s+", "", m.group(0)).lower()
         for m in _NUMBER_RE.finditer(text or "")
     }
     # El modelo puede expresar "tres autos" como "3 autos". Ambos representan
     # el mismo dato factual y no deben disparar reintentos editoriales falsos.
+    # En el texto generado, "uno" casi siempre es pronombre ("uno de los
+    # conductores", "cada uno"), no una cifra: con include_uno=False no cuenta.
     normalized_words = re.findall(r"\b[a-z]+\b", normalize(text or ""))
     numbers.update(
         _SPANISH_NUMBER_WORDS[word]
         for word in normalized_words
-        if word in _SPANISH_NUMBER_WORDS
+        if word in _SPANISH_NUMBER_WORDS and (include_uno or word != "uno")
     )
     return numbers
 
@@ -539,8 +541,18 @@ def _is_present(candidate: str, original: str) -> bool:
     return bool(candidate_norm and candidate_norm in original_norm)
 
 
+_SENTENCE_OPENERS = "¿¡\"'«“‘"
+
+
 def _match_starts_sentence(text: str, match: re.Match) -> bool:
-    prefix = text[: match.start()].rstrip()
+    # Signos de apertura (¿ ¡ « " “) que preceden a la palabra no cambian si
+    # está al comienzo de la oración: se saltean antes de mirar el límite.
+    prefix = text[: match.start()].rstrip(" \t").rstrip(_SENTENCE_OPENERS)
+    # Un salto de línea separa campos o ítems (título, bajada, viñetas) aunque
+    # la línea anterior no termine en punto; se evalúa antes de recortarlo.
+    if not prefix or prefix[-1] == "\n":
+        return True
+    prefix = prefix.rstrip()
     return not prefix or prefix[-1] in ".!?\n"
 
 
@@ -630,7 +642,7 @@ def validate_editorial_result(
     warnings: list[str] = []
 
     original_numbers = _extract_numbers(original)
-    for number in sorted(_extract_numbers(output)):
+    for number in sorted(_extract_numbers(output, include_uno=False)):
         if number not in original_numbers:
             warnings.append(f"invented_number:{number}")
 

@@ -2348,3 +2348,16 @@ política o espectáculos.
 
 **Rollback**: interruptores por formato en
 `scripts/start_24x7_production.ps1`; `schtasks /delete` para las tareas.
+
+## 2026-10-22 — Ventana de 72 h para el dedup de Instagram por título
+
+**Contexto**: el dedup por similitud de título contra `ig_posted.json` no tenía
+ventana. Temas recurrentes (cortes de luz, fechas deportivas) quedaban bloqueados
+semanas después (KNOWN_ISSUES #99, `LVR-BUG-0006`). El operador autorizó corregir y
+activar el 22/10.
+
+**Decisión**: `IG_POSTED_DEDUP_WINDOW_HOURS=72` en producción; default del código
+`0` (sin ventana). La coincidencia exacta por clave/URL sigue sin ventana. Sin
+cambios de forma en el JSON: se usa el `posted_at` ya existente.
+
+**Rollback**: `IG_POSTED_DEDUP_WINDOW_HOURS=0` en el script de arranque.

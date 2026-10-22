@@ -193,6 +193,60 @@ class EditorialTests(unittest.TestCase):
 
         self.assertTrue(any("Córdoba" in warning for warning in warnings), warnings)
 
+    def test_first_word_of_a_line_or_after_opening_marks_is_not_a_proper_name(self):
+        # Reproducción real 21/10 (Icardi, Bellingham): "Buscar", "Posible" y
+        # "Versiones" se marcaban porque el salto de línea se descartaba antes
+        # de evaluar el inicio de oración.
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.title = "Vialidad sigue con las obras en Aimogasta"
+        result.excerpt = "Versiones de vecinos sobre el avance"
+        result.lead = "Las tareas continúan. ¿Posible demora? «Buscar alternativas» es la consigna."
+        result.sections = [
+            EditorialSection(
+                heading="Detalles",
+                paragraphs=["Los equipos trabajan en la zona."],
+                items=["Reportes diarios del avance", "Informes técnicos"],
+            )
+        ]
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(result, noticia, check_similarity=False)
+
+        for word in ("Versiones", "Posible", "Buscar", "Reportes", "Informes"):
+            self.assertFalse(any(word in w for w in warnings), (word, warnings))
+
+    def test_opening_marks_inside_a_sentence_still_validate_names(self):
+        noticia = sample_news()
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "La reunión fue en la sede (Kremlin) según el parte."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(result, noticia, check_similarity=False)
+
+        self.assertIn("invented_proper_noun:Kremlin", warnings)
+
+    def test_validation_does_not_treat_pronoun_uno_as_numeric_one(self):
+        # Reproducción real 21/10 (choques en Famatina y La Llama).
+        noticia = sample_news(parrafos=["Dos conductores resultaron heridos en el choque."])
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "Dos conductores resultaron heridos. Uno de ellos fue trasladado y cada uno recibió asistencia."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(result, noticia, check_similarity=False)
+
+        self.assertNotIn("invented_number:1", warnings)
+
+    def test_source_uno_still_allows_digit_one(self):
+        noticia = sample_news(parrafos=["Sólo uno de los heridos quedó internado."])
+        result = editorial.build_fallback_editorial(noticia)
+        result.lead = "Quedó 1 herido internado."
+        editorial.render_editorial_html(result)
+
+        warnings = editorial.validate_editorial_result(result, noticia, check_similarity=False)
+
+        self.assertNotIn("invented_number:1", warnings)
+
     def test_prepare_editorial_retries_when_quality_score_is_low(self):
         noticia = sample_news()
         low_quality = {

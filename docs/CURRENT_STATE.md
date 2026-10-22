@@ -735,3 +735,13 @@ servicio solicitado por el operador está activo con límites y watchdog.
 
 Próximo gate: obtener review/aprobación, agregar un endpoint CMS read-only y ensayar
 reboot/rollback antes de mergear o crear el tag oficial.
+
+## Correcciones 2026-10-22
+
+- Validador editorial: el comienzo de línea y los signos de apertura cuentan como
+  comienzo de oración, y "uno" como pronombre ya no es la cifra 1 (KNOWN_ISSUES #98,
+  `LVR-BUG-0005`).
+- Dedup de Instagram por título limitado a 72 h en producción
+  (`IG_POSTED_DEDUP_WINDOW_HOURS`, KNOWN_ISSUES #99, `LVR-BUG-0006`).
+- Re-scrape de Facebook sigue rechazado por la configuración de la app de Meta
+  (KNOWN_ISSUES #88, `LVR-BUG-0007`).

@@ -1,7 +1,7 @@
 import os
 import re
 import unicodedata
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 DEDUP_SIMILARITY_THRESHOLD = float(os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.5"))
@@ -119,13 +119,19 @@ def item_similarity(a: dict, b: dict) -> float:
     return best
 
 
-def duplicate_reason(
+def find_duplicate(
     item: dict,
     existing_items: Iterable[dict],
     *,
     key_fields: tuple[str, ...] = (),
     threshold: float | None = None,
-) -> str | None:
+    similarity_filter: Callable[[dict], bool] | None = None,
+) -> tuple[str, dict] | None:
+    """Devuelve (motivo, elemento coincidente) o None.
+
+    `similarity_filter` limita sólo la comparación por título (por ejemplo, a
+    una ventana de tiempo); la coincidencia exacta por `key_fields` se evalúa
+    siempre contra todos los elementos."""
     threshold = DEDUP_SIMILARITY_THRESHOLD if threshold is None else threshold
     for existing in existing_items:
         if not isinstance(existing, dict):
@@ -133,8 +139,28 @@ def duplicate_reason(
         for field in key_fields:
             key = item.get(field)
             if key and key == existing.get(field):
-                return f"same_{field}"
+                return f"same_{field}", existing
+        if similarity_filter is not None and not similarity_filter(existing):
+            continue
         similarity = item_similarity(item, existing)
         if similarity >= threshold:
-            return f"similar_title:{similarity:.2f}"
+            return f"similar_title:{similarity:.2f}", existing
     return None
+
+
+def duplicate_reason(
+    item: dict,
+    existing_items: Iterable[dict],
+    *,
+    key_fields: tuple[str, ...] = (),
+    threshold: float | None = None,
+    similarity_filter: Callable[[dict], bool] | None = None,
+) -> str | None:
+    match = find_duplicate(
+        item,
+        existing_items,
+        key_fields=key_fields,
+        threshold=threshold,
+        similarity_filter=similarity_filter,
+    )
+    return match[0] if match else None
