@@ -6,6 +6,8 @@
 * Seguimiento: si una noticia publicada cambia una cifra en una nota
   posterior, historia de actualización + comentario en Instagram y texto
   editado en Facebook.
+* Placas de servicio: cronograma de pagos de Hacienda y sismos sentidos
+  (INPRES), como post y como historia (``utils/service_posts.py``).
 
 Cada formato tiene su interruptor (apagado por defecto) y su estado propio
 (``data/social_formats_state.json``); ninguno consume cupos del feed.
@@ -134,6 +136,38 @@ def _updates(instagram: bool, facebook: bool) -> tuple[int, int]:
     return done, failed
 
 
+def _service_posts(instagram: bool, facebook: bool) -> tuple[int, int]:
+    """(publicadas, fallidas). Va antes que la etapa de historias: la historia
+    automática del post queda cubierta por la historia de servicio."""
+    from utils import service_posts as spost
+    from utils import story_publisher as sp
+
+    state = sf.load_state()
+    done = failed = 0
+    for job in spost.due_service_posts(done=lambda key: spost.already_done(key, state))[:2]:
+        try:
+            card = spost.render_card(job["props"])
+        except (RemotionRenderError, OSError) as exc:
+            logger.warning("No se pudo renderizar la placa %s: %s", job["key"], exc)
+            failed += 1
+            continue
+        outcome = spost.publish_post(job, card, instagram=instagram, facebook=facebook)
+        if "success" not in (outcome["ig"], outcome["fb"]):
+            failed += 1
+            if "rate_limit" in (outcome["ig"], outcome["fb"]):
+                break
+            continue
+        done += 1
+        story_ig = instagram and sp.instagram_enabled()
+        story_fb = facebook and sp.facebook_enabled()
+        if story_ig or story_fb:
+            try:
+                spost.publish_story(job, outcome.get("ig_id") or "", instagram=story_ig, facebook=story_fb)
+            except (RemotionRenderError, OSError) as exc:
+                logger.warning("No se pudo renderizar la historia de la placa %s: %s", job["key"], exc)
+    return done, failed
+
+
 def fetch_article_title(cand: dict) -> str:
     """Título con caja original de la noticia de origen (si está en la web)."""
     from utils.article_media import fetch_article
@@ -169,13 +203,16 @@ def main() -> StageResult:
     }
     updates_ok, updates_failed = _updates(instagram, facebook)
     results["updates"] = {"published": updates_ok, "failed": updates_failed}
-    attempted = [v for k, v in results.items() if k != "updates" and v != "not_due"]
-    succeeded = sum(1 for v in attempted if v == "success") + updates_ok
-    failed = sum(1 for v in attempted if v != "success") + updates_failed
+    service_ok, service_failed = _service_posts(instagram, facebook)
+    results["service_posts"] = {"published": service_ok, "failed": service_failed}
+    attempted = [v for k, v in results.items() if k not in {"updates", "service_posts"} and v != "not_due"]
+    succeeded = sum(1 for v in attempted if v == "success") + updates_ok + service_ok
+    failed = sum(1 for v in attempted if v != "success") + updates_failed + service_failed
+    extra = updates_ok + updates_failed + service_ok + service_failed
     return result_from_counts(
         STAGE,
-        received=len(attempted) + updates_ok + updates_failed,
-        selected=len(attempted) + updates_ok + updates_failed,
+        received=len(attempted) + extra,
+        selected=len(attempted) + extra,
         processed=succeeded + failed,
         succeeded=succeeded,
         failed=failed,

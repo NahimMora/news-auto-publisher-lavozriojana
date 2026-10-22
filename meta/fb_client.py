@@ -1014,6 +1014,32 @@ def post_photo_story(image_bytes: bytes) -> OperationResult:
     return result
 
 
+def post_photo(image_bytes: bytes, message: str) -> OperationResult:
+    """Post de una foto con texto en la página (placas de servicio)."""
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    if not image_bytes:
+        return OperationResult(StageStatus.FAILED, error_type="missing_image")
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{PAGE_ID}/photos",
+            data={"message": message, "published": "true", "access_token": token},
+            files={"source": ("placa.jpg", image_bytes, "image/jpeg")},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    result = _api_result(response)
+    if result.ok:
+        logger.info("Placa publicada en Facebook: %s", result.external_id)
+    return result
+
+
 def post_photo_album(images: list[bytes], message: str) -> OperationResult:
     """Post de varias fotos (carrusel de la mañana en Facebook)."""
     blocked = _social_guard()

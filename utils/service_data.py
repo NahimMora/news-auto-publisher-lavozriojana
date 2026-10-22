@@ -320,3 +320,143 @@ def recent_notices(*, hours: int = 36, now: datetime | None = None, db_path: str
 
 def _utc_iso(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+# ── Hacienda: cronograma de pagos a estatales ────────────────────────────
+HACIENDA_POSTS_URL = "https://hacienda.larioja.gob.ar/wp-json/wp/v2/posts?per_page=15&_fields=date,link,title,content"
+# "QUINCENA OCTUBRE – LUNES 19/10", "HABERES SEPTIEMBRE – MIÉRCOLES 7/10".
+_PAYMENT_TITLE = re.compile(
+    r"^\s*(?P<concept>[A-ZÁÉÍÓÚÑ ]+?)\s+(?P<month>[A-ZÁÉÍÓÚÑ]+)\s*[–—-]\s*(?P<weekday>[A-ZÁÉÍÓÚÑ]+)\s+(?P<day>\d{1,2})/(?P<mon>\d{1,2})\s*$"
+)
+_PAYMENT_CONCEPTS = ("quincena", "haberes", "aguinaldo", "sac", "bono", "medio aguinaldo")
+_MONTH_NAMES = {_fold(name): i + 1 for i, name in enumerate(("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"))}
+
+
+def _clean_payment_item(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(,\s*y|,|\.|\s+y)$", "", text).strip()
+    return text
+
+
+def parse_payment_post(title: str, content_html: str, published: str, link: str) -> dict | None:
+    """Un post del cronograma de pagos de Hacienda, o ``None`` si no lo es.
+
+    Agrupa los organismos por banco cuando el post los separa ("Banco Rioja",
+    "Banco Hipotecario"). La fecha de pago sale del título; el año, de la
+    fecha de publicación (un pago de enero publicado en diciembre es del año
+    siguiente).
+    """
+    from bs4 import BeautifulSoup
+
+    match = _PAYMENT_TITLE.match(re.sub(r"\s+", " ", title.replace("&#8211;", "–")).upper())
+    if not match or not any(_fold(match.group("concept")).startswith(c) for c in _PAYMENT_CONCEPTS):
+        return None
+    try:
+        posted = datetime.fromisoformat(published[:19])
+        pay_day = date(posted.year, int(match.group("mon")), int(match.group("day")))
+        if pay_day < posted.date() - timedelta(days=180):
+            pay_day = pay_day.replace(year=posted.year + 1)
+    except ValueError:
+        return None
+    groups: list[dict] = []
+    for raw in BeautifulSoup(content_html or "", "html.parser").get_text("\n", strip=True).split("\n"):
+        line = _clean_payment_item(raw)
+        if not line:
+            continue
+        if _fold(line).startswith("banco ") and not raw.strip().endswith(","):
+            groups.append({"title": line, "items": []})
+            continue
+        if not groups:
+            groups.append({"title": "", "items": []})
+        groups[-1]["items"].append(line)
+    groups = [g for g in groups if g["items"]]
+    if not groups:
+        return None
+    concept = match.group("concept").strip().capitalize()
+    month = match.group("month").strip().lower()
+    return {
+        "concept": f"{concept} de {month}" if _fold(month) in _MONTH_NAMES else concept,
+        "date": pay_day.isoformat(),
+        "groups": groups,
+        "url": link,
+        "published": published[:19],
+    }
+
+
+def fetch_payment_schedule(*, fetcher=None) -> list[dict]:
+    """Posts del cronograma de pagos publicados por Hacienda (más nuevos primero)."""
+    try:
+        payload = json.loads(_get(HACIENDA_POSTS_URL, fetcher).decode("utf-8"))
+    except ValueError as exc:
+        raise ServiceDataError("json_invalido") from exc
+    out = []
+    for post in payload if isinstance(payload, list) else []:
+        title = re.sub(r"<[^>]+>", "", str(((post or {}).get("title") or {}).get("rendered") or ""))
+        import html as _html
+
+        parsed = parse_payment_post(
+            _html.unescape(title),
+            str(((post or {}).get("content") or {}).get("rendered") or ""),
+            str((post or {}).get("date") or ""),
+            str((post or {}).get("link") or ""),
+        )
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+# ── INPRES: sismos sentidos ──────────────────────────────────────────────
+# Sólo HTTP: el HTTPS de contenidos.inpres.gob.ar no responde.
+INPRES_FELT_URL = "http://contenidos.inpres.gob.ar/mapa/sentidos.xml"
+_INTENSITY_ENTRY = re.compile(r"^\s*(?P<intensity>[IVX]+(?:\s*a\s*[IVX]+)?)\s*-\s*(?P<place>.+?)\s*$")
+
+
+def _decode_feed(raw: bytes) -> str:
+    """El XML dice ISO-8859-1 pero a veces trae UTF-8: se prueba UTF-8 primero."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    return re.sub(r"^<\?xml[^>]*\?>", "", text.lstrip("\ufeff").lstrip())
+
+
+def parse_felt_quakes(raw: bytes, province: str = "La Rioja") -> list[dict]:
+    """Sismos del feed de INPRES sentidos en ``province`` (por localidad o epicentro)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(_decode_feed(raw))
+    except ET.ParseError as exc:
+        raise ServiceDataError("xml_invalido") from exc
+    target = _fold(province)
+    out = []
+    for item in root.iter("item"):
+        quake_id = str(item.findtext("idSismo") or "").strip()
+        try:
+            moment = datetime.strptime(quake_id, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            magnitude = float(str(item.findtext("magnitude") or "").replace(",", "."))
+        except ValueError:
+            continue
+        felt = []
+        for entry in str(item.findtext("intensity") or "").split(";"):
+            match = _INTENSITY_ENTRY.match(entry)
+            if match:
+                felt.append({"place": re.sub(r"\s+", " ", match.group("place")), "intensity": re.sub(r"\s+", " ", match.group("intensity"))})
+        felt_here = [f for f in felt if _fold(f["place"]).endswith(target) or _fold(f["place"]) == f"ciudad de {target}"]
+        epicenter_here = _fold(str(item.findtext("province") or "")) == target
+        if not felt_here and not epicenter_here:
+            continue
+        out.append({
+            "id": quake_id,
+            "at": moment.isoformat(),
+            "magnitude": magnitude,
+            "depth": re.sub(r"\s*\.\s*$", "", str(item.findtext("depth") or "").strip()),
+            "epicenter": str(item.findtext("epiczone") or "").strip().rstrip("."),
+            "province": str(item.findtext("province") or "").strip(),
+            "felt": felt_here + [f for f in felt if f not in felt_here],
+        })
+    return out
+
+
+def fetch_felt_quakes(*, province: str = "La Rioja", fetcher=None) -> list[dict]:
+    return parse_felt_quakes(_get(INPRES_FELT_URL, fetcher), province)

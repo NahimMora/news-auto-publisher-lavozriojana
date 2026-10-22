@@ -38,6 +38,7 @@ STORY_DEFAULTS: dict = {
     "body": "", "dateLabel": "", "timeLabel": "", "sourceLabel": "", "before": "", "after": "",
     "place": "La Rioja", "temp": 0, "sky": "", "detail": "", "days": [], "alertSummary": "",
     "level": "amarilla", "zones": [], "rows": [], "service": "aviso", "holidays": [], "countdown": "",
+    "headline": "", "subhead": "", "groups": [], "magnitude": "", "epicenter": "", "depth": "", "felt": [],
 }
 
 

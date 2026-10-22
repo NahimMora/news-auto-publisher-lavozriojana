@@ -15,6 +15,7 @@ cupos ni dedup con el feed. El backoff de rate limit de Meta sí se comparte.
 | "La semana en cinco" | Reel IG + video FB | domingos desde las 20 (`WEEKLY_RECAP_HOUR`) | ídem | ídem |
 | Seguimiento de noticias en desarrollo | historia IG + FB, comentario en el post de IG, texto editado en FB | cada ciclo | `utils/story_updates.py` | ídem (`updates`) |
 | Respuestas a preguntas | IG + FB | cada ciclo, 7–24 h | `utils/comment_replies.py`, `meta/run_comment_replies.py` | `data/comment_replies.json` |
+| Placas de servicio: cronograma de pagos de Hacienda y sismos sentidos en La Rioja (INPRES) | post IG + FB (1080×1350) y su historia | pagos: el día anterior (desde que Hacienda lo publica) o la mañana del pago, 7–22 h; sismos: magnitud ≥ 3,0 de las últimas 12 h, 7–23 h | `utils/service_posts.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` (`service_posts`) |
 | Reporte cada 3 días + vigilante | correo | tareas `LaVozRiojana-Report` (9 h cada 3 días) y `LaVozRiojana-Watchdog` (15 min) | `utils/ops_report.py`, `utils/mailer.py`, `cli.py report/watchdog` | `data/ops_report_state.json` |
 
 ## Diseño (Remotion, `remotion/src/v2/social/`)
@@ -64,6 +65,13 @@ imagen OG del sitio ya trae el titular escrito.
 | Dólar | `dolarapi.com/v1/dolares` (oficial, blue, MEP, CCL) |
 | Feriados | JSON oficial `argentina.gob.ar/sites/default/files/holidays-<año>-es.json` (se excluyen los "especiales" de otras provincias) |
 | Cortes y rutas | notas propias del archivo editorial (`classify_notice`) |
+| Cronograma de pagos | `hacienda.larioja.gob.ar/wp-json/wp/v2/posts`: posts "QUINCENA/HABERES <MES> – <DÍA> dd/mm" con la lista de organismos (por banco si la separa) |
+| Sismos sentidos | `contenidos.inpres.gob.ar/mapa/sentidos.xml` (sólo HTTP): últimos 50 sentidos; entran los sentidos en una localidad riojana o con epicentro en La Rioja |
+
+Las placas de servicio salen como post y como historia con el mismo
+contenido (`ServiceCardV2` y `StoryV2` kinds `payments`/`quake`, piezas en
+`remotion/src/v2/social/ServicePieces.tsx`). La historia de servicio cubre la
+historia automática del post ("Nueva publicación"), que no se duplica.
 
 Una alerta del SMN que menciona La Rioja pero cuyo formato no se reconoce no
 se publica: queda en `logs/social_formats.log` y en el reporte.
@@ -84,7 +92,8 @@ Configuración del correo en `.env` (nunca en el repo):
 
 Apagar el interruptor del formato en `scripts/start_24x7_production.ps1`
 (`IG_STORIES_ENABLED`, `FB_STORIES_ENABLED`, `MORNING_BRIEF_ENABLED`,
-`WEEKLY_RECAP_ENABLED`, `STORY_UPDATES_ENABLED`, `COMMENT_REPLIES_MODE=off`, o
+`WEEKLY_RECAP_ENABLED`, `STORY_UPDATES_ENABLED`, `PAYMENT_POSTS_ENABLED`,
+`QUAKE_POSTS_ENABLED`, `COMMENT_REPLIES_MODE=off`, o
 `SOCIAL_FORMATS_INSTAGRAM_ENABLED`/`SOCIAL_FORMATS_FACEBOOK_ENABLED`) y
 reiniciar el supervisor. Las tareas de reporte y vigilante se quitan con
 `schtasks /delete /tn LaVozRiojana-Report` y `LaVozRiojana-Watchdog`.

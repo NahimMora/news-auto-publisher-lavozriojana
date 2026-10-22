@@ -1131,6 +1131,25 @@ def post_story_image(image_url: str) -> OperationResult:
     return published
 
 
+def post_single_image(image_url: str, caption: str) -> OperationResult:
+    """Post de una imagen ya hosteada con su caption (placas de servicio)."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not _is_http_url(image_url):
+        return OperationResult(StageStatus.FAILED, error_type="missing_public_image")
+    created = _create_container({"image_url": image_url, "caption": caption, "access_token": IG_ACCESS_TOKEN})
+    if not created.ok:
+        return created
+    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
+    if delay > 0:
+        time.sleep(delay)
+    published = _publish_container(created.external_id)
+    if published.ok:
+        logger.info("Placa publicada en Instagram: %s", published.external_id)
+    return published
+
+
 def post_image_carousel(image_urls: list[str], caption: str) -> OperationResult:
     """Carrusel de 2 a 10 imágenes ya hosteadas (carrusel de la mañana)."""
     blocked = _guard()

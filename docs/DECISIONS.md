@@ -2449,3 +2449,40 @@ programa (toma de la ciudad) antes de la entrevista.
 inicio del clip; bajo volumen esperado (≈1–3 por semana en policiales/interior).
 
 **Rollback**: `LOCAL_VIDEO_REEL_ENABLED = "false"` en el script de arranque.
+
+## 2026-10-22 — MPF y Función Judicial a redes; placas de Hacienda e INPRES
+
+**Contexto**: relevamiento de fuentes oficiales para redes. MPF y Función Judicial
+estaban en el Source Registry sólo como contexto editorial. Hacienda publica el
+cronograma de pagos a estatales; INPRES, los sismos sentidos.
+
+**Decisión del operador**:
+
+- **MPF y Función Judicial** entran como policiales automáticas
+  (`main_judiciales.py`, `SCRAPER_JUDICIALES_ENABLED`). La información es oficial
+  y verificada: no se suaviza, pero tampoco se publica el comunicado crudo.
+  Requisitos: puntaje alto y nada repetido. Una sola llamada a Gemini antes de la
+  reescritura devuelve puntaje 0–10 y "mismo caso" contra hasta 80 títulos
+  locales encolados en 72 h (sin deportes, espectáculos ni cultura). Pasa con
+  `JUDICIAL_MIN_SCORE` (7); sin respuesta se reintenta (`fail` retryable).
+  `JUDICIAL_RULES` en título, nota Web y caption: estado procesal exacto, sin
+  condicionales que la fuente no usa, sin agregar datos que identifiquen a la
+  víctima y sin datos de víctimas menores.
+- QA real del 22/10 (18 notas): institucionales (campamento forense, pasantías,
+  congreso, disertación) 1–2 puntos; casos 8–10. Detectó como mismo caso dos ya
+  cubiertas por Nueva Rioja y el de violencia de género que publicaron MPF (con
+  iniciales) y Función Judicial (con nombre).
+- **Placas de servicio** como post (`ServiceCardV2`, 1080×1350) + historia
+  (`StoryV2` `payments`/`quake`), formato fijo sin IA: pagos de Hacienda el día
+  anterior o la mañana del pago; sismos sentidos en La Rioja con magnitud ≥ 3,0
+  (4 de 5 en las 6 semanas previas). La historia de servicio cubre la historia
+  automática del post.
+
+**Verificado y descartado**: EDELaR no publica cortes programados (autogestión
+detrás de captcha de Cloudflare, sin RSS ni API); Municipalidad de Chilecito sin
+sitio oficial que responda. No se suman Municipalidad de La Rioja (web vacía),
+Aguas Riojanas (sin avisos), Concejo Deliberante (última nota 28/08), Salud (en
+mantenimiento), UNLaR (bloquea lectores) ni buses (directorios fijos).
+
+**Rollback**: `SCRAPER_JUDICIALES_ENABLED = "0"`, `PAYMENT_POSTS_ENABLED = "false"`,
+`QUAKE_POSTS_ENABLED = "false"` en el script de arranque.

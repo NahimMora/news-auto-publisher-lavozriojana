@@ -11,6 +11,8 @@
 //   dollar    cotizaciones del día.
 //   notice    aviso de servicio (corte de luz/agua, rutas) tomado de una nota.
 //   holidays  próximos feriados.
+//   payments  cronograma de pagos de Hacienda (ver ServicePieces.tsx).
+//   quake     sismo sentido en La Rioja (INPRES).
 //
 // Todos los textos llegan armados desde Python (fuentes verificables); la
 // composición sólo los dispone. Nada se inventa ni se completa acá.
@@ -21,13 +23,14 @@ import { fit } from "../fit";
 import { useV2FontsReady } from "../fonts";
 import { C, V2_FONT_SERIF, rgba } from "../tokens";
 import { FieldBackdrop, PhotoBackdrop, STORY, SourceLine, StoryCta, StoryMasthead, Tab, caps, display, serif } from "./chrome";
+import { PaymentsBlock, QuakeBlock, ServicePiecesSchema } from "./ServicePieces";
 
 const WeatherDay = z.object({ label: z.string(), max: z.number(), min: z.number(), rain: z.number().default(0) });
 const DollarRow = z.object({ name: z.string(), buy: z.string().default(""), sell: z.string(), delta: z.number().default(0) });
 const Holiday = z.object({ day: z.string(), month: z.string(), weekday: z.string(), name: z.string(), kind: z.string().default("") });
 
 export const StoryV2Schema = z.object({
-  kind: z.enum(["post", "breaking", "reel", "update", "weather", "alert", "dollar", "notice", "holidays"]),
+  kind: z.enum(["post", "breaking", "reel", "update", "weather", "alert", "dollar", "notice", "holidays", "payments", "quake"]),
   assetFile: z.string().default(""),
   assetWidth: z.number().default(0),
   assetHeight: z.number().default(0),
@@ -57,6 +60,8 @@ export const StoryV2Schema = z.object({
   // holidays
   holidays: z.array(Holiday).default([]),
   countdown: z.string().default(""),
+  // payments / quake
+  ...ServicePiecesSchema,
 });
 
 export type StoryV2Props = z.infer<typeof StoryV2Schema>;
@@ -419,6 +424,41 @@ const HolidaysStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
   );
 };
 
+// ── Cronograma de pagos ─────────────────────────────────────────────────
+const PaymentsStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
+  const ink = C.paperInk;
+  return (
+    <AbsoluteFill>
+      <AbsoluteFill style={{ backgroundColor: C.paper }} />
+      <StoryMasthead color={ink} tab={<Tab label="Cronograma de pagos" fill={C.red} />} rule={rgba(ink, 0.18)} />
+      <div style={{ position: "absolute", left: M, top: 430 }}>
+        <PaymentsBlock headline={props.headline} subhead={props.subhead} groups={props.groups} width={W} height={1130} ink={ink} mute={C.paperMute} />
+      </div>
+      <SourceLine left={props.sourceLabel || "Fuente: Ministerio de Hacienda de La Rioja"} color={ink} />
+    </AbsoluteFill>
+  );
+};
+
+// ── Sismo sentido ───────────────────────────────────────────────────────
+const QuakeStory: React.FC<{ props: StoryV2Props }> = ({ props }) => (
+  <AbsoluteFill>
+    <FieldBackdrop from="#3a2400" to={C.ink} dots={rgba("#F2A900", 0.1)} />
+    <StoryMasthead tab={<Tab label="Sismo" fill="#F2A900" color={C.ink} />} />
+    <div style={{ position: "absolute", left: M, top: 440 }}>
+      <QuakeBlock
+        magnitude={props.magnitude}
+        headline={props.headline}
+        timeLabel={props.timeLabel}
+        epicenter={props.epicenter}
+        depth={props.depth}
+        felt={props.felt}
+        width={W}
+      />
+    </div>
+    <SourceLine left={props.sourceLabel || "Fuente: INPRES"} />
+  </AbsoluteFill>
+);
+
 export const StoryV2: React.FC<StoryV2Props> = (props) => {
   const ready = useV2FontsReady();
   if (!ready) return <AbsoluteFill style={{ backgroundColor: C.ink }} />;
@@ -441,6 +481,10 @@ export const StoryV2: React.FC<StoryV2Props> = (props) => {
       return <NoticeStory props={props} />;
     case "holidays":
       return <HolidaysStory props={props} />;
+    case "payments":
+      return <PaymentsStory props={props} />;
+    case "quake":
+      return <QuakeStory props={props} />;
     default:
       return <AbsoluteFill style={{ backgroundColor: C.ink }} />;
   }

@@ -72,6 +72,13 @@ tipo GovServ/FindGlocal (prohibidos explícitamente por el plan).
 en `/feed/` (10 items, `pubDate` real). Elegido por ser la opción A del
 orden de preferencia (más barato/estable). Sin alternativas necesarias.
 
+**Publicación en redes (2026-10-22)**: además del contexto editorial, MPF y
+Función Judicial alimentan policiales por `main_judiciales.py` (fuente
+`judicial_mpf` / `judicial_justicia`, ver `docs/DECISIONS.md`). El RSS de la
+Función Judicial pone la URL de la categoría en `<link>`: la de cada nota está
+en `<guid>`. Hacienda alimenta además la placa de cronograma de pagos
+(`utils/service_posts.py`).
+
 **`justicia_larioja`** — Función Judicial. Sitio Joomla: el `/feed/`
 genérico da 404; el feed real vive en la categoría de noticias
 (`?format=feed&type=rss`, confirmado con 9 items). El plan original decía
