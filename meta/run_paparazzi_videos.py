@@ -1,4 +1,4 @@
-"""Etapa estructurada: notas con video (paparazzi, Infobae) publicadas como Reel.
+"""Etapa estructurada: notas con video (paparazzi, Infobae, locales) publicadas como Reel.
 
 Ver ``utils/paparazzi_video_jobs.py``. El Reel sale siempre con la plantilla
 EditorialReel, sin puntaje editorial y fuera de los cupos del lote; si no se
@@ -60,9 +60,16 @@ def _record_evidence(job_id: str, noticia: dict, *, ig_id: str, fb_id: str) -> N
 
 
 def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
-    """Devuelve ``completed``, ``failed`` o ``deferred``."""
-    pv.transition(job_id, status="processing", attempts=int(job.get("attempts") or 0))
+    """Devuelve ``completed``, ``failed``, ``deferred`` o ``skipped``."""
     noticia = dict(job.get("noticia") or {})
+    # Reel local: sólo Instagram (Facebook ya publica la nota con link a la Web).
+    channels = noticia.get("reel_channels")
+    if channels:
+        instagram = instagram and "instagram" in channels
+        facebook = facebook and "facebook" in channels
+    if not instagram and not facebook:
+        return "skipped"
+    pv.transition(job_id, status="processing", attempts=int(job.get("attempts") or 0))
 
     rendered = render_reel_item(noticia)
     if rendered is None:
@@ -163,6 +170,9 @@ def main() -> StageResult:
             next_retry_at = until
             break
         outcome = _process(job_id, job, instagram=instagram, facebook=facebook)
+        if outcome == "skipped":
+            deferred += 1
+            continue
         processed += 1
         if outcome == "completed":
             succeeded += 1

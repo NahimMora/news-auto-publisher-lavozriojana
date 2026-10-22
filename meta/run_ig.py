@@ -22,6 +22,7 @@ from utils.editorial_priority import item_category, item_is_breaking, item_sourc
 from utils.editorial_router import manual_automatic_candidates
 from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
+from utils.paparazzi_video_jobs import local_reel_expected
 from utils.paths import data_dir
 from utils.social_queue import (
     claim,
@@ -316,6 +317,8 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
     # procesan varios minutos cada una). El resto queda para la próxima
     # corrida, no se pierde.
     manual_override_budget = int(os.getenv("IG_MANUAL_OVERRIDE_MAX_PER_RUN", "3"))
+    # Local con YouTube incrustado: sale como Reel desde run_paparazzi_videos.
+    reel_expected = local_reel_expected()
     seen_meta_identities: set[str] = set()
     for noticia in noticias:
         seen_meta_identities.update(_item_identities(noticia) & manual_identities)
@@ -336,6 +339,9 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
             omitted_by_policy += 1
             continue
         if not manual_override and _is_suppressed(noticia):
+            omitted_by_policy += 1
+            continue
+        if not manual_override and reel_expected(noticia):
             omitted_by_policy += 1
             continue
         if not manual_override and not _local_allowed_by_category(noticia):

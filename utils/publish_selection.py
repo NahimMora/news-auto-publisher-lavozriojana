@@ -39,6 +39,10 @@ Filtros editoriales (apagados por defecto, ver docs/DECISIONS.md 2026-10-16):
   cupo (con video o con relevancia baja incluidas). Las que no corresponden a
   redes quedan marcadas con ``social_skip_reason`` (``policy_*``) y Facebook e
   Instagram no las encolan; el cupo de paparazzi pasa a ser sólo el de redes.
+- ``LOCAL_VIDEO_REEL_ENABLED``: la nota local seleccionada de
+  ``LOCAL_VIDEO_REEL_CATEGORIES`` (default ``policiales,interior``) que trae un
+  YouTube incrustado (``video_embed_url``) sale en Instagram como Reel desde
+  ``meta/run_paparazzi_videos.py`` en vez de imagen. Web y Facebook no cambian.
 - ``PUBLISH_INTERNATIONAL_BUCKET_ENABLED``: las internacionales dejan de
   competir como locales y tienen su balde propio
   (``PUBLISH_INTERNATIONAL_MAX_PER_RUN``), sólo con
@@ -112,9 +116,18 @@ def infobae_video_only_enabled() -> bool:
     return _flag("INFOBAE_VIDEO_ONLY_ENABLED")
 
 
+def local_video_reel_enabled() -> bool:
+    return _flag("LOCAL_VIDEO_REEL_ENABLED")
+
+
+def _local_video_reel_categories() -> set[str]:
+    raw = os.getenv("LOCAL_VIDEO_REEL_CATEGORIES", "policiales,interior")
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
 def video_reels_enabled() -> bool:
-    """Alguna fuente publica sus notas con video sólo como Reel."""
-    return paparazzi_video_only_enabled() or infobae_video_only_enabled()
+    """Alguna fuente publica sus notas con video como Reel."""
+    return paparazzi_video_only_enabled() or infobae_video_only_enabled() or local_video_reel_enabled()
 
 
 def _paparazzi_web_all_enabled() -> bool:
@@ -186,6 +199,23 @@ def is_video_only_infobae(item: dict) -> bool:
 def is_reel_only_item(item: dict) -> bool:
     """Nota con video que en redes se publica sólo como Reel EditorialReel."""
     return is_video_only_paparazzi(item) or is_video_only_infobae(item)
+
+
+def is_local_video_reel_item(item: dict) -> bool:
+    """Nota local seleccionada con YouTube incrustado: en Instagram va como Reel.
+
+    A diferencia de paparazzi/Infobae, Facebook sigue con su post con link a la
+    Web; el Reel es sólo para Instagram (ver ``utils/paparazzi_video_jobs.py``).
+    """
+    return (
+        local_video_reel_enabled()
+        and bool(str(item.get("video_embed_url") or "").strip())
+        and bool(item.get("selected_for_publish"))
+        and not item.get("social_skip_reason")
+        and _is_local(item)
+        and "internacional" not in item_source(item)
+        and item_category(item) in _local_video_reel_categories()
+    )
 
 
 def _is_international_bucket(item: dict) -> bool:

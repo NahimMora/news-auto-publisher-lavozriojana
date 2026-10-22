@@ -34,6 +34,14 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   nacionales quedan en el histórico como `fenix_sin_vinculo_riojano`. Una nota
   publicada como "NOTA EN REDACCIÓN" se difiere (`article_in_progress`, sin falla ni
   histórico) y se reintenta en el ciclo siguiente.
+- Reels locales (2026-10-22, `LOCAL_VIDEO_REEL_ENABLED`, apagado por defecto y
+  activo en producción): Tiempo Popular, Nueva Rioja y Fénix guardan el primer
+  YouTube del cuerpo (`video_embed_url`, `video_embed_author`). Si la nota
+  seleccionada es de `LOCAL_VIDEO_REEL_CATEGORIES` (policiales, interior), en
+  Instagram sale como Reel EditorialReel desde `meta/run_paparazzi_videos.py`, con
+  "Video: <canal>" en pantalla y en el caption, fuera del tope diario y del cupo
+  por ciclo. Web y Facebook (post con link) no cambian. Si el Reel queda en
+  `dead_letter`/`expired`, `run_ig` la publica como imagen.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y

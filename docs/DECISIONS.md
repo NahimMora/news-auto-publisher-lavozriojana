@@ -2411,3 +2411,41 @@ eran casi todas nacionales.
 del ciclo.
 
 **Rollback**: `SCRAPER_FENIX_ENABLED = "0"` en el script de arranque.
+
+## 2026-10-22 — Reel en Instagram para locales con YouTube incrustado
+
+**Contexto**: relevamiento del 22/10 sobre 181 notas actuales: 8 de Tiempo Popular
+traen YouTube en el cuerpo (todas del canal Medios Provincia: recortes de 3–13 min
+de entrevistas de sus programas en vivo), 2 de Nueva Rioja (ninguna local) y 0 de
+Fénix. En policiales, 1 de 55. Son entrevistas en estudio, horizontales y con la
+marca del canal, no imágenes del hecho. El operador decidió igual publicarlas como
+Reel y priorizarlas en Instagram, para policiales e interior.
+
+**Decisión del operador**:
+
+- Los scrapers locales guardan `video_embed_url` (YouTube, primer iframe del cuerpo)
+  y `video_embed_author` (canal, vía oEmbed). Campos nuevos y opcionales en las
+  colas; no se usa `video_url` para no cambiar lo que recibe la Web.
+- `LOCAL_VIDEO_REEL_ENABLED` + `LOCAL_VIDEO_REEL_CATEGORIES=policiales,interior`:
+  la nota local seleccionada con video entra como job de
+  `paparazzi_video_jobs.json` con `reel_channels=["instagram"]`. Facebook mantiene
+  su post con link a la Web. Como todo Reel, no cuenta para `IG_MAX_PER_RUN` ni
+  `IG_LOCAL_DAILY_MAX`.
+- `run_ig` corre antes que la etapa de Reels: no encola la imagen mientras se
+  espere el Reel (`local_reel_expected`) y la retoma si el job queda en
+  `dead_letter` o `expired`. El dedup de Instagram por clave sigue evitando el
+  doble posteo.
+- Crédito: "Video: <canal>" en pantalla y "🎥 Video: <canal>" al final del caption.
+- `yt-dlp` sumó `bv*[ext=mp4][height<=1080]+ba[ext=m4a]` y
+  `--merge-output-format mp4`: YouTube ya no ofrece MP4 con audio y video juntos
+  (el selector anterior fallaba con "Requested format is not available"). El
+  primer formato no cambia, así que X y el resto siguen igual.
+
+**QA visual**: Reel real de Sanagasta renderizado en local (sin R2 ni publicación):
+1080×1920, 90 s, 20,5 MB, ~3 min de render. Los primeros ~20 s son la cortina del
+programa (toma de la ciudad) antes de la entrevista.
+
+**Riesgos**: contenido de un tercero con su marca en pantalla; recorte desde el
+inicio del clip; bajo volumen esperado (≈1–3 por semana en policiales/interior).
+
+**Rollback**: `LOCAL_VIDEO_REEL_ENABLED = "false"` en el script de arranque.

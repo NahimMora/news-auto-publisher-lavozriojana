@@ -24,6 +24,7 @@ from utils.scraper_contract import (
     request_error_details,
 )
 from utils.stage_result import StageStatus
+from scraping.video_embeds import youtube_embed
 from utils.url_normalization import url_hash
 
 BASE_SITE = "https://www.fenix951.com.ar"
@@ -171,6 +172,7 @@ def scrap_noticia_result(url: str) -> ArticleScrapeResult:
         "imagen_optimizada": imagen_optimizada,
         "fecha": _extract_date(soup, heading),
         "source": SOURCE_NAME,
+        **youtube_embed(soup.select_one("div.cuerpo")),
     }
     warnings = []
     if imagen_url and not imagen_optimizada:

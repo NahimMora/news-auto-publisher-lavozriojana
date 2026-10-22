@@ -340,7 +340,12 @@ def _download_ytdlp(url: str, dest: str) -> OperationResult:
         validate_public_http_url(url)
         max_size = str(os.getenv("VIDEO_DOWNLOAD_MAX_BYTES", str(250 * 1024 * 1024)))
         cmd = [
-            "yt-dlp", "-f", "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
+            # YouTube ya no ofrece MP4 con audio y video juntos por encima de
+            # 360p (a veces ninguno): se unen las pistas con ffmpeg. yt-dlp
+            # elige la pista de audio original, no las dobladas automáticamente.
+            "yt-dlp", "-f",
+            "best[ext=mp4][height<=1080]/bv*[ext=mp4][height<=1080]+ba[ext=m4a]/best[ext=mp4]/best",
+            "--merge-output-format", "mp4",
             "-o", dest, "--no-playlist", "--no-warnings", "--ignore-config",
             "--max-filesize", max_size,
         ]

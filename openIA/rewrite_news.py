@@ -78,6 +78,8 @@ META_FIELDS = (
     "imagen_url",
     "video_url",
     "video_duration_seconds",
+    "video_embed_url",
+    "video_embed_author",
     "fecha",
     "source",
     "hashtag_localidad",

@@ -100,7 +100,8 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         # y crédito verificable del video.
         "titulo_display": titulo_display,
         "reel_deck": reel_deck_from_caption(caption),
-        "reel_credit": reel_credit(str(origin_url)),
+        "reel_credit": reel_credit(str(origin_url))
+        or (f"Video: {noticia['video_credit']}" if noticia.get("video_credit") else ""),
         "caption": caption,
         "seccion": seccion,
         "duration_seconds": int(os.getenv("PAPARAZZI_REEL_FALLBACK_DURATION_SECONDS", "20")),

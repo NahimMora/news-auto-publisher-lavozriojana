@@ -1,4 +1,4 @@
-"""Notas con video (paparazzi, Infobae) publicadas en redes sólo como Reel.
+"""Notas con video (paparazzi, Infobae, locales) publicadas en redes como Reel.
 
 Con ``PAPARAZZI_VIDEO_ONLY_ENABLED`` / ``INFOBAE_VIDEO_ONLY_ENABLED`` la nota
 que trae video no sale en Facebook ni Instagram como imagen ni con link (ver
@@ -8,6 +8,11 @@ que trae video no sale en Facebook ni Instagram como imagen ni con link (ver
 ``data/paparazzi_video_jobs.json``; ``meta/run_paparazzi_videos.py`` la
 publica como Reel EditorialReel en Instagram y Facebook, sin puntaje editorial
 y fuera de todo cupo del lote.
+
+Las locales de policiales/interior con YouTube incrustado
+(``is_local_video_reel_item``) van como Reel sólo a Instagram: Facebook sigue
+con su post con link. ``run_ig`` no las publica como imagen mientras se espere
+el Reel (``local_reel_expected``) y las retoma si el Reel falla o vence.
 
 Flujo propio y separado (mismo patrón que ``utils/x_video_reels.py``): sólo
 comparte con el resto el backoff de rate limit de Meta y el dedup de reels
@@ -22,7 +27,7 @@ from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import reel_dedup_key
 from utils.paths import data_dir
-from utils.publish_selection import is_reel_only_item
+from utils.publish_selection import is_local_video_reel_item, is_reel_only_item, local_video_reel_enabled
 from utils.social_queue import bootstrap_not_before
 
 logger = setup_logger("paparazzi_video_jobs", "paparazzi_video_jobs.log")
@@ -46,7 +51,11 @@ _SNAPSHOT_FIELDS = (
     "video_url",
     "video_duration_seconds",
     "paparazzi_relevance_score",
+    "reel_channels",
+    "video_credit",
 )
+
+_GIVEN_UP = {"dead_letter", "expired"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -63,6 +72,47 @@ def _queued_at(noticia: dict) -> int | None:
     return int(value)
 
 
+def _cutoff(current: int) -> int:
+    return max(bootstrap_not_before(), current - _env_int("PAPARAZZI_VIDEO_MAX_AGE_HOURS", 24) * 3600)
+
+
+def _local_reel_fields(noticia: dict) -> dict:
+    """Reel local: el YouTube incrustado como fuente, sólo Instagram y con crédito."""
+    fields: dict = {"video_url": str(noticia["video_embed_url"]).strip(), "reel_channels": ["instagram"]}
+    author = str(noticia.get("video_embed_author") or "").strip()
+    if author:
+        fields["video_credit"] = author
+        caption = str(noticia.get("texto_instagram") or "").rstrip()
+        if caption:
+            fields["texto_instagram"] = f"{caption}\n\n🎥 Video: {author}"
+    return fields
+
+
+def local_reel_expected(*, now: float | None = None):
+    """Devuelve ``expected(noticia)``: True si esa nota local va a salir como Reel.
+
+    Lo usa ``run_ig`` (que corre antes que esta etapa) para no publicar la misma
+    nota también como imagen. False si el Reel ya falló o venció, o si la nota es
+    demasiado vieja para entrar como job: en ese caso sale como imagen.
+    """
+    if not local_video_reel_enabled():
+        return lambda _noticia: False
+    current = int(time.time() if now is None else now)
+    cutoff = _cutoff(current)
+    jobs = load_json(STATE_PATH, {"jobs": {}}, expected_type=dict).get("jobs") or {}
+
+    def expected(noticia: dict) -> bool:
+        if not is_local_video_reel_item(noticia):
+            return False
+        job = jobs.get(reel_dedup_key(noticia))
+        if job is not None:
+            return job.get("status") not in _GIVEN_UP
+        queued = _queued_at(noticia)
+        return queued is not None and queued >= cutoff
+
+    return expected
+
+
 def ingest(*, now: float | None = None) -> dict[str, int]:
     """Registra como ``pending`` las notas con video recientes (sólo Reel).
 
@@ -71,13 +121,16 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
     ``PAPARAZZI_VIDEO_MAX_AGE_HOURS`` (default 24): nunca se publica un video viejo.
     """
     current = int(time.time() if now is None else now)
-    cutoff = max(bootstrap_not_before(), current - _env_int("PAPARAZZI_VIDEO_MAX_AGE_HOURS", 24) * 3600)
+    cutoff = _cutoff(current)
     noticias = load_json(META_INPUT, [], expected_type=list)
     posted = load_json(REELS_POSTED_PATH, {"posted": {}}, expected_type=dict).get("posted") or {}
 
     candidates: list[tuple[str, dict]] = []
     for noticia in noticias:
-        if not isinstance(noticia, dict) or not is_reel_only_item(noticia):
+        if not isinstance(noticia, dict):
+            continue
+        local = is_local_video_reel_item(noticia)
+        if not local and not is_reel_only_item(noticia):
             continue
         queued = _queued_at(noticia)
         if queued is None or queued < cutoff:
@@ -86,6 +139,8 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
         if key in posted:
             continue
         snapshot = {field: noticia[field] for field in _SNAPSHOT_FIELDS if noticia.get(field) not in (None, "")}
+        if local:
+            snapshot.update(_local_reel_fields(noticia))
         candidates.append((key, {"noticia": snapshot, "queued_at": queued}))
 
     counts = {"new": 0}
