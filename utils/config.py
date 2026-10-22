@@ -432,6 +432,7 @@ def validate_config(
         ("SCRAPER_NR_DEPORTES_ENABLED", "true"),
         ("SCRAPER_NR_INTERIOR_ENABLED", "true"),
         ("SCRAPER_NR_INTERNACIONALES_ENABLED", "true"),
+        ("SCRAPER_FENIX_ENABLED", "false"),
         ("ALERTS_ENABLED", "false"),
         ("ALERT_RECOVERY_ENABLED", "true"),
         ("CANARY_ENABLED", "false"),

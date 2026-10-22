@@ -58,6 +58,7 @@ SOURCE_SECTIONS = {
     "nuevarioja_deportes": "https://nuevarioja.com.ar/deportes",
     "nuevarioja_interior": "https://nuevarioja.com.ar/interior",
     "nuevarioja_internacionales": "https://nuevarioja.com.ar/internacionales",
+    "fenix_locales": "https://www.fenix951.com.ar/categoria.php?id=1",
     "paparazzi": "https://www.paparazzi.com.ar/",
 }
 

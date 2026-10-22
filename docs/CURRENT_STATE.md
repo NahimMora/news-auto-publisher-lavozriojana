@@ -28,6 +28,12 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   momento/policiales/sociedad, interior como relleno con el cupo libre del ciclo
   (`IG_LOCAL_FILL_CATEGORIES`) y máximo 30 por día (desde 2026-10-22); Facebook sin cambios. Deportes
   sigue excluido.
+- Fénix 95.1 (2026-10-22): `main_fenix.py` lee la sección Locales de
+  fenix951.com.ar (`SCRAPER_FENIX_ENABLED`, apagado por defecto, activo en
+  producción). Sólo entran notas con vínculo riojano en título/copete/cuerpo; las
+  nacionales quedan en el histórico como `fenix_sin_vinculo_riojano`. Una nota
+  publicada como "NOTA EN REDACCIÓN" se difiere (`article_in_progress`, sin falla ni
+  histórico) y se reintenta en el ciclo siguiente.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y

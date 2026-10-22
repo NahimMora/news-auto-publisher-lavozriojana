@@ -33,6 +33,8 @@ FILES = {
     "noticias_ejecutadas_nuevarioja_deportes.json": [],
     "noticias_ejecutadas_nuevarioja_interior.json": [],
     "noticias_ejecutadas_nuevarioja_internacionales.json": [],
+    "noticias_ejecutadas_fenix.json": [],
+    "noticias_norewrite_fenix.json": [],
     "noticias_meta.json": [],
     "noticias_web_pending.json": [],
     "noticias_sociales_pendientes.json": [],

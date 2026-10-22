@@ -695,6 +695,8 @@ RIOJAN_SOURCE_SECTIONS = {
     "tiempopopular_interior",
     "nuevarioja_policiales",
     "nuevarioja_interior",
+    # Fénix sólo deja pasar notas con vínculo riojano (main_fenix._discard).
+    "fenix_locales",
 }
 
 

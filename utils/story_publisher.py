@@ -217,7 +217,7 @@ def _classify(result) -> str:
 
 
 # ── Historias de publicaciones de Instagram ──────────────────────────────
-_LOCAL_SOURCES = ("nuevarioja", "tiempopopular")
+_LOCAL_SOURCES = ("nuevarioja", "tiempopopular", "fenix")
 
 
 def _fold(text: str) -> str:

@@ -50,6 +50,7 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_interior.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_fenix.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
     # Infobae policiales: el scraper escribía desde 2026-08 pero nunca se leía
     # (KNOWN_ISSUES 95). Lo atrasado cae por ARTICLE_MAX_AGE_DAYS antes de la IA.

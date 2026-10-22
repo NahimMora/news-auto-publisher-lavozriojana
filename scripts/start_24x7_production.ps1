@@ -91,6 +91,8 @@ $env:PUBLISH_INTERNATIONAL_MAX_PER_RUN = "1"
 $env:IG_LOCAL_CATEGORIES = "policiales,sociedad"
 $env:IG_LOCAL_FILL_CATEGORIES = "interior"
 $env:IG_LOCAL_DAILY_MAX = "30"
+# Fénix 95.1 (Locales): sólo notas con vínculo riojano. Ver docs/DECISIONS.md 2026-10-22.
+$env:SCRAPER_FENIX_ENABLED = "1"
 $env:CANARY_ENABLED = "false"
 $env:ALERTS_ENABLED = "true"
 $env:ALERT_WEBHOOK_URL = ""

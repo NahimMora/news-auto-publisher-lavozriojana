@@ -47,6 +47,8 @@ CATEGORY_NAMES = {
 _SOURCE_LABELS = {
     "tiempopopular": "Tiempo Popular",
     "tiempopopular.com.ar": "Tiempo Popular",
+    "fenix": "Fénix 95.1",
+    "fenix951.com.ar": "Fénix 95.1",
 }
 
 _CATEGORY_TAGS = {

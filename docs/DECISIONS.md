@@ -2382,3 +2382,32 @@ policiales, ~2 sociedad y ~4 interior por día.
 
 **Rollback**: `IG_LOCAL_DAILY_MAX=12` y `IG_LOCAL_FILL_CATEGORIES=""` en
 `scripts/start_24x7_production.ps1`.
+
+## 2026-10-22 — Fénix 95.1 como tercer medio local
+
+**Contexto**: el operador pidió evaluar fenix951.com.ar. Contra lo scrapeado de
+Tiempo Popular y Nueva Rioja el 22/10, Fénix tenía policiales riojanas propias que
+no estaban en ninguno de los dos (incendio cerca de la UNLaR, muerte por
+quemaduras en Villa Castelli, choque de motos en Gardel y Capitán Giachino,
+detenido en Catamarca buscado por la Justicia riojana). Las coincidencias reales
+eran casi todas nacionales.
+
+**Decisión del operador**: sumar `main_fenix.py` (sección Locales,
+`categoria.php?id=1`) con `SCRAPER_FENIX_ENABLED`, apagado por defecto y activo en
+`scripts/start_24x7_production.ps1`. Fuente `fenix_locales`, sección `locales`.
+
+- "Locales" de Fénix mezcla entrevistas de temas nacionales: entra sólo lo que
+  nombra una localidad o institución riojana (`RIOJAN_LOCALITY_TERMS` más
+  `FENIX_RIOJAN_TERMS`) en título, copete o cuerpo. La línea de fecha
+  ("… | La Rioja, Argentina | Fenix Multiplataforma") y los copetes de los menús
+  no cuentan. En la muestra del 22/10: 6 de 10 entran; Chaco, Córdoba, Diputados y
+  vivienda quedan afuera.
+- Al pasar ese filtro, se trata como medio riojano en hashtags, contexto editorial,
+  carrusel e historias (igual que Tiempo Popular y Nueva Rioja).
+- Las repetidas con los otros medios las frena el dedup por título existente.
+
+**Limitaciones**: cuerpos cortos (300–2.000 caracteres); sin RSS ni metadatos
+`og` salvo la imagen; el listado trae ~10 notas, así que depende de la frecuencia
+del ciclo.
+
+**Rollback**: `SCRAPER_FENIX_ENABLED = "0"` en el script de arranque.
