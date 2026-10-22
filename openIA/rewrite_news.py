@@ -23,12 +23,13 @@ from utils.file_manager import (
 from utils.category_performance import load_category_performance
 from utils.durable_queue import DurableQueue
 from utils.editorial_policy import evaluate_fallback_policy
-from utils.editorial_priority import priority_interleave
+from utils.editorial_priority import item_category, priority_interleave
 from utils.editorial_router import apply_routing
 from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
 from utils.logging_setup import setup_logger
 from utils.classifier import clasificar_con_resultado
+from utils.judicial_sources import JUDICIAL_RULES, assess_judicial, is_judicial, min_score as judicial_min_score
 from utils.paparazzi_relevance import score_international_impact, score_relevance
 from utils.paths import data_dir
 from utils.queue_events import record_queue_event
@@ -51,6 +52,7 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_fenix.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_judiciales.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
     # Infobae policiales: el scraper escribía desde 2026-08 pero nunca se leía
     # (KNOWN_ISSUES 95). Lo atrasado cae por ARTICLE_MAX_AGE_DAYS antes de la IA.
@@ -100,6 +102,7 @@ META_FIELDS = (
     "routed_at_ts",
     "paparazzi_relevance_score",
     "international_impact_score",
+    "judicial_relevance_score",
     # Escritos por otras etapas DESPUÉS de que la nota ya está en
     # noticias_meta.json (sync_meta_web_link tras publicar en Web,
     # select_publish_batch.py al armar el lote) — deben sobrevivir a
@@ -152,7 +155,7 @@ REGLAS:
 - Si la noticia tiene una localidad claramente identificable de La Rioja, agregar UN solo hashtag de localidad al final del título. Si hay varias localidades o no se menciona ninguna específica, NO agregar hashtag.
 - Hashtags disponibles: {hashtags}
 - NO agregar hashtags de categoría (Policiales, Locales, etc.)
-
+{reglas_fuente}
 FORMATO DE RESPUESTA (solo esto, sin explicaciones):
 TITULO: <título reescrito>
 HASHTAG: <#HashtagLocalidad o NINGUNO>
@@ -163,10 +166,11 @@ Texto: {texto}
 """
 
 
-def _call_gemini(titulo: str, parrafos: list[str]) -> tuple[str, str]:
+def _call_gemini(titulo: str, parrafos: list[str], reglas_fuente: str = "") -> tuple[str, str]:
     """Retorna (nuevo_titulo, hashtag). Lanza excepción si falla."""
     texto_resumen = " ".join(parrafos[:3])  # Primeros 3 párrafos como contexto
     prompt = PROMPT_TEMPLATE.format(
+        reglas_fuente=f"- {reglas_fuente}\n" if reglas_fuente else "",
         hashtags=", ".join(LOCALITY_HASHTAGS),
         titulo=titulo,
         texto=texto_resumen[:1500],
@@ -200,7 +204,9 @@ def rewrite_noticia(noticia: dict) -> dict:
     fallbacks_used: dict[str, bool] = {}
     for attempt in range(1, GEMINI_RETRY_COUNT + 1):
         try:
-            nuevo_titulo, hashtag = _call_gemini(titulo_original, parrafos)
+            nuevo_titulo, hashtag = _call_gemini(
+                titulo_original, parrafos, JUDICIAL_RULES if is_judicial(noticia) else ""
+            )
             noticia["titulo_original"] = titulo_original
             noticia["titulo"] = nuevo_titulo
             noticia["hashtag_localidad"] = hashtag
@@ -484,6 +490,55 @@ def _expiry_reason(noticia: dict) -> str:
     return f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d"
 
 
+_NON_LOCAL_SOURCE_MARKERS = ("paparazzi", "infobae", "internacional")
+# Nunca son el mismo caso que un comunicado judicial: no gastan contexto.
+_NON_JUDICIAL_CATEGORIES = {"deportes", "espectaculos", "cultura"}
+
+
+def _recent_local_titles(*, hours: int | None = None, limit: int = 80) -> list[str]:
+    """Títulos originales de notas locales encoladas en las últimas horas.
+
+    Contra estos se decide si una nota judicial es el mismo caso que ya cubrió
+    Tiempo Popular, Nueva Rioja, Fénix o la otra fuente judicial.
+    """
+    window = hours if hours is not None else int(os.getenv("JUDICIAL_DEDUP_HOURS", "72"))
+    cutoff = int(time.time()) - window * 3600
+    rows = []
+    for item in load_json(META_OUTPUT, [], expected_type=list):
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").lower()
+        queued = item.get("queued_at")
+        if any(marker in source for marker in _NON_LOCAL_SOURCE_MARKERS):
+            continue
+        if item_category(item) in _NON_JUDICIAL_CATEGORIES:
+            continue
+        if not isinstance(queued, (int, float)) or queued < cutoff:
+            continue
+        title = str(item.get("titulo_original") or item.get("titulo") or "").strip()
+        if title:
+            rows.append((queued, title))
+    rows.sort(reverse=True)
+    return [title for _queued, title in rows[:limit]]
+
+
+def _judicial_gate(noticia: dict) -> tuple[str, str]:
+    """``("pass", "")``, ``("drop", motivo)`` o ``("retry", motivo)``."""
+    assessment = assess_judicial(
+        str(noticia.get("titulo") or ""),
+        noticia.get("parrafos") or [],
+        _recent_local_titles(),
+    )
+    if assessment.score is None:
+        return "retry", f"judicial_score_unavailable:{assessment.error_type}"
+    noticia["judicial_relevance_score"] = assessment.score
+    if assessment.duplicate_of:
+        return "drop", f"duplicate_judicial_case:{assessment.duplicate_of[:80]}"
+    if assessment.score < judicial_min_score():
+        return "drop", f"judicial_low_score:{assessment.score}"
+    return "pass", ""
+
+
 def _find_early_duplicate(noticia: dict) -> str | None:
     """Duplicado cross-fuente detectado ANTES de pagar las llamadas de IA
     (reescritura, clasificación, caption, localidad).
@@ -625,6 +680,28 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             duplicates_avoided += 1
             succeeded += 1
             continue
+
+        if is_judicial(noticia):
+            action, reason = _judicial_gate(noticia)
+            if action == "retry":
+                destination = queue.fail(item_id, reason, retryable=True)
+                record_queue_event(
+                    stage="rewrite",
+                    status="failed" if destination == "pending" else "dead_letter",
+                    reason=reason,
+                    item=noticia,
+                )
+                failed += 1
+                if destination == "pending":
+                    deferred += 1
+                continue
+            if action == "drop":
+                queue.dead_letter(item_id, reason)
+                record_queue_event(stage="rewrite", status="dead_letter", reason=reason, item=noticia)
+                if reason.startswith("duplicate_"):
+                    duplicates_avoided += 1
+                succeeded += 1
+                continue
 
         original = copy.deepcopy(noticia)
         try:

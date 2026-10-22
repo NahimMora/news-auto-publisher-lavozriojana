@@ -154,7 +154,7 @@ def _caption_from_web(noticia: dict) -> str:
 
 # Medios riojanos: sus notas conservan las etiquetas locales aunque el
 # texto no nombre una localidad (salvo su sección internacional).
-_RIOJAN_SOURCE_PREFIXES = ("nuevarioja", "tiempopopular", "fenix")
+_RIOJAN_SOURCE_PREFIXES = ("nuevarioja", "tiempopopular", "fenix", "judicial_")
 
 
 def _has_riojan_link(noticia: dict) -> bool:

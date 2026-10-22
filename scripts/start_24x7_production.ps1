@@ -97,6 +97,9 @@ $env:SCRAPER_FENIX_ENABLED = "1"
 # (Facebook sigue con link). Ver docs/DECISIONS.md 2026-10-22.
 $env:LOCAL_VIDEO_REEL_ENABLED = "true"
 $env:LOCAL_VIDEO_REEL_CATEGORIES = "policiales,interior"
+# MPF y Función Judicial: sólo puntaje >= 7 y sin casos ya cubiertos en 72 h.
+$env:SCRAPER_JUDICIALES_ENABLED = "1"
+$env:JUDICIAL_MIN_SCORE = "7"
 $env:CANARY_ENABLED = "false"
 $env:ALERTS_ENABLED = "true"
 $env:ALERT_WEBHOOK_URL = ""

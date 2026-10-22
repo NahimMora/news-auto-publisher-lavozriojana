@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time
+from utils.judicial_sources import JUDICIAL_RULES, is_judicial
 from utils.logging_setup import setup_logger
 
 logger = setup_logger("caption_generator", "caption_generator.log")
@@ -178,6 +179,8 @@ def generate_caption(noticia: dict) -> dict:
 
     seccion       = noticia.get("seccion", "")
     system_prompt = _get_prompt(seccion)
+    if is_judicial(noticia):
+        system_prompt += "\nREGLA DE FUENTE: " + JUDICIAL_RULES
     texto_body    = " ".join(noticia.get("parrafos", [])[:4])[:2000]
     user_content  = (
         f"Titulo: {noticia.get('titulo', '')}\n"

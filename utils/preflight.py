@@ -59,6 +59,11 @@ SOURCE_SECTIONS = {
     "nuevarioja_interior": "https://nuevarioja.com.ar/interior",
     "nuevarioja_internacionales": "https://nuevarioja.com.ar/internacionales",
     "fenix_locales": "https://www.fenix951.com.ar/categoria.php?id=1",
+    "judicial_mpf": "https://www.mpflarioja.gob.ar/feed/",
+    "judicial_justicia": (
+        "https://www.justicialarioja.gob.ar/index.php/typography/"
+        "noticias-e-informacion-general?format=feed&type=rss"
+    ),
     "paparazzi": "https://www.paparazzi.com.ar/",
 }
 

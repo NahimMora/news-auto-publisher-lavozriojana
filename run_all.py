@@ -67,6 +67,7 @@ def main() -> StageResult:
         ("main_deportes.py", os.getenv("SCRAPER_DEPORTES_ENABLED", "1") == "1"),
         ("main_nuevarioja.py", os.getenv("SCRAPER_NUEVARIOJA_ENABLED", "1") == "1"),
         ("main_fenix.py", os.getenv("SCRAPER_FENIX_ENABLED", "0") == "1"),
+        ("main_judiciales.py", os.getenv("SCRAPER_JUDICIALES_ENABLED", "0") == "1"),
         ("main_paparazzi.py", os.getenv("SCRAPER_PAPARAZZI_ENABLED", "0") == "1"),
         ("main_infobae_policiales.py", os.getenv("SCRAPER_INFOBAE_POLICIALES_ENABLED", "0") == "1"),
         ("openIA/rewrite_news.py", True),

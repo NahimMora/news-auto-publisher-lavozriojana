@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
+from utils.judicial_sources import JUDICIAL_RULES, is_judicial
+
 from utils.logging_setup import setup_logger
 
 logger = setup_logger("node_webapp.editorial", "publish_web.log")
@@ -49,6 +51,8 @@ _SOURCE_LABELS = {
     "tiempopopular.com.ar": "Tiempo Popular",
     "fenix": "Fénix 95.1",
     "fenix951.com.ar": "Fénix 95.1",
+    "judicial_mpf": "Ministerio Público Fiscal de La Rioja",
+    "judicial_justicia": "Función Judicial de La Rioja",
 }
 
 _CATEGORY_TAGS = {
@@ -975,6 +979,9 @@ puntuales ya verificados (cifras, proximos pasos): podes citarlos tal cual
 estan si suman, nunca los reformules inventando numeros nuevos. No repitas
 subtitulos tecnicos como "CONTEXTO"/"IMPACTO"/"DATOS": si agregas una seccion
 de antecedente, dale un titulo editorial normal (por ejemplo "Antecedentes").
+
+Si el mensaje incluye "source_rules", son reglas de la fuente y tienen prioridad
+sobre el estilo general.
 """.strip()
 
 
@@ -1111,6 +1118,8 @@ def _call_ai_enricher(
         "url": noticia.get("canonical_url") or noticia.get("url") or "",
         "parrafos": get_original_paragraphs(noticia)[:12],
     }
+    if is_judicial(noticia):
+        user_payload["source_rules"] = JUDICIAL_RULES
     if feedback:
         user_payload["revision_feedback"] = feedback
     if previous_attempt:
