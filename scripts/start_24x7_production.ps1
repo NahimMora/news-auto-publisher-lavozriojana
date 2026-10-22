@@ -77,7 +77,8 @@ $env:VIDEO_STAGE_TIME_BUDGET_SECONDS = "480"
 # - paparazzi sin video: en redes sólo con relevancia >= 6/10;
 # - Infobae con video: Reel en redes y artículo Web; sin video, nota normal;
 # - internacionales: balde propio, sólo alto impacto (>= 8/10), 1 por ciclo;
-# - Instagram: locales sólo último momento, policiales y sociedad, máx. 12 por día.
+# - Instagram: locales sólo último momento, policiales y sociedad (interior como
+#   relleno con el cupo libre del ciclo), máx. 30 por día.
 $env:PAPARAZZI_VIDEO_ONLY_ENABLED = "true"
 $env:PAPARAZZI_VIDEO_MAX_PER_CYCLE = "0"
 $env:PAPARAZZI_VIDEO_MAX_AGE_HOURS = "24"
@@ -88,7 +89,8 @@ $env:PUBLISH_INTERNATIONAL_BUCKET_ENABLED = "true"
 $env:PUBLISH_INTERNATIONAL_MIN_SCORE = "8"
 $env:PUBLISH_INTERNATIONAL_MAX_PER_RUN = "1"
 $env:IG_LOCAL_CATEGORIES = "policiales,sociedad"
-$env:IG_LOCAL_DAILY_MAX = "12"
+$env:IG_LOCAL_FILL_CATEGORIES = "interior"
+$env:IG_LOCAL_DAILY_MAX = "30"
 $env:CANARY_ENABLED = "false"
 $env:ALERTS_ENABLED = "true"
 $env:ALERT_WEBHOOK_URL = ""

@@ -666,6 +666,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "PUBLISH_INTERNATIONAL_MIN_SCORE",
                 "PUBLISH_INTERNATIONAL_MAX_PER_RUN",
                 "IG_LOCAL_CATEGORIES",
+                "IG_LOCAL_FILL_CATEGORIES",
                 "IG_LOCAL_DAILY_MAX",
                 "REEL_REQUIRE_REMOTION",
                 "REEL_SOURCE_NORMALIZE_ENABLED",

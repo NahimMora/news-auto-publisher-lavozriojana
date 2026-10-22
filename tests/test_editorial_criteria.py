@@ -320,6 +320,50 @@ class InstagramLocalPolicyTests(unittest.TestCase):
         self.assertEqual(1, counts["unchanged"])
         self.assertEqual([], [n for n in self.queue.get_pending("instagram") if n["titulo"] == notes[1]["titulo"]])
 
+    def test_fill_category_only_uses_free_slots(self):
+        env = {"IG_LOCAL_CATEGORIES": "policiales,sociedad", "IG_LOCAL_FILL_CATEGORIES": "interior"}
+        policiales = [
+            self._note(i, seccion="policiales") for i in range(1, 4)
+        ]
+        interior = [
+            self._note(i, seccion="interior") for i in range(4, 7)
+        ]
+        self.queue.enqueue_many(interior + policiales, platform="instagram")
+        with mock.patch.dict(os.environ, env):
+            self.assertTrue(self.run_ig._local_allowed_by_category(interior[0]))
+            self.assertFalse(self.run_ig._local_allowed_by_category(self._note(7, seccion="politica")))
+            # Lote justo: interior no desplaza a policiales.
+            tight = self.run_ig._select_with_local_fill(3)
+            # Sobra cupo: interior completa el lote, siempre después.
+            roomy = self.run_ig._select_with_local_fill(5)
+        self.assertEqual({n["titulo"] for n in policiales}, {n["titulo"] for n in tight})
+        self.assertEqual({n["titulo"] for n in policiales}, {n["titulo"] for n in roomy[:3]})
+        self.assertEqual(2, len(roomy[3:]))
+        self.assertTrue(all(n["seccion"] == "interior" for n in roomy[3:]))
+
+    def test_fill_category_counts_for_daily_cap_after_primary(self):
+        env = {
+            "IG_LOCAL_CATEGORIES": "policiales",
+            "IG_LOCAL_FILL_CATEGORIES": "interior",
+            "IG_LOCAL_DAILY_MAX": "2",
+        }
+        policial = self._note(1, seccion="policiales")
+        interior = [
+            self._note(i, seccion="interior") for i in range(4, 6)
+        ]
+        self.queue.enqueue_many(interior + [policial], platform="instagram")
+        with mock.patch.dict(os.environ, env):
+            selected = self.run_ig._select_with_local_fill(5)
+            kept, excluded = self.run_ig._apply_local_daily_cap(selected)
+        self.assertEqual(policial["titulo"], kept[0]["titulo"])
+        self.assertEqual((2, 1), (len(kept), excluded))
+
+    def test_fill_disabled_by_default(self):
+        note = self._note(4, seccion="interior")
+        with mock.patch.dict(os.environ, {"IG_LOCAL_CATEGORIES": "policiales", "IG_LOCAL_FILL_CATEGORIES": ""}):
+            self.assertFalse(self.run_ig._local_allowed_by_category(note))
+            self.assertFalse(self.run_ig._is_local_fill(note))
+
     def test_no_cap_by_default(self):
         notes = [self._note(i) for i in range(1, 4)]
         with mock.patch.dict(os.environ, {"IG_LOCAL_DAILY_MAX": "0"}):

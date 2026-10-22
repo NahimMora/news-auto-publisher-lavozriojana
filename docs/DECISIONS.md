@@ -2361,3 +2361,24 @@ activar el 22/10.
 cambios de forma en el JSON: se usa el `posted_at` ya existente.
 
 **Rollback**: `IG_POSTED_DEDUP_WINDOW_HOURS=0` en el script de arranque.
+
+## 2026-10-22 — Tope de locales en Instagram a 30 e interior como relleno
+
+**Contexto**: el operador vio policiales locales relevantes en Web y Facebook que no
+llegaban a Instagram. Con `IG_LOCAL_DAILY_MAX=12` el tope se agotaba todos los días:
+33, 34 y 42 exclusiones `policy_ig_local_daily_cap` el 19, 20 y 21/10 (p. ej. la
+muerte del joven de Sanagasta el 22/10). Volumen local de la semana al 22/10: ~9
+policiales, ~2 sociedad y ~4 interior por día.
+
+**Decisión del operador**:
+
+- `IG_LOCAL_DAILY_MAX=30` (antes 12).
+- `IG_LOCAL_FILL_CATEGORIES=interior`: categorías locales de relleno. Entran a
+  Instagram sólo con el cupo del ciclo (`IG_MAX_PER_RUN`) que no usó el resto del
+  lote: `run_ig` arma primero el lote sin relleno y completa con relleno si sobra
+  lugar. Cuentan para `IG_LOCAL_DAILY_MAX` y, por orden, después de lo principal.
+  Default del código: vacío (sin relleno, comportamiento anterior).
+- Facebook y Web sin cambios.
+
+**Rollback**: `IG_LOCAL_DAILY_MAX=12` y `IG_LOCAL_FILL_CATEGORIES=""` en
+`scripts/start_24x7_production.ps1`.

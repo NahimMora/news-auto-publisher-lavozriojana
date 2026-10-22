@@ -167,11 +167,49 @@ def _local_categories() -> set[str]:
     return {value.strip().lower() for value in raw.split(",") if value.strip()}
 
 
+def _local_fill_categories() -> set[str]:
+    """``IG_LOCAL_FILL_CATEGORIES``: categorías locales de relleno (vacío = ninguna).
+
+    Entran a Instagram sólo con el cupo del ciclo que no usaron las
+    categorías principales (``IG_LOCAL_CATEGORIES``) ni el resto del lote.
+    Cuentan para ``IG_LOCAL_DAILY_MAX`` como cualquier nota local.
+    """
+    raw = os.getenv("IG_LOCAL_FILL_CATEGORIES", "")
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _is_local_fill(noticia: dict) -> bool:
+    """Nota local que sólo entra como relleno (no es principal ni último momento)."""
+    fill = _local_fill_categories()
+    if not fill or not _is_local_news(noticia) or item_is_breaking(noticia):
+        return False
+    category = item_category(noticia)
+    return category in fill and category not in _local_categories()
+
+
 def _local_allowed_by_category(noticia: dict) -> bool:
     allowed = _local_categories()
     if not allowed or not _is_local_news(noticia):
         return True
-    return item_is_breaking(noticia) or item_category(noticia) in allowed
+    return item_is_breaking(noticia) or item_category(noticia) in allowed or _is_local_fill(noticia)
+
+
+def _select_with_local_fill(limit: int) -> list[dict]:
+    """Lote del ciclo: primero lo principal y, si sobra cupo, el relleno local."""
+    if not _local_fill_categories():
+        return get_pending("instagram", max_items=limit)
+    selected = get_pending(
+        "instagram",
+        max_items=limit,
+        item_filter=lambda noticia: not _is_local_fill(noticia),
+    )
+    room = limit - len(selected)
+    if room > 0:
+        fill = get_pending("instagram", max_items=room, item_filter=_is_local_fill)
+        if fill:
+            logger.info("Relleno local en IG: %s notas con el cupo libre del ciclo", len(fill))
+        selected.extend(fill)
+    return selected
 
 
 def _local_daily_max() -> int:
@@ -425,7 +463,7 @@ def main() -> StageResult:
         # que Web y Facebook); acá sólo se pacea cuánto de ese lote se
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
-        selected = get_pending("instagram", max_items=limit)
+        selected = _select_with_local_fill(limit)
         selected, quiet_deferred = _split_quiet_hours(selected)
         selected, local_cap_excluded = _apply_local_daily_cap(selected)
     except JsonStateError as exc:

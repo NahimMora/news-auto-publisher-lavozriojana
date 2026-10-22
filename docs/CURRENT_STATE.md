@@ -25,7 +25,8 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   Web; en redes, paparazzi con video sólo como Reel (etapa
   `meta/run_paparazzi_videos.py`) y sin video con relevancia ≥ 6; internacionales
   sólo de alto impacto (≥ 8, 1 por ciclo); Instagram con locales sólo de último
-  momento/policiales/sociedad y máximo 12 por día; Facebook sin cambios. Deportes
+  momento/policiales/sociedad, interior como relleno con el cupo libre del ciclo
+  (`IG_LOCAL_FILL_CATEGORIES`) y máximo 30 por día (desde 2026-10-22); Facebook sin cambios. Deportes
   sigue excluido.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
