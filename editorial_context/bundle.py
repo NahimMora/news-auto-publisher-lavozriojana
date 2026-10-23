@@ -69,8 +69,10 @@ class EditorialContextBundle:
     story_key: str = ""
     timeline: list[dict] = field(default_factory=list)
     factual_basis_text: str = ""
-    # Nota anterior que hay que pasar a la misma historia verificada en el CMS.
+    # Nota anterior que hay que pasar a la misma historia verificada en el CMS
+    # (el archivo no siempre tiene su post_id: el publicador lo busca por URL).
     link_previous_post_id: str = ""
+    link_previous_url: str = ""
 
     def archive_context_text(self) -> str:
         if self.context_depth == "NONE" or not self.archive_snippets:
@@ -286,7 +288,7 @@ def _story_for_update(article_id: str, previous_url: str, *, title: str, categor
     link_post = ""
     if not verified:
         ai.set_story_key(previous.article_id, story_key, path=path)
-        link_post = previous.post_id
+        link_post = previous.post_id or previous.canonical_url
     ai.upsert_story(story_key, category=category, title_hint=title, path=path)
     for linked in (previous.article_id, article_id):
         ai.add_story_relation(
@@ -462,7 +464,8 @@ def _build_context_bundle(
             for item in relevant[:RELATED_ARTICLES_MAX_ITEMS]
         ],
         story_key=story_key,
-        link_previous_post_id=link_previous_post_id,
+        link_previous_post_id="" if link_previous_post_id.startswith("http") else link_previous_post_id,
+        link_previous_url=link_previous_post_id if link_previous_post_id.startswith("http") else "",
         timeline=[
             {"article_id": i.article_id, "title": i.title, "published_at": i.published_at, "url": i.url}
             for i in timeline_items[:TIMELINE_MAX_ITEMS]

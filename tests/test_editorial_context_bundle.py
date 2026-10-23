@@ -85,6 +85,29 @@ class BuildContextBundleTests(unittest.TestCase):
                                         update_of_url="https://lavozriojana.com/a1", path=self.db_path)
         self.assertEqual((again.story_key, again.link_previous_post_id), (result.story_key, ""))
 
+    def test_previous_without_post_id_is_linked_by_url(self):
+        # Las notas propias llegan al archivo sin post_id: el publicador busca
+        # el post del CMS por la URL en la cola Meta.
+        ai.upsert_article(ai.ArchiveArticle(article_id="b1", title="Vuelco en la Ruta 75 cerca de Sanagasta", category="policiales",
+                                            published_at="2026-10-22T10:00:00Z", canonical_url="https://lavozriojana.com/b1"),
+                          path=self.db_path)
+        result = eb.build_context_bundle(article_id="new3", title="Murió el joven que volcó en la Ruta 75", category="policiales",
+                                         published_at="2026-10-23T10:00:00Z", update_of_url="https://lavozriojana.com/b1", path=self.db_path)
+        self.assertTrue(result.story_key.startswith("event:"))
+        self.assertEqual((result.link_previous_post_id, result.link_previous_url), ("", "https://lavozriojana.com/b1"))
+
+        import json
+        import os
+
+        from pipeline.node_webapp import publisher
+
+        meta = os.path.join(self._tmpdir.name, "meta.json")
+        with open(meta, "w", encoding="utf-8") as handle:
+            json.dump([{"web_url": "https://lavozriojana.com/b1", "web_post_id": 6300}], handle)
+        with patch.object(publisher, "META_OUTPUT", meta):
+            self.assertEqual(publisher.web_post_id_for("https://lavozriojana.com/b1"), "6300")
+            self.assertEqual(publisher.web_post_id_for("https://lavozriojana.com/otra"), "")
+
     def test_official_snippet_alone_without_archive_gives_light(self):
         result = eb.build_context_bundle(
             article_id="new1",
