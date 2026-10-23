@@ -2541,3 +2541,17 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   no veía.
 - Rollback: `SAME_EVENT_CHECK_ENABLED=false` y `WEATHER_ALERT_NEWS_SMN_ONLY=false`
   en `scripts/start_24x7_production.ps1`.
+
+## 2026-10-23 — Datos para la web como JSON en R2
+
+- Contexto: la web necesita lo más visto con URL, datos de servicios para armar
+  sus widgets, las actualizaciones de notas y los videos de Instagram. El CMS
+  sólo tiene `POST/PATCH /api/private/posts`.
+- Decisión: documentos JSON públicos en el bucket R2 que ya sirve
+  `media.lavozriojana.com` (`feed/v1/`), publicados por una etapa propia al
+  final del ciclo. No hace falta tocar el CMS; la web los lee cuando quiere.
+  Cada fuente falla por separado y conserva el último dato bueno.
+- Límite: "lo más visto" es alcance en Instagram, no visitas de la web (el
+  pipeline no tiene esa métrica).
+- Rollback: `WEB_FEED_ENABLED=false`; los archivos quedan con su última
+  `actualizado`.

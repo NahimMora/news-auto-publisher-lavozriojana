@@ -55,6 +55,8 @@ $env:STORY_UPDATES_ENABLED = "true"
 # ACTUALIZACIÓN. Alertas meteorológicas sólo del feed CAP del SMN.
 $env:SAME_EVENT_CHECK_ENABLED = "true"
 $env:WEATHER_ALERT_NEWS_SMN_ONLY = "true"
+# Datos para la web en R2 (docs/WEB_FEED.md).
+$env:WEB_FEED_ENABLED = "true"
 # Placas de servicio v2 (2026-10-23): cronograma de pagos de Hacienda (historia
 # cada día de pago desde las 7; post IG el primer día, FB todos) y sismos con
 # epicentro en La Rioja (INPRES, magnitud >= 4,0, a cualquier hora).

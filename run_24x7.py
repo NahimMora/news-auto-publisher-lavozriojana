@@ -49,6 +49,9 @@ CYCLE_STEPS = [
     ("meta/run_stories.py", "instagram"),
     ("meta/run_comment_replies.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
+    # Datos para la web en R2 (lo más visto, servicios, actualizaciones,
+    # videos): después de las métricas para tomarlas frescas.
+    ("meta/run_web_feed.py", "web"),
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,

@@ -66,6 +66,11 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   (`STORY_ENGINE_AUTO_ENABLED=false`) porque mezclaba hechos en las
   cronologías de la web (KNOWN_ISSUES #101); sólo se arman historias con
   actualizaciones verificadas del mismo hecho.
+- Datos para la web (2026-10-23, `WEB_FEED_ENABLED`): cada ciclo publica en
+  `https://media.lavozriojana.com/feed/v1/` lo más visto (alcance en Instagram,
+  con la URL de la nota), servicios (clima, alerta SMN, dólar, feriados, pagos,
+  sismos, cortes), actualizaciones y videos de Instagram. Contrato en
+  `docs/WEB_FEED.md`.
 - Resaltados (2026-10-23): historias, placas y carrusel destacan el núcleo del
   título en color y los datos (cifras, horarios, fechas) en negrita; el resto va
   más liviano. Ver `docs/SOCIAL_FORMATS.md`.
