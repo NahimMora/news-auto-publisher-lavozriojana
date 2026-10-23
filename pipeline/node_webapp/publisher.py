@@ -727,6 +727,12 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
         logger.exception("No se pudo construir el EditorialContextBundle; se publica sin contexto")
         return None
 
+    if bundle.link_previous_post_id and bundle.story_key:
+        # La nota anterior pasa a la misma historia verificada, así la web arma
+        # la cronología con las dos (best-effort: no frena la publicación).
+        from pipeline.node_webapp.editorial_flags import _patch_post
+
+        _patch_post(bundle.link_previous_post_id, {"storyKey": bundle.story_key})
     if bundle.context_depth == "NONE" and not bundle.story_key:
         return None
     return {

@@ -62,6 +62,10 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
   condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
   textos y las reglas de publicación son los mismos.
+- Historias (2026-10-23): el agrupamiento automático está apagado
+  (`STORY_ENGINE_AUTO_ENABLED=false`) porque mezclaba hechos en las
+  cronologías de la web (KNOWN_ISSUES #101); sólo se arman historias con
+  actualizaciones verificadas del mismo hecho.
 - Resaltados (2026-10-23): historias, placas y carrusel destacan el núcleo del
   título en color y los datos (cifras, horarios, fechas) en negrita; el resto va
   más liviano. Ver `docs/SOCIAL_FORMATS.md`.

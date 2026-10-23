@@ -52,6 +52,39 @@ class BuildContextBundleTests(unittest.TestCase):
         self.assertIn("archive_context", fragment)
         self.assertIn("context_depth", fragment)
 
+    def _two_chilecito_notes(self):
+        # Dos hechos distintos que comparten localidad y palabras: el
+        # agrupamiento automático los juntaba como "historia".
+        for article_id, title in (("a1", "Joven grave en Chilecito tras ser encerrado por un conductor"),
+                                  ("a2", "Siniestro vial en Chilecito dejó un joven con fractura")):
+            ai.upsert_article(ai.ArchiveArticle(article_id=article_id, post_id=f"p-{article_id}", title=title, category="policiales",
+                                                published_at="2026-10-08T10:00:00Z", canonical_url=f"https://lavozriojana.com/{article_id}"),
+                              path=self.db_path)
+
+    def test_automatic_grouping_is_off_by_default(self):
+        self._two_chilecito_notes()
+        with patch.dict("os.environ", {"STORY_ENGINE_AUTO_ENABLED": "false"}):
+            result = eb.build_context_bundle(article_id="new1", title="Hallaron sano y salvo a un joven en Chilecito tras ser encerrado",
+                                             category="policiales", published_at="2026-10-23T10:00:00Z", path=self.db_path)
+        self.assertEqual(result.story_key, "")
+        self.assertEqual(ai.get_by_article_id("a1", path=self.db_path).story_key, "")
+
+    def test_update_gets_a_verified_story_and_links_the_previous_post(self):
+        self._two_chilecito_notes()
+        ai.set_story_key("a1", "story:automatica", path=self.db_path)
+        result = eb.build_context_bundle(article_id="new1", title="Murió el joven que había sido encerrado en Chilecito",
+                                         category="policiales", published_at="2026-10-23T10:00:00Z",
+                                         update_of_url="https://lavozriojana.com/a1", path=self.db_path)
+        # No hereda la clave automática (puede mezclar hechos): crea una verificada.
+        self.assertTrue(result.story_key.startswith("event:"))
+        self.assertEqual(result.link_previous_post_id, "p-a1")
+        self.assertEqual(ai.get_by_article_id("a1", path=self.db_path).story_key, result.story_key)
+        # Una segunda actualización reutiliza la verificada y no vuelve a enlazar.
+        again = eb.build_context_bundle(article_id="new2", title="Detuvieron al conductor que encerró al joven en Chilecito",
+                                        category="policiales", published_at="2026-10-24T10:00:00Z",
+                                        update_of_url="https://lavozriojana.com/a1", path=self.db_path)
+        self.assertEqual((again.story_key, again.link_previous_post_id), (result.story_key, ""))
+
     def test_official_snippet_alone_without_archive_gives_light(self):
         result = eb.build_context_bundle(
             article_id="new1",

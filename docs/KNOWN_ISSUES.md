@@ -1469,3 +1469,20 @@
   se comparan sobre todo por título; "Confirmaron muerte cerebral…" no se
   relacionó con el primer vuelco ("puente Virgen India"), porque ningún texto
   dice que el puente está en Sanagasta.
+
+## 101. Cronologías de la web con hechos distintos — CORREGIDO 2026-10-23
+
+- Síntoma: el Story Engine asignaba la misma `storyKey` a notas que sólo
+  compartían una localidad y una palabra ("Chilecito" + "joven", "Córdoba" +
+  "trasladar"), y la web las mostraba como una cronología. 1103 de 6262 posts
+  tenían historia, en 403 historias; 201 con dos o más notas en la web. Ej.:
+  `story:bd3731a2cfe7` juntaba un femicidio en Saldán, un bebé trasladado a
+  Córdoba, hurtos en Chamical y droga en Chumbicha.
+- Corrección: `STORY_ENGINE_AUTO_ENABLED=false` (el agrupamiento automático no
+  asigna más historias). Las historias salen sólo de actualizaciones del mismo
+  hecho verificadas (`utils/same_event.py`, con ancla), con clave `event:`; la
+  nota anterior se pasa a esa historia en el CMS con `PATCH storyKey`.
+- Limpieza: `scripts/clear_auto_story_keys.py --apply` quita las claves
+  automáticas del CMS (`PATCH storyKey=null`) y del archivo local, con respaldo
+  en `output/story_keys_backup_*.json` (`--restore` las vuelve a poner).
+- Sin historia, la nota vuelve a mostrar "En contexto" cuando hay antecedentes.
