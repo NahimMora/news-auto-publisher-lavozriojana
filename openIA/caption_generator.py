@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from utils.judicial_sources import JUDICIAL_RULES, is_judicial
 from utils.logging_setup import setup_logger
 
@@ -294,7 +295,7 @@ Sos editor de "La Voz Riojana", medio digital de La Rioja, Argentina.
 Salida obligatoria: JSON válido con exactamente estas claves:
 {_LOCALITY_DECK_SCHEMA}
 
-- "locality": una localidad, departamento o ciudad de La Rioja (p.ej. "Chilecito", "Capital", "Famatina") SOLO si el texto la nombra explícitamente. Si no hay ninguna localidad riojana concreta y verificable en el texto, dejalo vacío ("").
+- "locality": la localidad, departamento o ciudad de La Rioja donde pasó el hecho (p.ej. "Chilecito", "Capital", "Famatina") SOLO si el texto la nombra explícitamente. Si el hecho pasó en dos lugares, poné los dos separados por " · " (p.ej. "Capital · Chilecito"); nunca más de dos. Si no hay ninguna localidad riojana concreta y verificable en el texto, dejalo vacío ("").
 - "deck": una frase corta (máximo 90 caracteres) que funciona como bajada ANTES del título — agrega contexto o un dato (cuándo, quién, por qué importa), nunca repite ni parafrasea el título. Español rioplatense, sin emojis, sin comillas, sin punto final. Empezá con mayúscula y escribí los nombres propios (personas, lugares, clubes, organismos) con mayúscula, como en el texto.
 - No inventes lugares, datos, cifras, armas, personas ni hechos que no estén en el texto.
 """.strip()
@@ -493,6 +494,17 @@ def _locality_deck_fallback(reason: str, noticia: dict, *, include_highlight: bo
     return result
 
 
+def _verified_locality(raw: str, text: str) -> str:
+    """Hasta dos lugares ("Capital · Chilecito"), cada uno escrito en la nota."""
+    def fold(value: str) -> str:
+        return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+
+    haystack = fold(text)
+    places = [p.strip(" .") for p in re.split(r"\s*[·|/,]\s*|\s+y\s+", raw.strip()) if p.strip(" .")]
+    kept = [p for p in dict.fromkeys(places) if fold(p) in haystack]
+    return " · ".join(kept[:2])[:60]
+
+
 def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False) -> dict:
     """Completa localidad y bajada; opcionalmente, la frase destacada.
 
@@ -532,7 +544,10 @@ def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False
             )
             data = json.loads(content.strip())
             result = {
-                "locality": str(data.get("locality") or "").strip()[:40],
+                "locality": _verified_locality(
+                    str(data.get("locality") or ""),
+                    f"{noticia.get('titulo', '')}. {texto_body}",
+                ),
                 "deck":     restore_deck_casing(
                     str(data.get("deck") or "").strip()[:90],
                     f"{noticia.get('titulo', '')}. {texto_body}",

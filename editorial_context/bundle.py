@@ -264,6 +264,22 @@ def _gather_official_snippets(
     return snippets, len(sources)
 
 
+def _story_for_update(article_id: str, previous_url: str, *, title: str, category: str, path) -> str:
+    previous = ai.get_by_canonical_url(previous_url, path=path)
+    if previous is None:
+        return ""
+    story_key = previous.story_key or story_engine.story_key_from_seed(previous.article_id)
+    if not previous.story_key:
+        ai.set_story_key(previous.article_id, story_key, path=path)
+    ai.upsert_story(story_key, category=category, title_hint=title, path=path)
+    for linked in (previous.article_id, article_id):
+        ai.add_story_relation(
+            linked, story_key, relation_score=1.0, relation_reason="same_event_update",
+            matched_entities=[], matched_terms=[], time_distance_days=None, confidence="high", path=path,
+        )
+    return story_key
+
+
 def build_context_bundle(
     *,
     article_id: str,
@@ -274,6 +290,7 @@ def build_context_bundle(
     official_snippets: list[ContextSnippet] | None = None,
     official_source_lookup_count: int = 0,
     riojan_source: bool = False,
+    update_of_url: str = "",
     path: Path | str | None = None,
 ) -> EditorialContextBundle:
     """Punto de entrada único. Nunca lanza: una falla acá degrada a NONE
@@ -293,6 +310,7 @@ def build_context_bundle(
             official_snippets=official_snippets,
             official_source_lookup_count=official_source_lookup_count,
             riojan_source=riojan_source,
+            update_of_url=update_of_url,
             path=path,
         )
     except Exception:
@@ -311,6 +329,7 @@ def _build_context_bundle(
     official_source_lookup_count: int,
     path: Path | str | None,
     riojan_source: bool = False,
+    update_of_url: str = "",
 ) -> EditorialContextBundle:
     entities_found = ec_entities.extract_entities(title, excerpt)
     localities_found = ec_entities.extract_localities(title, excerpt)
@@ -366,6 +385,10 @@ def _build_context_bundle(
         )
 
     story_key = story_assignment.story_key if story_assignment else ""
+    if update_of_url:
+        # Actualización del mismo hecho (utils/same_event.py): misma historia
+        # que la nota anterior, aunque las palabras no alcancen para agruparlas.
+        story_key = _story_for_update(article_id, update_of_url, title=title, category=category, path=path) or story_key
     timeline_items = tl.build_timeline(story_key, exclude_article_id=article_id, path=path) if story_key else []
     has_strong_story = bool(timeline_items)
 

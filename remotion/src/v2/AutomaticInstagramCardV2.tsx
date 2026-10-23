@@ -43,6 +43,7 @@ export const AutomaticInstagramCardV2Schema = z.object({
   assetWidth: z.number().default(0),
   assetHeight: z.number().default(0),
   breaking: z.boolean().default(false),
+  update: z.boolean().default(false),
   // "papel"/"tinta" fuerzan el tono; "cintas" fuerza foto completa.
   layout: z.enum(["auto", "papel", "tinta", "cintas", "poster"]).default("auto"),
   dateLabel: z.string().default(""),
@@ -113,18 +114,35 @@ const BrandTab: React.FC<{ accent: string }> = ({ accent }) => (
   </div>
 );
 
-// Pestaña de sección (+ localidad) en el color de la sección, borde derecho.
-const SectionTab: React.FC<{ style: SectionStyle; locality: string; fill?: string }> = ({ style, locality, fill }) => (
-  <div style={{ position: "absolute", right: 0, top: 54, height: 56, display: "flex", alignItems: "center", gap: 14, padding: `0 ${M - 8}px 0 24px`, backgroundColor: fill ?? style.field, ...caps, fontSize: 22, color: C.white }}>
-    <span>{style.label}</span>
-    {locality ? (
-      <>
-        <span style={{ width: 2, height: 22, backgroundColor: rgba(C.white, 0.55) }} />
-        <span style={{ fontWeight: 600, letterSpacing: "0.1em" }}>{locality}</span>
-      </>
-    ) : null}
-  </div>
-);
+// Pestaña de sección (+ hasta dos lugares, "Capital · Chilecito") en el color
+// de la sección, borde derecho. Con texto largo la letra baja para no pisar la
+// marca: el ancho libre es lo que queda a la derecha de la pestaña de marca.
+const TAB_TEXT_W = IG.w - 420 - 24 - (M - 8) - 30;
+// Actualización de un hecho ya publicado: pestaña ámbar debajo de la sección.
+const UPDATE_FILL = "#E3A008";
+
+const SectionTab: React.FC<{ style: SectionStyle; locality: string; fill?: string; update?: boolean }> = ({ style, locality, fill, update }) => {
+  const chars = style.label.length + locality.length;
+  const size = Math.max(15, Math.min(22, Math.floor(TAB_TEXT_W / (chars * 0.68))));
+  return (
+    <>
+      <div style={{ position: "absolute", right: 0, top: 54, height: 56, display: "flex", alignItems: "center", gap: 14, padding: `0 ${M - 8}px 0 24px`, backgroundColor: fill ?? style.field, ...caps, fontSize: size, color: C.white }}>
+        <span>{style.label}</span>
+        {locality ? (
+          <>
+            <span style={{ width: 2, height: 22, backgroundColor: rgba(C.white, 0.55) }} />
+            <span style={{ fontWeight: 600, letterSpacing: "0.1em" }}>{locality}</span>
+          </>
+        ) : null}
+      </div>
+      {update ? (
+        <div style={{ position: "absolute", right: 0, top: 110, height: 46, display: "flex", alignItems: "center", padding: `0 ${M - 8}px 0 22px`, backgroundColor: UPDATE_FILL, ...caps, fontSize: 21, fontWeight: 900, color: C.ink }}>
+          Actualización
+        </div>
+      ) : null}
+    </>
+  );
+};
 
 // Banda de pie: llamado a la nota + fecha + cuenta.
 const FooterBand: React.FC<{ color: string; dateLabel: string }> = ({ color, dateLabel }) => (
@@ -276,7 +294,7 @@ const PhotoTop: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionS
       {/* Fundido de la foto hacia el fondo, para que el titular la monte */}
       <div style={{ position: "absolute", left: 0, top: fadeFrom, width: IG.w, height: photoH - fadeFrom + 2, background: `linear-gradient(180deg, ${rgba(bg, 0)} 0%, ${rgba(bg, 0.72)} 52%, ${rgba(bg, 0.97)} 86%, ${bg} 100%)` }} />
       <BrandTab accent={style.accent} />
-      <SectionTab style={style} locality={props.locality} />
+      <SectionTab style={style} locality={props.locality} update={props.update} />
       <LeftStripe color={style.accent} top={photoH - overlap - 10} />
       <div style={{ position: "absolute", left: M, top: textTop, width: textW }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={textColor} accent={style.accent} />
@@ -304,7 +322,7 @@ const FullPhoto: React.FC<{ props: AutomaticInstagramCardV2Props; style: Section
       <div style={{ position: "absolute", left: 0, top: 0, width: IG.w, height: 260, background: `linear-gradient(180deg, ${rgba(C.ink, 0.55)} 0%, ${rgba(C.ink, 0)} 100%)` }} />
       <div style={{ position: "absolute", left: 0, top: veilTop, width: IG.w, bottom: 0, background: `linear-gradient(180deg, ${rgba(C.ink, 0)} 0%, ${rgba(C.ink, 0.78)} 32%, ${rgba(C.ink, 0.94)} 62%, ${C.ink} 100%)` }} />
       <BrandTab accent={style.accent} />
-      <SectionTab style={style} locality={props.locality} />
+      <SectionTab style={style} locality={props.locality} update={props.update} />
       <LeftStripe color={style.accent} top={textTop - 24} />
       <div style={{ position: "absolute", left: M, top: textTop, width: INNER_W }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={C.white} accent={style.accent} />
@@ -333,7 +351,7 @@ const Poster: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionSty
       <Halftone color={rgba(C.white, 0.16)} top={150} height={520} />
       <Watermark label={style.label} bottom={IG.h - 150 - 200} color={rgba(C.white, 0.12)} />
       <BrandTab accent={style.field === C.red ? C.white : C.red} />
-      <SectionTab style={style} locality={props.locality} fill={C.ink} />
+      <SectionTab style={style} locality={props.locality} fill={C.ink} update={props.update} />
       <div style={{ position: "absolute", left: M, top: textTop - 44, width: 120, height: 10, backgroundColor: C.white }} />
       <div style={{ position: "absolute", left: M, top: textTop, width: INNER_W }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={C.white} accent={boxAccent} />

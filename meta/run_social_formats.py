@@ -96,7 +96,8 @@ def _updates(instagram: bool, facebook: bool) -> tuple[int, int]:
             props = sp.story_props(
                 kind="update",
                 titulo=(fetch_article_title(cand) or cand["original_title"].capitalize()),
-                before=su.phrase(cand["noun"], cand["before"]),
+                # Mismo hecho con dato nuevo: antes, lo que ya habíamos publicado.
+                before=cand["original_title"] if cand.get("kind") == "event" else su.phrase(cand["noun"], cand["before"]),
                 after=new_title,
                 timeLabel=when,
                 sourceLabel=f"Según la nota publicada a las {when}.",

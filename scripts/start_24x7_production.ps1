@@ -51,6 +51,10 @@ $env:SOCIAL_FORMATS_FACEBOOK_ENABLED = "true"
 $env:MORNING_BRIEF_ENABLED = "true"
 $env:WEEKLY_RECAP_ENABLED = "true"
 $env:STORY_UPDATES_ENABLED = "true"
+# Mismo hecho entre fuentes (2026-10-23): duplicado no sale; dato nuevo sale como
+# ACTUALIZACIÓN. Alertas meteorológicas sólo del feed CAP del SMN.
+$env:SAME_EVENT_CHECK_ENABLED = "true"
+$env:WEATHER_ALERT_NEWS_SMN_ONLY = "true"
 # Placas de servicio v2 (2026-10-23): cronograma de pagos de Hacienda (historia
 # cada día de pago desde las 7; post IG el primer día, FB todos) y sismos con
 # epicentro en La Rioja (INPRES, magnitud >= 4,0, a cualquier hora).

@@ -16,6 +16,7 @@ from utils.editorial_priority import item_source
 from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
+from utils.same_event import drop_superseded
 from utils.social_queue import (
     claim,
     compact_queue,
@@ -113,6 +114,7 @@ def main() -> StageResult:
         all_pending = get_pending("facebook")
         limit = int(os.getenv("PUBLISH_MAX_PER_RUN", "10"))
         selected = get_pending("facebook", max_items=limit)
+        selected, superseded = drop_superseded(selected, "facebook")
     except JsonStateError as exc:
         logger.error("Estado social de Facebook ilegible: %s", exc)
         return StageResult(
@@ -133,6 +135,7 @@ def main() -> StageResult:
                 "bootstrapped": bootstrapped,
                 "synced": synced,
                 "ambiguous_to_dead_letter": ambiguous,
+                "superseded_by_update": superseded,
             },
         )
 
@@ -200,7 +203,7 @@ def main() -> StageResult:
         duration_seconds=time.monotonic() - started,
         error_type=error_type,
         next_retry_at=next_retry_at,
-        details={"ambiguous_to_dead_letter": ambiguous},
+        details={"ambiguous_to_dead_letter": ambiguous, "superseded_by_update": superseded},
     )
     if error_type == "invalid_credential":
         result.status = StageStatus.FAILED

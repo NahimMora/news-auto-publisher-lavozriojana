@@ -122,15 +122,29 @@ def update_candidates(*, now: float | None = None, lookback_hours: float = 48, s
             continue
         posted_at = float(record.get("posted_at") or 0)
         title = str(record.get("titulo") or "")
-        if now - posted_at > lookback_hours * 3600 or not facts(title):
+        if now - posted_at > lookback_hours * 3600:
             continue
         done = applied.get(key) or {}
         if len(done.get("sources") or []) >= 3:
             continue
+        has_facts = bool(facts(title))
         for candidate in newer:
             if float(candidate.get("published_at_ts") or 0) <= posted_at:
                 continue
             if candidate.get("canonical_url") == record.get("canonical_url") or candidate["web_url"] in (done.get("sources") or []):
+                continue
+            # Mismo hecho con un dato nuevo, según utils/same_event.py ("murió",
+            # "fue detenido"): no necesita una cifra en el título.
+            event = candidate.get("event_update") if isinstance(candidate.get("event_update"), dict) else {}
+            if event.get("of_canonical_url") and event["of_canonical_url"] == record.get("canonical_url"):
+                fb = fb_by_url.get(str(record.get("canonical_url") or "")) or {}
+                out.append({
+                    "key": key, "kind": "event", "ig_media_id": str(record["external_id"]), "fb_post_id": str(fb.get("external_id") or ""),
+                    "original_title": title, "new_title": str(candidate.get("titulo") or ""), "web_url": candidate["web_url"],
+                    "noun": "", "before": title, "after": str(event.get("novedad") or ""), "seccion": str(record.get("seccion") or ""),
+                })
+                break
+            if not has_facts:
                 continue
             change = find_change(title, str(candidate.get("titulo") or ""))
             if change:

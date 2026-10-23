@@ -49,7 +49,40 @@ def highlight_terms_for(title: str, item: Mapping[str, object]) -> list[str]:
 
 def locality_for(item: Mapping[str, object]) -> str:
     web = item.get("web_editorial") if isinstance(item.get("web_editorial"), Mapping) else {}
-    return str(item.get("locality") or web.get("locality") or "").strip()
+    raw = str(item.get("locality") or web.get("locality") or "").strip()
+    # Hasta dos lugares, "Capital · Chilecito" (openIA/caption_generator.py).
+    places = [p.strip() for p in re.split(r"\s*[·|/]\s*|\s*,\s*", raw) if p.strip()]
+    return " · ".join(dict.fromkeys(places[:2]))
+
+
+_TRAILING_CONNECTOR = re.compile(r"(?:[\s,;:–-]+|\s+(?:y|e|o|en|de|del|la|el|los|las|que|con|por|para|a|al|desde|hacia))+$", re.IGNORECASE)
+
+
+def strip_places(title: str, locality: str) -> str:
+    """Saca del titular el lugar que ya dice la pestaña de localidad.
+
+    "Dos accidentes dejaron tres heridas en Capital y Chilecito" con
+    "Capital · Chilecito" → "Dos accidentes dejaron tres heridas". Sólo saca
+    el lugar cuando va con su preposición ("en", "desde", "hacia"...) o como
+    rótulo inicial ("Chilecito: ..."); "de Chilecito" sólo al final del
+    título, para no romper nombres como "Universidad Nacional de Chilecito".
+    Si el lugar es el sujeto ("Chilecito celebra...") o el título quedaría
+    muy corto, no se toca. Nunca deja un conector colgando."""
+    places = [p for p in (s.strip() for s in locality.split("·")) if p]
+    if not title or not places:
+        return title
+    alt = "|".join(re.escape(p) for p in sorted(places, key=len, reverse=True))
+    # Si la lista sigue con otro lugar que la pestaña no dice, no se corta.
+    group = rf"(?:{alt})(?:\s*(?:,|\by\b|\be\b)\s*(?:{alt}))*(?!\s*(?:,|\by\b|\be\b)\s*[A-ZÁÉÍÓÚÑ])"
+    kind = r"(?:(?:el|la|los|las)\s+)?(?:(?:departamento|localidad|ciudad|paraje|villa)\s+(?:de\s+)?)?"
+    out = re.sub(rf"^\s*{group}\s*[:–-]\s*", "", title, flags=re.IGNORECASE)
+    out = re.sub(rf"[,\s]*\b(?:en|desde|hacia|para|hasta|por|a)\s+{kind}{group}\b", "", out, flags=re.IGNORECASE)
+    out = re.sub(rf"[,\s]*\b(?:de|del)\s+{kind}{group}\s*$", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s{2,}", " ", out).replace(" ,", ",").strip()
+    out = _TRAILING_CONNECTOR.sub("", out).strip()
+    if len(_norm_words(out)) < 4 or out == title.strip():
+        return title.strip() if len(_norm_words(out)) < 4 else out
+    return out[:1].upper() + out[1:]
 
 
 def deck_for(item: Mapping[str, object]) -> str:
@@ -147,18 +180,20 @@ def instagram_props_v2(
     asset_file: str,
     asset_size: tuple[int, int] | None = None,
 ) -> dict:
-    title = str(article.get("titulo") or "").strip()
+    locality = locality_for(article)
+    title = strip_places(str(article.get("titulo") or "").strip(), locality)
     width, height = asset_size or (0, 0)
     props = {
         "titulo": title,
         "seccion": str(article.get("seccion") or ""),
         "assetFile": asset_file,
         "highlightTerms": highlight_terms_for(title, article),
-        "locality": locality_for(article),
+        "locality": locality,
         "deck": deck_for(article),
         "assetWidth": int(width or 0),
         "assetHeight": int(height or 0),
         "breaking": bool(article.get("breaking")),
+        "update": bool(article.get("show_update")),
         "layout": "auto",
         "dateLabel": date_label(),
     }
@@ -168,12 +203,13 @@ def instagram_props_v2(
 
 
 def og_props_v2(article: Mapping[str, object], *, asset_file: str) -> dict:
-    title = str(article.get("titulo_instagram") or article.get("titulo") or "").strip()
+    locality = locality_for(article)
+    title = strip_places(str(article.get("titulo_instagram") or article.get("titulo") or "").strip(), locality)
     return {
         "titulo": title,
         "seccion": str(article.get("seccion") or ""),
         "assetFile": asset_file,
         "highlightTerms": highlight_terms_for(title, article),
-        "locality": locality_for(article),
+        "locality": locality,
         "breaking": bool(article.get("breaking")),
     }

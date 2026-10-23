@@ -129,6 +129,12 @@ RIOJAN_LOCALITY_TERMS = {
     "casa blanca", "nonogasta", "anguinan", "sierra negra",
     "villa union", "guandacol", "santa florentina", "villa famatina",
     "capital riojana", "general angel", "general lavalle",
+    # Se compara como subcadena: nada corto que aparezca dentro de otra
+    # palabra ("tama" en "tamaño", "olta" en "soltar").
+    "sanagasta", "villa castelli", "chanarmuyo", "ulapes", "aminga", "anillaco",
+    "malanzan", "catuna", "villa mazan", "sanogasta", "vichigasta", "pituil",
+    "los sarmientos", "castro barros", "san blas de los sauces", "felipe varela",
+    "talampaya", "alpasinche", "pagancillo", "talamuyuna", "chuquis",
 }
 
 

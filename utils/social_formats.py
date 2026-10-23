@@ -83,12 +83,34 @@ def weather_story(weather: sd.Weather, alerts: dict, now: datetime | None = None
     )
 
 
+def _alert_until(expires: str) -> str:
+    """"2026-10-24T02:59:59-03:00" → "Vigente hasta las 03:00 del sábado"."""
+    try:
+        moment = now_ar(datetime.fromisoformat(expires) + timedelta(seconds=1))
+    except (TypeError, ValueError):
+        return ""
+    day = "de hoy" if moment.date() == today_ar() else f"del {DIAS[moment.weekday()]}"
+    return f"Vigente hasta las {moment.strftime('%H:%M')} {day}"
+
+
+def _alert_body(alerts: dict) -> str:
+    """Primera oración de la descripción oficial del SMN; si no hay, la genérica."""
+    first = re.split(r"(?<=[.!?])\s", str(alerts.get("description") or "").strip(), maxsplit=1)[0]
+    if 20 <= len(first) <= 220:
+        return first
+    noun = "un aviso a muy corto plazo" if alerts.get("kind") == "aviso" else "una alerta"
+    return f"El Servicio Meteorológico Nacional emitió {noun} que alcanza a La Rioja."
+
+
 def alert_story(alerts: dict) -> dict:
+    kind = "Aviso" if alerts.get("kind") == "aviso" else "Alerta"
     return story_props(
         kind="alert",
         level=alerts["level"],
-        titulo=f"Alerta {alerts['level']} por {alerts['phenomenon']}",
-        body="El Servicio Meteorológico Nacional emitió una alerta que alcanza a La Rioja.",
+        titulo=f"{kind} {alerts['level']} por {alerts['phenomenon']}",
+        body=_alert_body(alerts),
+        zones=list(alerts.get("zones") or []),
+        timeLabel=_alert_until(str(alerts.get("expires") or "")),
         sourceLabel="Fuente: Servicio Meteorológico Nacional",
     )
 
@@ -147,7 +169,9 @@ def due_service_stories(now: datetime | None = None, *, done=lambda key: False) 
 
     alerts: dict = {"status": "none"}
     try:
-        alerts = sd.fetch_alerts()
+        cap_cache = dict(state.get("smn_cap_cache") or {})
+        alerts = sd.fetch_alerts(cache=cap_cache, now=now)
+        _note("smn_cap_cache", cap_cache)
     except sd.ServiceDataError as exc:
         logger.warning("Alertas SMN no disponibles: %s", exc)
         alerts = {"status": "error"}
@@ -363,7 +387,9 @@ def build_morning_brief(now: datetime | None = None) -> dict | None:
     holidays: list[dict] = []
     try:
         weather = sd.fetch_weather()
-        alerts = sd.fetch_alerts()
+        cap_cache = dict(state.get("smn_cap_cache") or {})
+        alerts = sd.fetch_alerts(cache=cap_cache, now=now)
+        _note("smn_cap_cache", cap_cache)
     except sd.ServiceDataError as exc:
         logger.warning("SMN no disponible para el carrusel: %s", exc)
     try:

@@ -17,6 +17,15 @@ from utils.operation_result import OperationResult
 from utils.social_time import AR_TZ
 from utils.stage_result import StageStatus
 
+
+def _cap(event: str, severity: str, headline: str, polygon: str, description: str = "", *, area: str = "", expires: str = "2026-10-24T02:59:59-03:00") -> str:
+    """XML CAP mínimo con la forma del feed del SMN."""
+    return (
+        '<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2"><status>Actual</status><msgType>Alert</msgType><info>'
+        f"<event>{event}</event><severity>{severity}</severity><headline>{headline}</headline><expires>{expires}</expires>"
+        f"<description>{description}</description><area><areaDesc>{area}</areaDesc><polygon>{polygon}</polygon></area></info></alert>"
+    )
+
 TIEPRE = (
     " Chamical;18-octubre-2026;12:00;Cubierto;20 km;16.8;No se calcula; 66;Noreste  9;965.7 / \n"
     " La Rioja;18-octubre-2026;12:00;Nublado;20 km;17.8;No se calcula; 68;Noreste  1;967.4 / \n"
@@ -64,15 +73,59 @@ class ServiceDataTests(unittest.TestCase):
         self.assertEqual(weather.temp, 17.8)
         self.assertEqual(len(weather.days), 2)
 
-    def test_alerts(self):
+    def test_alerts_from_cap_feed(self):
         from utils import service_data as sd
 
-        self.assertEqual(sd.parse_alerts("", "La Rioja")["status"], "none")
-        self.assertEqual(sd.parse_alerts("Mendoza; amarilla; viento zonda", "La Rioja")["status"], "none")
-        active = sd.parse_alerts("La Rioja: zona Chilecito; alerta AMARILLA por viento Zonda", "La Rioja")
-        self.assertEqual((active["status"], active["level"], active["phenomenon"]), ("active", "amarilla", "viento zonda"))
-        # Menciona la provincia pero no se reconoce el formato: no se publica.
-        self.assertEqual(sd.parse_alerts("LA RIOJA;;", "La Rioja")["status"], "unparsed")
+        base = "https://ssl.smn.gob.ar/feeds/CAP/xml_generados/"
+        index = f"<rss><item><link>{base}cordillera.xml</link></item><item><link>{base}misiones.xml</link></item><item><link>{base}vencida.xml</link></item></rss>"
+        docs = {
+            # Polígono sobre la cordillera de Vinchina (como "Viento_Cordillera" del SMN).
+            "cordillera.xml": _cap("Viento", "Moderate", "Viento", "-28.68,-69.6 -27.7,-69.6 -27.7,-68.3 -28.68,-68.3 -28.68,-69.6",
+                                   "El área será afectada por vientos del sector oeste con ráfagas que pueden superar los 100 km/h. Otra oración."),
+            "misiones.xml": _cap("TORMENTAS FUERTES", "Severe", "AVISO NARANJA POR TORMENTAS FUERTES", "-26.9,-54.4 -27.1,-53.8 -25.6,-53.8 -26.9,-54.4",
+                                 area="MISIONES: GUARANI - SAN PEDRO. "),
+            "vencida.xml": _cap("Tormentas", "Severe", "Tormentas", "-28,-70 -32,-70 -32,-65 -28,-65 -28,-70", expires="2026-10-20T00:00:00-03:00"),
+        }
+        calls = []
+
+        def fetcher(url):
+            calls.append(url)
+            body = index if url == sd.SMN_CAP_INDEX else docs[url.rsplit("/", 1)[-1]]
+            return mock.Mock(status_code=200, content=body.encode("utf-8"))
+
+        cache: dict = {}
+        when = datetime(2026, 10, 23, 12, 0, tzinfo=AR_TZ)
+        alerts = sd.fetch_alerts(fetcher=fetcher, cache=cache, now=when)
+        self.assertEqual((alerts["status"], alerts["level"], alerts["phenomenon"], alerts["kind"]), ("active", "amarilla", "viento", "alerta"))
+        self.assertEqual(alerts["zones"], ["Vinchina"])
+        # Segunda pasada: sólo el índice, los XML salen de la caché.
+        calls.clear()
+        sd.fetch_alerts(fetcher=fetcher, cache=cache, now=when)
+        self.assertEqual(calls, [sd.SMN_CAP_INDEX])
+        # Sin nada para La Rioja (o ya vencido): none.
+        cache.clear()
+        self.assertEqual(sd.fetch_alerts(fetcher=fetcher, cache=cache, now=datetime(2026, 10, 25, 12, 0, tzinfo=AR_TZ))["status"], "none")
+
+    def test_cap_departments_from_text_and_cancel(self):
+        from utils import service_data as sd
+
+        aviso = sd.parse_cap(_cap("VIENTO ZONDA", "Severe", "AVISO NARANJA POR VIENTO ZONDA", "-26,-54 -27,-53 -25,-53 -26,-54",
+                                  area="CATAMARCA: TINOGASTA. LA RIOJA: CAPITAL - GRAL ANGEL V. PENALOZA - CNEL FELIPE VARELA. "))
+        self.assertEqual((aviso["kind"], aviso["level"]), ("aviso", "naranja"))
+        self.assertEqual(aviso["departments"], ["Capital", "General Ángel Vicente Peñaloza", "Felipe Varela"])
+        cancel = sd.parse_cap(_cap("Tormentas", "Moderate", "Tormentas", "-28,-70 -32,-70 -32,-65 -28,-70").replace("<msgType>Alert", "<msgType>Cancel"))
+        self.assertTrue(cancel["cancel"])
+        self.assertIsNone(sd.parse_cap("<html>no es CAP"))
+
+    def test_alert_story_uses_smn_text_and_zones(self):
+        from utils.social_formats import alert_story
+
+        props = alert_story({"status": "active", "level": "amarilla", "phenomenon": "viento", "kind": "alerta", "zones": ["Vinchina"],
+                             "expires": "2026-10-24T02:59:59-03:00", "description": "El área será afectada por vientos del oeste. Otra."})
+        self.assertEqual(props["titulo"], "Alerta amarilla por viento")
+        self.assertEqual(props["zones"], ["Vinchina"])
+        self.assertEqual(props["body"], "El área será afectada por vientos del oeste.")
+        self.assertTrue(props["timeLabel"].startswith("Vigente hasta las 03:00"))
 
     def test_dollar_and_money(self):
         from utils import service_data as sd

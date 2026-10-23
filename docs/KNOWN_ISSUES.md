@@ -1453,3 +1453,19 @@
 - Tests: `InstagramPostedDedupWindowTests`,
   `test_similarity_filter_skips_title_match_but_keeps_exact_key`.
 - Rollback: `IG_POSTED_DEDUP_WINDOW_HOURS=0`.
+
+## 100. Mismo hecho: historias distintas de un evento grande pueden juntarse — ABIERTO 2026-10-23
+
+- Síntoma: en la evaluación sobre notas reales, "García Cuerva destacó la
+  Peregrinación a Luján…" (Nueva Rioja) quedó como duplicado de "Miles de
+  fieles caminan a Luján…": comparten el ancla "Luján" aunque son dos notas
+  distintas del mismo evento.
+- Impacto: se pierde una nota (no se publica); no se edita ningún post, porque
+  no se marcó como actualización.
+- Mitigación: las fuentes no locales no se evalúan y el prompt excluye "otra
+  historia dentro de un evento grande". Revisar `same_event_duplicate` en
+  `queue_events.json` si aparecen faltantes.
+- Límite conocido: la cola Meta casi no guarda bajadas, así que las candidatas
+  se comparan sobre todo por título; "Confirmaron muerte cerebral…" no se
+  relacionó con el primer vuelco ("puente Virgen India"), porque ningún texto
+  dice que el puente está en Sanagasta.

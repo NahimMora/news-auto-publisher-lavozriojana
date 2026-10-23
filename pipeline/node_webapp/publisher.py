@@ -555,6 +555,8 @@ def _history_item(noticia: dict, payload: dict, public_url: str) -> dict:
         "url": noticia.get("url"),
         "web_url": public_url,
         "published_at_ts": int(time.time()),
+        # El seguimiento (utils/story_updates.py) enlaza la publicación anterior.
+        "event_update": noticia.get("event_update"),
     })
 
 
@@ -719,6 +721,7 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
             category=category_to_slug(classify(noticia)),
             published_at=utc_now_iso(),
             riojan_source=str(noticia.get("source") or "").strip().lower() in RIOJAN_SOURCE_SECTIONS,
+            update_of_url=str((noticia.get("event_update") or {}).get("of_web_url") or ""),
         )
     except Exception:
         logger.exception("No se pudo construir el EditorialContextBundle; se publica sin contexto")

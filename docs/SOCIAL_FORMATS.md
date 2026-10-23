@@ -66,7 +66,8 @@ imagen OG del sitio ya trae el titular escrito.
 
 | Dato | Fuente |
 |---|---|
-| Tiempo presente, pronóstico 5 días, alertas | datos abiertos del SMN: `ssl.smn.gob.ar/dpd/zipopendata.php?dato=tiepre|pron5d|alertas` (estación "La Rioja" / "LA_RIOJA_AERO") |
+| Tiempo presente y pronóstico 5 días | datos abiertos del SMN: `ssl.smn.gob.ar/dpd/zipopendata.php?dato=tiepre|pron5d` (estación "La Rioja" / "LA_RIOJA_AERO") |
+| Alertas y avisos a muy corto plazo | feed CAP del SMN: índice `ssl.smn.gob.ar/CAP/AR.php` y un XML por emisión (caché por URL). Nivel por `severity`/titular; departamentos por el texto ("LA RIOJA: …") o por puntos de cada departamento dentro del polígono. `dato=alertas` de los datos abiertos viene vacío |
 | Dólar | `dolarapi.com/v1/dolares` (oficial, blue, MEP, CCL) |
 | Feriados | JSON oficial `argentina.gob.ar/sites/default/files/holidays-<año>-es.json` (se excluyen los "especiales" de otras provincias) |
 | Cortes y rutas | notas propias del archivo editorial (`classify_notice`) |
@@ -119,3 +120,25 @@ Apagar el interruptor del formato en `scripts/start_24x7_production.ps1`
 `SOCIAL_FORMATS_INSTAGRAM_ENABLED`/`SOCIAL_FORMATS_FACEBOOK_ENABLED`) y
 reiniciar el supervisor. Las tareas de reporte y vigilante se quitan con
 `schtasks /delete /tn LaVozRiojana-Report` y `LaVozRiojana-Watchdog`.
+
+## Mismo hecho y actualizaciones (2026-10-23)
+
+- Antes de la reescritura, `utils/same_event.py` compara la nota con lo encolado
+  en las últimas 36 h que comparte alguna palabra (sólo fuentes locales). Una
+  llamada a Gemini decide: otro hecho, mismo hecho sin nada nuevo (no sale) o
+  mismo hecho con un dato nuevo (sale como actualización). Exige un "ancla"
+  concreta escrita en las dos notas (lugar, ruta con número, nombre propio); si
+  no la hay o Gemini falla, la nota sigue como nueva.
+- Actualización: el título empieza por la novedad; la placa de IG lleva la
+  pestaña "ACTUALIZACIÓN" y el texto empieza con "🔄 ACTUALIZACIÓN" en cada red
+  donde la nota anterior ya salió. Además: historia "Actualización" (antes /
+  ahora), comentario en el post original de IG (la API no deja editar su texto)
+  y el post original de FB editado con "🔄 Actualización HH:MM". En la web, la
+  nota nueva queda en la misma historia (`storyKey`) que la anterior.
+- Si las dos versiones esperan juntas (horario de silencio), en esa red sale
+  sólo la más nueva (`policy_superseded_by_update`).
+- La placa admite hasta dos lugares ("Capital · Chilecito"), verificados contra
+  el texto, y saca del título el lugar que ya dice la pestaña cuando se puede
+  sin dejar conectores colgando (`strip_places`).
+- Alertas meteorológicas: sólo del SMN. Con `WEATHER_ALERT_NEWS_SMN_ONLY` las
+  notas de otros medios sobre alertas no se publican.

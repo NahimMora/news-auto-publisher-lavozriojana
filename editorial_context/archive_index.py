@@ -198,6 +198,14 @@ def get_by_article_id(article_id: str, *, path: Path | str | None = None) -> Arc
     return _row_to_article(row) if row else None
 
 
+def get_by_canonical_url(url: str, *, path: Path | str | None = None) -> ArchiveArticle | None:
+    with ec_db.connection(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM archive_articles WHERE canonical_url = ? ORDER BY published_at DESC LIMIT 1", (url,)
+        ).fetchone()
+    return _row_to_article(row) if row else None
+
+
 def set_story_key(article_id: str, story_key: str, *, path: Path | str | None = None) -> None:
     with ec_db.connection(path) as conn:
         conn.execute(

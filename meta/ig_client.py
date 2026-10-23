@@ -15,6 +15,7 @@ from utils.logging_setup import setup_logger
 from utils.news_dedup import find_duplicate
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
+from utils.same_event import original_published
 from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
@@ -502,6 +503,9 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             deduplicated=True,
             details={"duplicate_reason": duplicate},
         )
+
+    if original_published(noticia, "instagram"):
+        noticia = {**noticia, "show_update": True}
 
     r2_key: str | None = None
     image_details: dict = {}

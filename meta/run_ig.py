@@ -24,6 +24,7 @@ from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
 from utils.paparazzi_video_jobs import local_reel_expected
 from utils.paths import data_dir
+from utils.same_event import drop_superseded
 from utils.social_queue import (
     claim,
     bootstrap_not_before,
@@ -470,6 +471,7 @@ def main() -> StageResult:
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
         selected = _select_with_local_fill(limit)
+        selected, superseded = drop_superseded(selected, "instagram")
         selected, quiet_deferred = _split_quiet_hours(selected)
         selected, local_cap_excluded = _apply_local_daily_cap(selected)
     except JsonStateError as exc:
@@ -499,6 +501,7 @@ def main() -> StageResult:
                 "blocked_missing_web_url": missing_web_url,
                 "synced": synced,
                 "ambiguous_to_dead_letter": ambiguous,
+                "superseded_by_update": superseded,
             },
         )
 
@@ -574,6 +577,7 @@ def main() -> StageResult:
             "omitted_by_policy": omitted,
             "blocked_missing_web_url": missing_web_url,
             "ambiguous_to_dead_letter": ambiguous,
+            "superseded_by_update": superseded,
         },
     )
     if error_type == "invalid_credential":

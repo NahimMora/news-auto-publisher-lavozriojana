@@ -62,6 +62,17 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
   condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
   textos y las reglas de publicación son los mismos.
+- Mismo hecho y actualizaciones (2026-10-23, `SAME_EVENT_CHECK_ENABLED`): una
+  nota local del mismo hecho que otra de las últimas 36 h no sale si no trae
+  nada nuevo; con un dato nuevo sale como ACTUALIZACIÓN (placa, texto, historia,
+  comentario en el post de IG, edición del de FB, misma historia en la web). Ver
+  `docs/SOCIAL_FORMATS.md`.
+- Alertas del SMN desde el feed CAP (2026-10-23): la historia de alerta toma
+  nivel, fenómeno, departamentos, texto oficial y vencimiento; las notas de otros
+  medios sobre alertas no salen (`WEATHER_ALERT_NEWS_SMN_ONLY`).
+- Placa de IG con hasta dos lugares y sin repetir el lugar en el título; títulos
+  sin "de La Rioja" y más directos (prompts de redes y web). Sanagasta y otras
+  localidades se suman a la lista del router.
 - Zona en los avisos de corte (2026-10-23): la historia agrega un bloque "Zona" con
   el barrio, la localidad, la ruta o el alcance amplio que dice la nota; si no lo
   dice, "No especificada en el aviso original". Los cortes de luz/agua de fuera de

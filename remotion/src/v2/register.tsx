@@ -126,6 +126,7 @@ export const V2Compositions: React.FC = () => (
         assetWidth: 0,
         assetHeight: 0,
         breaking: false,
+        update: false,
         layout: "auto" as const,
         dateLabel: "",
       }}

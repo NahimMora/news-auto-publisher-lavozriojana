@@ -2518,3 +2518,26 @@ si se apagan o se filtran.
 
 **Rollback**: `PAYMENT_POSTS_ENABLED = "false"` / `QUAKE_POSTS_ENABLED = "false"`
 en el script de arranque; volver al commit `948065d` restaura las placas v1.
+
+## 2026-10-23 — Mismo hecho con IA, alertas sólo del SMN y lugar en la placa
+
+- Contexto: el 23/10 a las 07:33 y 07:34 Instagram publicó "Confirmaron muerte
+  cerebral…" y "Murió el joven que había volcado…": cuatro notas de dos fuentes
+  sobre el mismo vuelco en Sanagasta. El dedup por título no reconoce el mismo
+  hecho con otras palabras, y Sanagasta no estaba en la lista de localidades
+  del router (`no_riojan_link_detected`). La alerta por lluvias de la
+  cordillera salió como noticia de Fénix: la historia de alerta leía
+  `zipopendata.php?dato=alertas`, que viene vacío (nunca hubo una `svc:alert`).
+- Decisión: una llamada a Gemini por nota local con candidatas (mismo patrón
+  que `assess_judicial`), con ancla verificable para no relacionar hechos
+  distintos; actualización en post e historia de IG, edición del post de FB y
+  misma `storyKey` en la web. Alertas sólo desde el feed CAP del SMN; las notas
+  de otros medios sobre alertas no salen. Hasta dos lugares en la pestaña.
+- Evidencia: sobre 24 notas reales de la cola, la evaluación final marcó bien
+  la secuencia de Sanagasta (actualización y luego duplicado) y "Detuvieron al
+  conductor…" (actualización del choque de Aimogasta); sin ancla, "Murió un
+  empresario tras volcar…" dejó de relacionarse con otro vuelco. El feed CAP
+  devolvió una alerta amarilla por viento para Vinchina que la fuente anterior
+  no veía.
+- Rollback: `SAME_EVENT_CHECK_ENABLED=false` y `WEATHER_ALERT_NEWS_SMN_ONLY=false`
+  en `scripts/start_24x7_production.ps1`.

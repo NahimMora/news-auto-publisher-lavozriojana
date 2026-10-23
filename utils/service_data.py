@@ -149,32 +149,173 @@ def fetch_weather(*, station: str = "La Rioja", forecast_station: str = "LA_RIOJ
     return Weather(station=station, days=days, **present)
 
 
-# ── SMN: alertas ─────────────────────────────────────────────────────────
-_LEVELS = ("roja", "naranja", "amarilla")
-_PHENOMENA = (
-    "viento zonda", "tormentas fuertes", "tormentas", "lluvias", "nevadas", "viento",
-    "calor extremo", "temperaturas extremas", "frío extremo", "niebla", "polvo en suspensión",
-)
+# ── SMN: alertas (feed CAP) ──────────────────────────────────────────────
+# Los datos abiertos de alertas (zipopendata.php?dato=alertas) vienen vacíos
+# desde siempre. El feed CAP es el que el SMN publica para la red de alertas
+# de la OMM: un índice HTML con un XML por alerta o aviso a muy corto plazo.
+SMN_CAP_INDEX = "https://ssl.smn.gob.ar/CAP/AR.php"
+# Al bot le responde RSS (<link>…</link>); a un navegador, HTML (href="…").
+_CAP_LINK_RE = re.compile(r'(https://ssl\.smn\.gob\.ar/feeds/CAP/[^"<>\s]+\.xml)')
+_CAP_NS = {"cap": "urn:oasis:names:tc:emergency:cap:1.2"}
+_LEVEL_RANK = {"amarilla": 1, "naranja": 2, "roja": 3}
+_SEVERITY_LEVEL = {"moderate": "amarilla", "severe": "naranja", "extreme": "roja"}
+# Puntos (lat, lon) de cada departamento: la cabecera y, en los grandes del
+# oeste, la cordillera. Las alertas traen sólo un polígono; un departamento
+# está alcanzado si alguno de sus puntos cae adentro.
+RIOJA_DEPARTMENT_POINTS = {
+    "Capital": [(-29.41, -66.86), (-29.62, -67.08)],
+    "Sanagasta": [(-29.17, -67.03)],
+    "Castro Barros": [(-28.85, -66.93), (-28.70, -66.95)],
+    "Arauco": [(-28.56, -66.81), (-28.40, -66.70)],
+    "San Blas de los Sauces": [(-28.42, -67.09), (-28.25, -67.15)],
+    "Famatina": [(-28.92, -67.52), (-29.00, -67.83)],
+    "Chilecito": [(-29.16, -67.50), (-29.35, -67.45)],
+    "Felipe Varela": [(-29.31, -68.22), (-29.52, -68.53), (-29.80, -67.85)],
+    "General Lamadrid": [(-29.02, -68.22), (-28.95, -68.60)],
+    "Vinchina": [(-28.76, -68.20), (-28.55, -68.45), (-28.35, -68.80), (-28.07, -68.95)],
+    "Independencia": [(-30.05, -66.88), (-29.90, -67.40)],
+    "Chamical": [(-30.36, -66.31)],
+    "General Belgrano": [(-30.63, -66.27)],
+    "General Juan Facundo Quiroga": [(-30.80, -66.62)],
+    "General Ángel Vicente Peñaloza": [(-30.52, -66.53)],
+    "General Ortiz de Ocampo": [(-31.02, -65.99)],
+    "General San Martín": [(-31.57, -66.24)],
+    "Rosario Vera Peñaloza": [(-31.35, -66.60), (-31.10, -66.95)],
+}
 
 
-def parse_alerts(text: str, province: str = "La Rioja") -> dict:
-    """``status``: ``none`` (archivo sin alertas o sin la provincia),
-    ``active`` (nivel y fenómeno reconocidos) o ``unparsed`` (menciona la
-    provincia pero no se reconoce el formato: no se publica, queda en el
-    reporte)."""
-    lines = [line for line in text.splitlines() if _fold(province) in _fold(line)]
-    if not lines:
+def _inside(point: tuple[float, float], polygon: list[tuple[float, float]]) -> bool:
+    lat, lon = point
+    inside = False
+    for (lat1, lon1), (lat2, lon2) in zip(polygon, polygon[1:] + polygon[:1]):
+        if (lon1 > lon) != (lon2 > lon) and lat < (lat2 - lat1) * (lon - lon1) / (lon2 - lon1) + lat1:
+            inside = not inside
+    return inside
+
+
+_DEPT_STOP = {"general", "gral", "cnel", "coronel", "de", "los", "la", "v", "vicente", "juan", "facundo"}
+
+
+def _department_tokens(name: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", _fold(name)) if w not in _DEPT_STOP}
+
+
+def _department_name(name: str) -> str:
+    """"GRAL ANGEL V. PENALOZA" → "General Ángel Vicente Peñaloza"; si no
+    coincide con ninguno, el nombre tal como viene."""
+    tokens = _department_tokens(name)
+    best = max(RIOJA_DEPARTMENT_POINTS, key=lambda d: len(tokens & _department_tokens(d)))
+    if tokens and tokens & _department_tokens(best):
+        return best
+    return name.strip().title()
+
+
+def _cap_departments(area_desc: str, polygons: list[str]) -> list[str]:
+    """Departamentos riojanos alcanzados: del texto ("LA RIOJA: CAPITAL - ...")
+    si lo trae; si no, por los puntos de cada departamento dentro del polígono."""
+    for chunk in re.split(r"\.\s*(?=[A-ZÁÉÍÓÚÑ ]+:)", area_desc or ""):
+        province, _, names = chunk.partition(":")
+        if _fold(province).strip() == "la rioja":
+            found = [_department_name(name) for name in re.split(r"\s+-\s+", names.strip(" ."))]
+            return [n for n in dict.fromkeys(found) if n]
+    shapes = []
+    for raw in polygons:
+        try:
+            shapes.append([tuple(float(v) for v in pair.split(",")) for pair in raw.split()])
+        except ValueError:
+            continue
+    return [
+        name for name, points in RIOJA_DEPARTMENT_POINTS.items()
+        if any(len(shape) >= 3 and _inside(pt, shape) for shape in shapes for pt in points)
+    ]
+
+
+def parse_cap(xml: bytes | str) -> dict | None:
+    """Un XML CAP del SMN → ``{event, level, kind, expires, departments, cancel}``.
+    ``None`` si no se puede leer."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml if isinstance(xml, bytes) else xml.encode("utf-8"))
+    except ET.ParseError:
+        return None
+    info = root.find("cap:info", _CAP_NS)
+    if info is None:
+        return None
+
+    def text(node, tag: str) -> str:
+        found = node.find(f"cap:{tag}", _CAP_NS)
+        return (found.text or "").strip() if found is not None and found.text else ""
+
+    headline = text(info, "headline")
+    level = next((lv for lv in _LEVEL_RANK if lv in _fold(headline)), "") or _SEVERITY_LEVEL.get(text(info, "severity").lower(), "")
+    areas = info.findall("cap:area", _CAP_NS)
+    departments = _cap_departments(
+        " ".join(text(a, "areaDesc") for a in areas),
+        [p.text or "" for a in areas for p in a.findall("cap:polygon", _CAP_NS)],
+    )
+    return {
+        "event": text(info, "event"),
+        "level": level,
+        # "AVISO NARANJA POR TORMENTAS…" es un aviso a muy corto plazo (dos horas).
+        "kind": "aviso" if _fold(headline).startswith("aviso") else "alerta",
+        "expires": text(info, "expires"),
+        "description": text(info, "description"),
+        "departments": departments,
+        "cancel": text(root, "msgType").lower() == "cancel" or text(root, "status").lower() != "actual",
+    }
+
+
+def _phenomenon(event: str) -> str:
+    text = re.sub(r"\s+", " ", (event or "").strip()).lower()
+    return text.replace("zonda", "Zonda")
+
+
+def fetch_alerts(*, province: str = "La Rioja", fetcher=None, cache: dict | None = None, now: datetime | None = None) -> dict:
+    """Alerta vigente más alta del SMN para La Rioja.
+
+    ``cache`` (url → XML ya leído) evita bajar los ~80 XML del feed en cada
+    ciclo: cada emisión tiene su propio archivo. Se poda sola a lo que sigue
+    en el índice. ``status``: ``none`` o ``active``."""
+    del province  # el feed es nacional; los departamentos son los de La Rioja
+    index = _get(SMN_CAP_INDEX, fetcher).decode("utf-8", errors="replace")
+    links = list(dict.fromkeys(_CAP_LINK_RE.findall(index)))
+    cache = cache if cache is not None else {}
+    for stale in [url for url in cache if url not in links]:
+        cache.pop(stale, None)
+    moment = now_ar(now)
+    active = []
+    for url in links:
+        if url not in cache:
+            try:
+                cache[url] = parse_cap(_get(url, fetcher)) or {}
+            except ServiceDataError as exc:
+                logger.warning("SMN CAP no disponible (%s): %s", url.rsplit("/", 1)[-1], exc)
+                continue
+        alert = cache[url]
+        if not alert or alert.get("cancel") or not alert.get("departments") or alert.get("level") not in _LEVEL_RANK:
+            continue
+        try:
+            if datetime.fromisoformat(alert["expires"]) <= moment:
+                continue
+        except (KeyError, ValueError):
+            continue
+        active.append(alert)
+    if not active:
         return {"status": "none"}
-    joined = _fold(" ".join(lines))
-    level = next((lv for lv in _LEVELS if lv in joined), "")
-    phenomenon = next((ph for ph in _PHENOMENA if _fold(ph) in joined), "")
-    if not level or not phenomenon:
-        return {"status": "unparsed", "raw": " | ".join(lines)[:400]}
-    return {"status": "active", "level": level, "phenomenon": phenomenon, "raw": " | ".join(lines)[:400]}
-
-
-def fetch_alerts(*, province: str = "La Rioja", fetcher=None) -> dict:
-    return parse_alerts(_zip_text(_get(SMN_OPEN_DATA.format(dato="alertas"), fetcher)), province)
+    top = max(active, key=lambda a: (_LEVEL_RANK[a["level"]], a["kind"] == "alerta", a["expires"]))
+    same = [a for a in active if a["level"] == top["level"] and _fold(a["event"]) == _fold(top["event"])]
+    zones = list(dict.fromkeys(d for a in same for d in a["departments"]))
+    return {
+        "status": "active",
+        "level": top["level"],
+        "phenomenon": _phenomenon(top["event"]),
+        "kind": top["kind"],
+        "zones": zones,
+        "expires": max(a["expires"] for a in same),
+        "description": top.get("description", ""),
+        "raw": f"{top['kind']} {top['level']} {top['event']}: {', '.join(zones)}"[:400],
+    }
 
 
 # ── Dólar ────────────────────────────────────────────────────────────────

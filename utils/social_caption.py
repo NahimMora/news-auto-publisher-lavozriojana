@@ -202,4 +202,7 @@ def build_instagram_caption(noticia: dict) -> str:
         parrafos = noticia.get("parrafos") or []
         primero = noticia.get("excerpt") or (parrafos[0] if parrafos else "")
         cuerpo = f"{noticia.get('titulo', '')}\n\n{primero}"
+    if noticia.get("show_update"):
+        # Actualización de un hecho que ya salió en esta red (utils/same_event.py).
+        cuerpo = f"🔄 ACTUALIZACIÓN\n\n{cuerpo}"
     return f"{cuerpo}\n\n{_hashtags(noticia)}"[:2200]

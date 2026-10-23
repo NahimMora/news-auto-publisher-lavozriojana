@@ -17,6 +17,7 @@ from utils.logging_setup import setup_logger
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
 from utils.safe_http import UnsafeURLError, safe_get
+from utils.same_event import original_published
 from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
@@ -455,6 +456,9 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
             external_id=external_id,
             deduplicated=True,
         )
+
+    if original_published(noticia, "facebook"):
+        noticia = {**noticia, "show_update": True}
 
     endpoint = "feed"
     payload = {"message": _build_message(noticia)}
