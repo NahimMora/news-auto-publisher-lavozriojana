@@ -287,6 +287,103 @@ def classify_notice(title: str, excerpt: str = "") -> str:
     return ""
 
 
+# Alcance amplio: el aviso no nombra un barrio porque afecta a toda una zona.
+# Se revisa antes que el lugar del título sólo cuando éste es genérico ("la Capital").
+_WIDE_SCOPE = (
+    ("toda la provincia", "Toda la provincia"),
+    ("diversas zonas de la provincia", "Varias zonas de la provincia"),
+    ("distintas zonas de la provincia", "Varias zonas de la provincia"),
+    ("varias zonas de la provincia", "Varias zonas de la provincia"),
+    ("toda la ciudad", "Toda la Capital"),
+    ("toda la capital", "Toda la Capital"),
+    ("gran parte de la ciudad", "Gran parte de la Capital"),
+    ("gran parte de la capital", "Gran parte de la Capital"),
+    ("diversos sectores de la ciudad", "Varios sectores de la Capital"),
+    ("distintos sectores de la ciudad", "Varios sectores de la Capital"),
+    ("varios sectores de la ciudad", "Varios sectores de la Capital"),
+    ("diversos barrios", "Varios barrios"),
+    ("distintos barrios", "Varios barrios"),
+    ("varios barrios", "Varios barrios"),
+)
+WIDE_SCOPE_LABELS = {label for _, label in _WIDE_SCOPE}
+_GENERIC_PLACES = {"capital", "la capital", "la ciudad", "ciudad", "la rioja", "la ciudad capital"}
+_TITLE_PLACE_RE = re.compile(
+    r"\b(?:DEL\s+(?P<kind>PARAJE|BARRIO)|DE\s+LA\s+LOCALIDAD\s+DE|EN)\s+(?:(?:EL|LA|LOS|LAS)\s+)?"
+    r"(?P<p>.+?)(?=\s+(?:PARA|ESTE|ESTA|ESTOS|ESTAS|POR|DESDE|HASTA|HOY|MAÑANA|DURANTE|TRAS|DEBIDO|QUE|A\s+PARTIR|EL\s+(?:LUNES|MARTES|MIÉRCOLES|MIERCOLES|JUEVES|VIERNES|SÁBADO|SABADO|DOMINGO))\b|\s*[:;(]|\s*$)",
+    re.IGNORECASE,
+)
+_EXCERPT_PLACE_RE = re.compile(
+    r"\ben\s+(?:(?:el|la|los|las)\s+)?(?P<kind>(?:barrio|localidad\s+de|paraje|departamento|avenida|calle)\s+)?"
+    r"(?P<p>[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.]*(?:\s+(?:de\s+|del\s+|la\s+|los\s+|las\s+|y\s+)?[A-ZÁÉÍÓÚÑ0-9][\wÁÉÍÓÚÑáéíóúñ.]*)*)"
+)
+_ROUTE_RE = re.compile(r"\bruta\s+(?P<kind>nacional|provincial)?\s*(?:n[°º.]?\s*)?(?P<n>\d+)", re.IGNORECASE)
+_NOT_PLACES = ("rutas", "zona", "el servicio", "servicio", "la red", "red ", "linea", "lineas", "tareas", "una ", "un ", "dos ", "la via", "el tendido")
+_LOWER_WORDS = {"de", "del", "la", "las", "los", "el", "y", "e"}
+# Señal de que un corte de luz o agua es riojano: la distribuidora local o una
+# localidad. "Capital Federal" no cuenta.
+_RIOJAN_NOTICE_TERMS = {
+    "edelar", "aguas riojanas", "capital riojana", "la rioja", "riojan", "sanagasta", "chilecito", "famatina",
+    "vinchina", "arauco", "chamical", "aimogasta", "chepes", "patquia", "nonogasta", "villa union", "guandacol",
+    "santa florentina", "felipe varela", "san blas", "alpasinche", "anillaco", "aminga", "castro barros",
+    "olta", "ulapes", "malanzan", "tama", "villa castelli", "pagancillo", "san bernardo", "sanogasta",
+    "vichigasta", "pituil", "villa mazan", "llanos", "independencia", "lamadrid", "milagro", "catuna",
+    "santa cruz", "chanarmuyo", "anguinan", "chuquis", "vera barros", "punta de los llanos", "talamuyuna",
+}
+
+
+def _place_case(text: str) -> str:
+    if not text.isupper():
+        return text
+    words = text.lower().split()
+    return " ".join(w if i and w in _LOWER_WORDS else w[:1].upper() + w[1:] for i, w in enumerate(words))
+
+
+def _usable_place(text: str) -> str:
+    text = text.strip(" .-–")
+    folded = _fold(text)
+    if not text or len(text.split()) > 7 or folded.startswith(_NOT_PLACES):
+        return ""
+    return _place_case(text)
+
+
+def notice_zone(title: str, excerpt: str = "") -> str:
+    """Zona del aviso: barrio, localidad o ruta; el alcance si es amplio
+    ("Gran parte de la Capital"); "" si la nota no lo dice. Nunca inventa."""
+    folded = _fold(f"{title} {excerpt}")
+    wide = next((label for phrase, label in _WIDE_SCOPE if phrase in folded), "")
+    place = ""
+    # Sin finditer: "EN EL SERVICIO ELÉCTRICO DEL PARAJE SAN BERNARDO" se descarta
+    # entero y el lugar está adentro de ese mismo tramo.
+    match = _TITLE_PLACE_RE.search(title or "")
+    while match and not place:
+        place = _usable_place(f"{match.group('kind') or ''} {match.group('p')}")
+        match = _TITLE_PLACE_RE.search(title, match.start() + 1)
+    if place and _fold(place) in _GENERIC_PLACES:
+        place = wide or "Capital"
+    place = next((label for phrase, label in _WIDE_SCOPE if _fold(place) == phrase), place)
+    if not place:
+        match = _EXCERPT_PLACE_RE.search(excerpt or "")
+        if match and _fold(match.group("p")) not in ("la rioja", "edelar"):
+            place = _usable_place(f"{(match.group('kind') or '').capitalize()}{match.group('p')}")
+            if place and _fold(place) in _GENERIC_PLACES:
+                place = wide or "Capital"
+    place = place or wide
+    route = _ROUTE_RE.search(title or "") or _ROUTE_RE.search(excerpt or "")
+    if route:
+        label = f"Ruta {route.group('kind').capitalize() + ' ' if route.group('kind') else ''}{route.group('n')}"
+        if not place:
+            return label
+        if "ruta" not in _fold(place):
+            return f"{label} · {place}"
+    return place
+
+
+def is_riojan_notice(title: str, excerpt: str = "") -> bool:
+    """Cortes de luz y agua: sólo si la nota es de La Rioja (no un apagón en el AMBA)."""
+    folded = _fold(f"{title} {excerpt}").replace("capital federal", "")
+    return any(term in folded for term in _RIOJAN_NOTICE_TERMS) or " capital" in f" {folded}"
+
+
 def _archive_path() -> str:
     return str(data_dir() / "derived" / "editorial_context.sqlite3")
 
@@ -313,6 +410,9 @@ def recent_notices(*, hours: int = 36, now: datetime | None = None, db_path: str
     out = []
     for title, excerpt, url, published_at in rows:
         service = classify_notice(str(title or ""), str(excerpt or ""))
+        if service in ("luz", "agua") and not is_riojan_notice(str(title or ""), str(excerpt or "")):
+            logger.info("Aviso de corte fuera de La Rioja, no sale: %s", str(title or "")[:120])
+            continue
         if service:
             out.append({"service": service, "title": str(title or ""), "excerpt": str(excerpt or ""), "url": str(url or ""), "published_at": str(published_at or "")})
     return out

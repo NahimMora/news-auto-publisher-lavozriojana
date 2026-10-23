@@ -477,6 +477,8 @@ const NoticeStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
   const s = SERVICE[props.service];
   const title = fit({ text: props.titulo, maxWidth: W, maxHeight: 470, min: 60, max: 112, weight: 900, lh: 0.98, stretch: "condensed", maxLines: 5 });
   const body = props.body ? fit({ text: props.body, maxWidth: W - 32, maxHeight: 300, min: 30, max: 38, weight: 500, lh: 1.28, stretch: "semi-condensed", maxLines: 7 }) : null;
+  // Sin zona en la nota se dice "No especificada": nunca se supone un lugar.
+  const zone = fit({ text: props.place || "No especificada", maxWidth: W - 170 - 36 - 28, maxHeight: 112, min: 34, max: 60, weight: 900, lh: 1, stretch: "condensed", maxLines: 2 });
   return (
     <AbsoluteFill>
       <PlateBackdrop tone="ink" />
@@ -486,8 +488,19 @@ const NoticeStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
         <TagPair label={s.label} fill={s.color} color={s.ink} detail="Servicios" theme={INK} />
       </div>
       <div style={{ position: "absolute", left: M, right: M, top: 470, display: "flex", flexDirection: "column", gap: 34 }}>
-        <div style={{ width: 170, height: 170, backgroundColor: s.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <ServiceIcon service={props.service} color={s.ink} />
+        <div style={{ display: "flex", gap: 36, alignItems: "stretch" }}>
+          <div style={{ width: 170, height: 170, flexShrink: 0, backgroundColor: s.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ServiceIcon service={props.service} color={s.ink} />
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 12, borderLeft: `2px solid ${rgba(C.white, 0.18)}`, paddingLeft: 28 }}>
+            <span style={caps(24, s.color, 900, 0.18)}>Zona</span>
+            <div style={{ ...display(zone.fontSize, props.place ? C.white : INK.mute, 900, "condensed"), lineHeight: `${zone.lineHeight}px` }}>
+              {zone.lines.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </div>
+            {props.place ? null : <span style={caps(20, INK.mute, 700, 0.12)}>en el aviso original</span>}
+          </div>
         </div>
         <div style={{ ...display(title.fontSize, C.white, 900, "condensed"), lineHeight: `${title.lineHeight}px` }}>
           {title.lines.map((l, i) => (

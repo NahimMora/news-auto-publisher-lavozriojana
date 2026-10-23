@@ -62,6 +62,10 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
   condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
   textos y las reglas de publicación son los mismos.
+- Zona en los avisos de corte (2026-10-23): la historia agrega un bloque "Zona" con
+  el barrio, la localidad, la ruta o el alcance amplio que dice la nota; si no lo
+  dice, "No especificada en el aviso original". Los cortes de luz/agua de fuera de
+  La Rioja dejan de salir como aviso.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y

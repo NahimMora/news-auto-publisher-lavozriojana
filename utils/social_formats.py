@@ -124,9 +124,16 @@ def notice_story(notice: dict) -> dict:
         pass
     source = {"luz": "Fuente: EDELaR", "agua": "Fuente: Aguas Riojanas", "rutas": "Fuente: Vialidad"}.get(notice["service"], "Información de servicio")
     title = notice["title"]
+    # ``place`` vacío: la historia dice "No especificada" en vez de suponer un lugar.
+    zone = sd.notice_zone(notice["title"], notice.get("excerpt", ""))
     if title.isupper():
         title = title[:1] + title[1:].lower()
-    return story_props(kind="notice", service=notice["service"], titulo=title, body=notice.get("excerpt", ""), dateLabel=label, sourceLabel=source)
+        # Devuelve las mayúsculas a los nombres propios de la zona ("barrio Joaquín V. González").
+        for name in re.split(r" · |, | y ", zone):
+            name = re.sub(r"^(Barrio|Paraje|Localidad de|Departamento|Avenida|Calle) ", "", name)
+            if name and name[:1].isupper() and name not in sd.WIDE_SCOPE_LABELS:
+                title = re.sub(re.escape(name), name, title, count=1, flags=re.IGNORECASE)
+    return story_props(kind="notice", service=notice["service"], titulo=title, body=notice.get("excerpt", ""), dateLabel=label, sourceLabel=source, place=zone)
 
 
 def due_service_stories(now: datetime | None = None, *, done=lambda key: False) -> list[tuple[str, dict, str | None]]:

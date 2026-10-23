@@ -110,6 +110,62 @@ class ServiceDataTests(unittest.TestCase):
         self.assertEqual(c("SINIESTRO VIAL EN RUTA 9: AUTO TERMINÓ EN UNA ZANJA"), "")
         self.assertEqual(c("INAUGURARON NUEVAS LUMINARIAS EN LA AVENIDA MADRE TERESA DE CALCUTA"), "")
 
+    def test_notice_zone(self):
+        from utils.service_data import notice_zone as z
+
+        self.assertEqual(z("CORTE DE LUZ PROGRAMADO EN EL BARRIO VIAL PARA ESTE MIÉRCOLES"), "Barrio Vial")
+        self.assertEqual(z("CORTE DE LUZ PROGRAMADO PARA ESTE VIERNES EN ALPASINCHE"), "Alpasinche")
+        self.assertEqual(z("EDELAR INFORMÓ UN CORTE DE URGENCIA EN EL SERVICIO ELÉCTRICO DEL PARAJE SAN BERNARDO"), "Paraje San Bernardo")
+        self.assertEqual(z("CORTES DE LUZ PROGRAMADOS EN CAPITAL, SANAGASTA Y LLANOS SUR"), "Capital, Sanagasta y Llanos Sur")
+        self.assertEqual(z("CONTROLARON UN INCENDIO FORESTAL EN PAGANCILLO QUE DEJÓ SIN LUZ A DOS BARRIOS"), "Pagancillo")
+        self.assertEqual(z("CORTE TOTAL EN LA RUTA NACIONAL 40 POR MAL TIEMPO"), "Ruta Nacional 40")
+        self.assertEqual(z("CERRADA RUTA NACIONAL 40 EN LA CUESTA DE MIRANDA"), "Ruta Nacional 40 · Cuesta de Miranda")
+        # Alcance amplio: no nombra barrio porque afecta a toda una zona.
+        self.assertEqual(z("CORTE DE AGUA ESTE MIÉRCOLES EN GRAN PARTE DE LA CAPITAL"), "Gran parte de la Capital")
+        self.assertEqual(z("CORTES DE LUZ EN LA CAPITAL POR FALLAS TÉCNICAS", "Afectan a diversos sectores de la ciudad."), "Varios sectores de la Capital")
+        # El lugar sólo en la bajada.
+        self.assertEqual(z("CORTE DE LUZ PROGRAMADO PARA ESTE JUEVES", "EDELaR trabajará en la localidad de Aminga."), "Localidad de Aminga")
+        # Sin dato: vacío, la historia dice "No especificada".
+        self.assertEqual(z("CORTE DE LUZ PROGRAMADO PARA ESTE MARTES", "EDELaR informó tareas de mantenimiento."), "")
+        self.assertEqual(z("SE REHABILITA EL TRÁNSITO EN RUTAS CLAVE TRAS EL MAL TIEMPO"), "")
+
+    def test_notice_story_zone_and_title_case(self):
+        from utils.social_formats import notice_story
+
+        props = notice_story({"service": "luz", "title": "CORTE DE SUMINISTRO ELÉCTRICO EN EL BARRIO JOAQUÍN V. GONZÁLEZ POR TAREAS", "excerpt": "", "url": "u", "published_at": ""})
+        self.assertEqual(props["place"], "Barrio Joaquín V. González")
+        self.assertEqual(props["titulo"], "Corte de suministro eléctrico en el barrio Joaquín V. González por tareas")
+        props = notice_story({"service": "agua", "title": "CORTE DE AGUA EN GRAN PARTE DE LA CAPITAL", "excerpt": "", "url": "u", "published_at": ""})
+        self.assertEqual(props["titulo"], "Corte de agua en gran parte de la capital")
+        self.assertEqual(notice_story({"service": "luz", "title": "CORTE DE LUZ PARA ESTE MARTES", "excerpt": "", "url": "u", "published_at": ""})["place"], "")
+
+    def test_cuts_outside_la_rioja_do_not_count(self):
+        from utils.service_data import is_riojan_notice as r
+
+        self.assertTrue(r("CORTE DE LUZ PROGRAMADO EN EL BARRIO VIAL", "EDELaR informó una interrupción."))
+        self.assertTrue(r("CORTE DE AGUA EN GRAN PARTE DE LA CAPITAL", "Trabajos en el Acueducto Ramal Oeste."))
+        self.assertFalse(r("APAGÓN MASIVO EN EL AMBA: MILES DE USUARIOS SIN LUZ", "Cortes en barrios porteños y el conurbano."))
+        self.assertFalse(r("CORTE DE LUZ EN CAPITAL FEDERAL", "Miles de usuarios afectados."))
+
+    def test_recent_notices_skip_cuts_outside_la_rioja(self):
+        import sqlite3
+        import tempfile
+
+        from utils.service_data import recent_notices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "archive.sqlite3")
+            conn = sqlite3.connect(path)
+            conn.execute("create table archive_articles (title text, excerpt text, canonical_url text, published_at text)")
+            conn.executemany("insert into archive_articles values (?, ?, ?, ?)", [
+                ("CORTE DE LUZ PROGRAMADO EN EL BARRIO VIAL", "EDELaR informó una interrupción.", "https://x/1", "2026-11-02T12:00:00"),
+                ("APAGÓN MASIVO EN EL AMBA: MILES DE USUARIOS SIN LUZ", "Cortes en barrios porteños.", "https://x/2", "2026-11-02T12:00:00"),
+            ])
+            conn.commit()
+            conn.close()
+            found = recent_notices(hours=24, now=datetime(2026, 11, 2, 10, 0, tzinfo=AR_TZ), db_path=path)
+        self.assertEqual([n["url"] for n in found], ["https://x/1"])
+
 
 class OfficialJsonSourcesTests(unittest.TestCase):
     def test_wordpress(self):
@@ -269,7 +325,8 @@ class ServiceStoriesScheduleTests(_TempState):
         weather = next(p for _, p, _ in jobs if p["kind"] == "weather")
         self.assertIn("naranja", weather["alertSummary"])
         notice = next(p for _, p, _ in jobs if p["kind"] == "notice")
-        self.assertEqual(notice["titulo"], "Corte de luz en el centro")
+        self.assertEqual(notice["titulo"], "Corte de luz en el Centro")
+        self.assertEqual(notice["place"], "Centro")
 
 
 class BriefAndRecapTests(_TempState):

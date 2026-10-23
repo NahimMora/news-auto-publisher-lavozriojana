@@ -56,6 +56,11 @@ imagen OG del sitio ya trae el titular escrito.
   respuesta para revisar: `python cli.py comment-replies list|approve|reject`.
 - Avisos de cortes y rutas: salen de notas propias publicadas (EDELaR y Aguas
   Riojanas no tienen un listado de cortes en sus sitios).
+  La historia muestra la zona que dice la nota (`notice_zone`): barrio,
+  localidad o ruta; el alcance si es amplio ("Gran parte de la Capital", "Varias
+  zonas de la provincia"); y "No especificada en el aviso original" si la nota no
+  la dice. Nunca se supone un lugar. Los cortes de luz o agua sin señal riojana
+  (EDELaR, Aguas Riojanas o una localidad; p. ej. un apagón en el AMBA) no salen.
 
 ## Fuentes de servicio
 
