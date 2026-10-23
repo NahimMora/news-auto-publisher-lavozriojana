@@ -400,6 +400,30 @@ class BriefAndRecapTests(_TempState):
         self.assertFalse(self.sf.same_topic(a, c))
         self.assertTrue(self.sf.same_topic({"title": "x", "story_key": "s1"}, {"title": "y", "story_key": "s1"}))
 
+    def test_brief_builds_with_cached_smn_alerts(self):
+        # El carrusel pide las alertas con la caché del feed CAP (antes caía con
+        # NameError porque el carrusel no tenía el estado a mano).
+        items = [{"title": f"Nota {i}", "section": "sociedad", "deck": "", "photo_url": f"https://media/{i}.webp"} for i in range(3)]
+        seen = {}
+
+        def alerts(*, cache, now):
+            seen["cache"] = cache
+            cache["https://ssl.smn.gob.ar/feeds/CAP/x.xml"] = {}
+            return {"status": "none"}
+
+        with mock.patch.object(self.sf, "select_brief_items", return_value=items), \
+                mock.patch.object(self.sf, "_render_brief_slide", return_value=b"jpg"), \
+                mock.patch.object(self.sf, "download_image", return_value=None), \
+                mock.patch.object(self.sf.sd, "fetch_weather", return_value=None), \
+                mock.patch.object(self.sf.sd, "fetch_alerts", side_effect=alerts), \
+                mock.patch.object(self.sf.sd, "fetch_dollar", return_value=[]), \
+                mock.patch.object(self.sf.sd, "upcoming_holidays", return_value=[]), \
+                mock.patch.object(self.sf.sd, "recent_notices", return_value=[]):
+            brief = self.sf.build_morning_brief()
+        self.assertEqual(len(brief["slides"]), 5)
+        self.assertIn("cache", seen)
+        self.assertIn("https://ssl.smn.gob.ar/feeds/CAP/x.xml", self.sf.load_state()["smn_cap_cache"])
+
     def test_brief_selection_prefers_local_and_skips_sensitive(self):
         now = time.time()
         records = [

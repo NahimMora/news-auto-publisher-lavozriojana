@@ -83,6 +83,15 @@ def weather_story(weather: sd.Weather, alerts: dict, now: datetime | None = None
     )
 
 
+def fetch_alerts_cached(now: datetime | None = None) -> dict:
+    """Alertas del SMN con la caché de XML del feed CAP en el estado de formatos
+    (la usan las historias y el carrusel). Lanza ``ServiceDataError``."""
+    cache = dict(load_state().get("smn_cap_cache") or {})
+    alerts = sd.fetch_alerts(cache=cache, now=now)
+    _note("smn_cap_cache", cache)
+    return alerts
+
+
 def _alert_until(expires: str) -> str:
     """"2026-10-24T02:59:59-03:00" → "Vigente hasta las 03:00 del sábado"."""
     try:
@@ -169,9 +178,7 @@ def due_service_stories(now: datetime | None = None, *, done=lambda key: False) 
 
     alerts: dict = {"status": "none"}
     try:
-        cap_cache = dict(state.get("smn_cap_cache") or {})
-        alerts = sd.fetch_alerts(cache=cap_cache, now=now)
-        _note("smn_cap_cache", cap_cache)
+        alerts = fetch_alerts_cached(now)
     except sd.ServiceDataError as exc:
         logger.warning("Alertas SMN no disponibles: %s", exc)
         alerts = {"status": "error"}
@@ -387,9 +394,7 @@ def build_morning_brief(now: datetime | None = None) -> dict | None:
     holidays: list[dict] = []
     try:
         weather = sd.fetch_weather()
-        cap_cache = dict(state.get("smn_cap_cache") or {})
-        alerts = sd.fetch_alerts(cache=cap_cache, now=now)
-        _note("smn_cap_cache", cap_cache)
+        alerts = fetch_alerts_cached(now)
     except sd.ServiceDataError as exc:
         logger.warning("SMN no disponible para el carrusel: %s", exc)
     try:
