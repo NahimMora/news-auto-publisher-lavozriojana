@@ -460,3 +460,55 @@ def parse_felt_quakes(raw: bytes, province: str = "La Rioja") -> list[dict]:
 
 def fetch_felt_quakes(*, province: str = "La Rioja", fetcher=None) -> list[dict]:
     return parse_felt_quakes(_get(INPRES_FELT_URL, fetcher), province)
+
+
+# ── INPRES: listado inmediato + detalle (placas v2) ──────────────────────
+INPRES_LIST_URL = "http://contenidos.inpres.gob.ar/mapa/sismos.xml"
+INPRES_DETAIL_URL = "http://contenidos.inpres.gob.ar/epicentro3.php?s={id}"
+# Leyenda de la página de INPRES: azul = automático, negro = revisado, rojo = sentido.
+_QUAKE_STATUS = {"00f": "automatic", "000": "revised", "f00": "felt"}
+
+
+def parse_quake_list(raw: bytes) -> list[dict]:
+    """Últimos sismos de INPRES (``sismos.xml``) con su estado de revisión."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(_decode_feed(raw))
+    except ET.ParseError as exc:
+        raise ServiceDataError("xml_invalido") from exc
+    out = []
+    for item in root.iter("item"):
+        quake_id = str(item.findtext("idSismo") or "").strip()
+        try:
+            moment = datetime.strptime(quake_id, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            magnitude = float(str(item.findtext("mg") or "").replace(",", "."))
+            depth = int(float(str(item.findtext("prof") or "")))
+        except ValueError:
+            continue
+        out.append({
+            "id": quake_id,
+            "at": moment.isoformat(),
+            "magnitude": magnitude,
+            "depth_km": depth,
+            "province": str(item.findtext("prov") or "").strip(),
+            "status": _QUAKE_STATUS.get(str(item.findtext("color_link") or "").strip().lower(), "unknown"),
+        })
+    return out
+
+
+def parse_quake_detail(html_text: str) -> dict:
+    """Distancias a localidades tal como las informa INPRES (la más cercana primero)."""
+    import html as _html
+
+    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", html_text or "")))
+    places = [m.group(0).strip() for m in re.finditer(r"\d+ km al [NSEO]{1,2} de [^;&\d]+?(?=;|\s-?\d+\.\d+ \(lat\)|$)", text)]
+    return {"places": places, "automatic": "automaticamente" in _fold(text)}
+
+
+def fetch_quakes(*, fetcher=None) -> list[dict]:
+    return parse_quake_list(_get(INPRES_LIST_URL, fetcher))
+
+
+def fetch_quake_detail(quake_id: str, *, fetcher=None) -> dict:
+    return parse_quake_detail(_get(INPRES_DETAIL_URL.format(id=quake_id), fetcher).decode("utf-8", "replace"))
