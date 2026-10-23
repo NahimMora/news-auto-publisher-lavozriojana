@@ -20,6 +20,7 @@
 import React from "react";
 import { AbsoluteFill, Img, staticFile } from "remotion";
 import { z } from "zod";
+import { EmphText, markData, markPhrase } from "../emphasis";
 import { fit } from "../fit";
 import { useV2FontsReady } from "../fonts";
 import { C, rgba } from "../tokens";
@@ -58,6 +59,8 @@ export const StoryV2Schema = z.object({
   rows: z.array(DollarRow).default([]),
   // notice
   service: z.enum(["luz", "agua", "rutas", "aviso"]).default("aviso"),
+  // Frase destacada del título (aviso, seguimiento): ver ../emphasis.tsx.
+  highlightTerms: z.array(z.string()).default([]),
   // holidays
   holidays: z.array(Holiday).default([]),
   countdown: z.string().default(""),
@@ -136,11 +139,13 @@ const UpdateStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
       ) : null}
       <div style={{ position: "absolute", left: M, right: M, top: photo ? 826 : 480, display: "flex", flexDirection: "column", gap: 22 }}>
         <span style={caps(24, INK.accent, 900, 0.18)}>Seguimos informando</span>
-        <div style={{ ...display(title.fontSize, C.white, 900, "condensed"), lineHeight: `${title.lineHeight}px` }}>
-          {title.lines.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
+        {props.titulo ? (
+          <div style={{ ...display(title.fontSize, C.white, 900, "condensed"), lineHeight: `${title.lineHeight}px` }}>
+            {title.lines.map((l, i) => (
+              <div key={i}>{l}</div>
+            ))}
+          </div>
+        ) : null}
         <div style={{ display: "flex", flexDirection: "column", marginTop: 8 }}>
           <div style={{ padding: "22px 32px", backgroundColor: rgba(C.white, 0.07), border: `2px solid ${INK.rule}`, display: "flex", flexDirection: "column", gap: 12 }}>
             <span style={caps(22, INK.mute, 900, 0.18)}>Antes</span>
@@ -152,11 +157,13 @@ const UpdateStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
           </div>
           <div style={{ padding: "26px 32px 30px", backgroundColor: C.white, borderTop: `8px solid ${C.red}`, display: "flex", flexDirection: "column", gap: 14 }}>
             <span style={caps(22, C.red, 900, 0.18)}>Ahora</span>
-            <div style={{ ...display(after.fontSize, INK.bg, 900, "condensed"), lineHeight: `${after.lineHeight}px` }}>
-              {after.lines.map((l, i) => (
-                <div key={i}>{l}</div>
-              ))}
-            </div>
+            <EmphText
+              lines={after.lines}
+              tokens={markPhrase(props.after, props.highlightTerms)}
+              lineHeight={after.lineHeight}
+              base={display(after.fontSize, rgba(INK.bg, 0.86), 700, "condensed")}
+              strong={{ color: C.red, fontWeight: 900 }}
+            />
           </div>
         </div>
         {props.sourceLabel ? <span style={{ ...caps(20, INK.mute, 800, 0.12), whiteSpace: "normal", lineHeight: 1.3 }}>{props.sourceLabel}</span> : null}
@@ -295,16 +302,20 @@ const LEVEL = {
 
 const AlertStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
   const level = LEVEL[props.level];
-  // "Alerta amarilla por tormentas" → "por tormentas" debajo del panel.
-  const phenomenon = props.titulo.replace(new RegExp(`^alerta\\s+${props.level}\\s*`, "i"), "").trim() || props.titulo;
+  // "Alerta amarilla por tormentas" → "por tormentas" debajo del panel. Los
+  // avisos a muy corto plazo del SMN dicen "Aviso naranja por…".
+  const kind = /^aviso\b/i.test(props.titulo) ? "Aviso" : "Alerta";
+  const phenomenon = props.titulo.replace(new RegExp(`^(?:alerta|aviso)\\s+${props.level}\\s*`, "i"), "").trim() || props.titulo;
   const title = fit({ text: phenomenon, maxWidth: W, maxHeight: 250, min: 60, max: 120, weight: 900, lh: 0.98, stretch: "condensed", maxLines: 2, uppercase: true });
+  // Cifras del texto oficial ("ráfagas de 100 km/h") en el color del nivel.
+  const body = props.body ? fit({ text: props.body, maxWidth: W - 32, maxHeight: 290, min: 32, max: 44, weight: 800, lh: 1.25, stretch: "semi-condensed", maxLines: 6 }) : null;
   const levelFit = fit({ text: props.level, maxWidth: W - 270, maxHeight: 220, min: 90, max: 210, weight: 900, lh: 0.9, stretch: "condensed", maxLines: 1, uppercase: true });
   return (
     <AbsoluteFill>
       <PlateBackdrop tone="ink" />
       <div style={{ position: "absolute", left: M, right: M, top: STORY.top, display: "flex", flexDirection: "column", gap: 28 }}>
         <Brand color={C.white} seal={78} size={32} sub="" />
-        <TagPair label="Alerta" fill={level.color} color={level.ink} detail="Servicio Meteorológico Nacional" theme={INK} />
+        <TagPair label={kind} fill={level.color} color={level.ink} detail="Servicio Meteorológico Nacional" theme={INK} />
       </div>
       <div
         style={{
@@ -327,7 +338,7 @@ const AlertStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
           <circle cx={65} cy={94} r={7} fill={level.color} />
         </svg>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={caps(34, level.ink, 900, 0.2)}>Alerta</span>
+          <span style={caps(34, level.ink, 900, 0.2)}>{kind}</span>
           <span style={{ ...display(levelFit.fontSize, level.ink, 900, "condensed"), lineHeight: `${levelFit.lineHeight}px`, textTransform: "uppercase" }}>{props.level}</span>
         </div>
       </div>
@@ -337,8 +348,16 @@ const AlertStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
             <div key={i}>{l}</div>
           ))}
         </div>
-        {props.body ? (
-          <div style={{ ...display(44, rgba(C.white, 0.88), 500), lineHeight: 1.25, borderLeft: `6px solid ${level.color}`, paddingLeft: 26 }}>{props.body}</div>
+        {body ? (
+          <div style={{ borderLeft: `6px solid ${level.color}`, paddingLeft: 26 }}>
+            <EmphText
+              lines={body.lines}
+              tokens={markData(props.body)}
+              lineHeight={body.lineHeight}
+              base={display(body.fontSize, rgba(C.white, 0.78), 500)}
+              strong={{ color: level.color, fontWeight: 900 }}
+            />
+          </div>
         ) : null}
         {props.zones.length ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -476,7 +495,7 @@ const ServiceIcon: React.FC<{ service: StoryV2Props["service"]; color: string }>
 const NoticeStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
   const s = SERVICE[props.service];
   const title = fit({ text: props.titulo, maxWidth: W, maxHeight: 470, min: 60, max: 112, weight: 900, lh: 0.98, stretch: "condensed", maxLines: 5 });
-  const body = props.body ? fit({ text: props.body, maxWidth: W - 32, maxHeight: 300, min: 30, max: 38, weight: 500, lh: 1.28, stretch: "semi-condensed", maxLines: 7 }) : null;
+  const body = props.body ? fit({ text: props.body, maxWidth: W - 32, maxHeight: 300, min: 30, max: 38, weight: 800, lh: 1.28, stretch: "semi-condensed", maxLines: 7 }) : null;
   // Sin zona en la nota se dice "No especificada": nunca se supone un lugar.
   const zone = fit({ text: props.place || "No especificada", maxWidth: W - 170 - 36 - 28, maxHeight: 112, min: 34, max: 60, weight: 900, lh: 1, stretch: "condensed", maxLines: 2 });
   return (
@@ -502,16 +521,22 @@ const NoticeStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
             {props.place ? null : <span style={caps(20, INK.mute, 700, 0.12)}>en el aviso original</span>}
           </div>
         </div>
-        <div style={{ ...display(title.fontSize, C.white, 900, "condensed"), lineHeight: `${title.lineHeight}px` }}>
-          {title.lines.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
+        <EmphText
+          lines={title.lines}
+          tokens={markPhrase(props.titulo, props.highlightTerms)}
+          lineHeight={title.lineHeight}
+          base={display(title.fontSize, rgba(C.white, 0.9), 700, "condensed")}
+          strong={{ color: s.color, fontWeight: 900 }}
+        />
         {body ? (
-          <div style={{ ...display(body.fontSize, rgba(C.white, 0.86), 500), lineHeight: `${body.lineHeight}px`, borderLeft: `6px solid ${s.color}`, paddingLeft: 26 }}>
-            {body.lines.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
+          <div style={{ borderLeft: `6px solid ${s.color}`, paddingLeft: 26 }}>
+            <EmphText
+              lines={body.lines}
+              tokens={markData(props.body)}
+              lineHeight={body.lineHeight}
+              base={display(body.fontSize, rgba(C.white, 0.74), 500)}
+              strong={{ color: C.white, fontWeight: 800 }}
+            />
           </div>
         ) : null}
         {props.dateLabel ? <span style={caps(22, INK.mute, 800, 0.14)}>{props.dateLabel}</span> : null}

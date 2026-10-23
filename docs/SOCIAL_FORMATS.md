@@ -142,3 +142,23 @@ reiniciar el supervisor. Las tareas de reporte y vigilante se quitan con
   sin dejar conectores colgando (`strip_places`).
 - Alertas meteorológicas: sólo del SMN. Con `WEATHER_ALERT_NEWS_SMN_ONLY` las
   notas de otros medios sobre alertas no se publican.
+
+## Resaltados (2026-10-23)
+
+`remotion/src/v2/emphasis.tsx` arma tres niveles en historias, placas de
+servicio y carrusel, sólo con palabras que ya están en el texto:
+
+1. Núcleo del título (`highlightTerms`, del selector local
+   `select_highlight_phrase`): color de la pieza y peso 900; el resto del título
+   en 700 y un poco más tenue. Aviso de corte, seguimiento ("Ahora") y notas del
+   carrusel.
+2. Datos de los textos corridos (`markData`): cifras con su unidad ("100 km/h",
+   "18 kilómetros"), horarios y rangos ("de 8 a 13 horas"), fechas con su día
+   ("lunes 19/10", "23 de octubre") y montos, en negrita (en la alerta, en el
+   color del nivel). Bajada del aviso, texto oficial de la alerta, líneas de
+   las placas de pagos y sismos, bajada del carrusel.
+3. El resto, más liviano.
+
+El selector local de frases no abre ni cierra en calificativos ("presunto",
+"nuevo"), días ni meses, no cruza la puntuación y premia la acción al
+principio ("Murió el joven", "Corte de agua").

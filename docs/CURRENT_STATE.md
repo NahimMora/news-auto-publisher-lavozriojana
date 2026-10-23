@@ -62,6 +62,9 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
   condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
   textos y las reglas de publicación son los mismos.
+- Resaltados (2026-10-23): historias, placas y carrusel destacan el núcleo del
+  título en color y los datos (cifras, horarios, fechas) en negrita; el resto va
+  más liviano. Ver `docs/SOCIAL_FORMATS.md`.
 - Mismo hecho y actualizaciones (2026-10-23, `SAME_EVENT_CHECK_ENABLED`): una
   nota local del mismo hecho que otra de las últimas 36 h no sale si no trae
   nada nuevo; con un dato nuevo sale como ACTUALIZACIÓN (placa, texto, historia,

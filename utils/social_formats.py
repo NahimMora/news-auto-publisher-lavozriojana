@@ -28,6 +28,7 @@ from utils.paths import data_dir
 from utils.social_time import DIAS, MESES, day_label, hhmm, now_ar, range_label, today_ar
 from utils.story_publisher import download_image, story_props
 from utils.url_normalization import url_hash
+from utils.visual_v2_props import highlight_terms_for
 
 logger = setup_logger("social_formats", "social_formats.log")
 
@@ -164,7 +165,8 @@ def notice_story(notice: dict) -> dict:
             name = re.sub(r"^(Barrio|Paraje|Localidad de|Departamento|Avenida|Calle) ", "", name)
             if name and name[:1].isupper() and name not in sd.WIDE_SCOPE_LABELS:
                 title = re.sub(re.escape(name), name, title, count=1, flags=re.IGNORECASE)
-    return story_props(kind="notice", service=notice["service"], titulo=title, body=notice.get("excerpt", ""), dateLabel=label, sourceLabel=source, place=zone)
+    return story_props(kind="notice", service=notice["service"], titulo=title, body=notice.get("excerpt", ""), dateLabel=label,
+                       sourceLabel=source, place=zone, highlightTerms=highlight_terms_for(title, {}))
 
 
 def due_service_stories(now: datetime | None = None, *, done=lambda key: False) -> list[tuple[str, dict, str | None]]:
@@ -332,7 +334,7 @@ def select_brief_items(*, now: float | None = None, count: int = 5, fetch=fetch_
 
 
 # ── Carrusel "Lo que tenés que saber hoy" ────────────────────────────────
-BRIEF_DEFAULTS = {"slide": "cover", "dateLabel": "", "weatherLine": "", "index": [], "number": 1, "total": 5, "page": "", "seccion": "", "titulo": "", "deck": "", "assetFile": "", "services": []}
+BRIEF_DEFAULTS = {"slide": "cover", "dateLabel": "", "weatherLine": "", "index": [], "number": 1, "total": 5, "page": "", "seccion": "", "titulo": "", "deck": "", "highlightTerms": [], "assetFile": "", "services": []}
 
 
 def _render_brief_slide(props: dict, asset: str | None = None) -> bytes:
@@ -424,7 +426,7 @@ def build_morning_brief(now: datetime | None = None) -> dict | None:
                 paths.append(photo)
             slides.append(_render_brief_slide({
                 "slide": "news", "number": n, "total": len(items), "seccion": item["section"], "titulo": item["title"],
-                "deck": item["deck"], "page": f"{n + 1}/{total}",
+                "deck": item["deck"], "page": f"{n + 1}/{total}", "highlightTerms": highlight_terms_for(item["title"], item),
             }, photo))
         slides.append(_render_brief_slide({
             "slide": "services", "dateLabel": day_label(today), "page": f"{total}/{total}",

@@ -332,6 +332,19 @@ _HIGHLIGHT_GENERIC_WORDS = {
     "policía", "policia", "provincia", "punto", "puntos", "región", "rioja",
     "riojana", "riojano", "sector", "sectores", "semana", "toda", "todas",
     "todo", "todos", "varias", "varios", "zona", "zonas",
+    "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+    "este", "esta", "estos", "estas",
+}
+
+# Calificativos y auxiliares que no pueden abrir ni cerrar la frase: dejan el
+# resaltado colgando ("empleado judicial por presunto", "agua este miércoles").
+_HIGHLIGHT_WEAK_EDGES = {
+    "presunto", "presunta", "presuntos", "presuntas", "supuesto", "supuesta",
+    "supuestos", "supuestas", "nuevo", "nueva", "nuevos", "nuevas", "había",
+    "habían", "fue", "fueron", "es", "son", "será", "serán", "está", "están",
+    "muy", "más", "menos", "ese", "esa", "esos", "esas",
 }
 
 # Raíces de acciones/resultados frecuentes en títulos. Sólo se usan para
@@ -342,12 +355,16 @@ _HIGHLIGHT_EVENT_PREFIXES = (
     "denunci", "despleg", "detuv", "disp", "fallec", "gan", "habilit",
     "inaugur", "investig", "lanz", "muri", "orden", "perdi", "present",
     "rechaz", "recuper", "reduj", "reforz", "realiz", "resolv", "secuestr",
-    "suspend",
+    "suspend", "volc", "choc", "herid", "rob", "asalt", "allan", "imput",
+    "conden", "rescat", "cort", "cerr", "apuñal", "bale", "dispar", "atropell",
+    "incendi", "desapareci", "encontr", "hall", "clausur", "evacu", "inund",
+    "estaf", "cobr", "pag",
 )
 
 _HIGHLIGHT_EVENT_NOUNS = {
     "acuerdo", "aumento", "choque", "condena", "detención", "incendio",
-    "medida", "obras", "operativo", "plan", "reforma", "rescate",
+    "medida", "obras", "operativo", "plan", "reforma", "rescate", "corte",
+    "cortes", "vuelco", "robo", "sumario", "coimas", "alerta", "paro",
 }
 
 
@@ -369,9 +386,16 @@ def _highlight_candidate_score(normalized_title: list[str], start: int, length: 
         return None
     if window[0] in _HIGHLIGHT_STOPWORDS or window[-1] in _HIGHLIGHT_STOPWORDS:
         return None
+    if window[0] in _HIGHLIGHT_WEAK_EDGES or window[-1] in _HIGHLIGHT_WEAK_EDGES:
+        return None
+    if window[-1] in _HIGHLIGHT_GENERIC_WORDS:
+        return None
 
     content = [word for word in window if word not in _HIGHLIGHT_STOPWORDS]
-    informative = [word for word in content if word not in _HIGHLIGHT_GENERIC_WORDS]
+    informative = [
+        word for word in content
+        if word not in _HIGHLIGHT_GENERIC_WORDS and word not in _HIGHLIGHT_WEAK_EDGES
+    ]
     event_count = sum(_is_highlight_event_word(word) for word in informative)
     if len(content) < 2 or len(informative) < 2:
         return None
@@ -387,11 +411,18 @@ def _highlight_candidate_score(normalized_title: list[str], start: int, length: 
         sum(min(len(word), 10) for word in informative)
         + len(informative) * 6
         + event_count * 10
+        # La acción al principio de la frase ("Murió el joven", "Corte de agua").
+        + (6 if _is_highlight_event_word(window[0]) else 0)
         - stopword_count * 4
         - generic_count * 7
         - abs(length - 3.5) * 2
         - start * 1.35
     )
+
+
+def _crosses_punctuation(words: list[str]) -> bool:
+    """"Jubilación obligatoria: suspenderán" cruza los dos puntos: no es una frase."""
+    return any(re.search(r"[:;,.!?]$", word) for word in words[:-1])
 
 
 def _validated_highlight_phrase(title: str, phrase: str) -> str:
@@ -409,6 +440,8 @@ def _validated_highlight_phrase(title: str, phrase: str) -> str:
             continue
         if _highlight_candidate_score(normalized_title, start, len(phrase_words)) is None:
             return ""
+        if _crosses_punctuation(title_words[start : start + len(phrase_words)]):
+            return ""
         return " ".join(title_words[start : start + len(phrase_words)])
     return ""
 
@@ -423,6 +456,8 @@ def _select_highlight_phrase(title: str) -> str:
     best: tuple[float, int, int] | None = None
     for length in range(2, min(4, len(words)) + 1):
         for start in range(0, len(words) - length + 1):
+            if _crosses_punctuation(words[start : start + length]):
+                continue
             score = _highlight_candidate_score(normalized, start, length)
             if score is None:
                 continue

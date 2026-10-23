@@ -37,7 +37,7 @@ STORY_DEFAULTS: dict = {
     "kind": "post", "assetFile": "", "assetWidth": 0, "assetHeight": 0, "seccion": "", "titulo": "",
     "body": "", "dateLabel": "", "timeLabel": "", "sourceLabel": "", "before": "", "after": "",
     "place": "La Rioja", "temp": 0, "sky": "", "detail": "", "days": [], "alertSummary": "",
-    "level": "amarilla", "zones": [], "rows": [], "service": "aviso", "holidays": [], "countdown": "",
+    "level": "amarilla", "zones": [], "rows": [], "service": "aviso", "highlightTerms": [], "holidays": [], "countdown": "",
     "status": "hoy", "kicker": "", "hero": "", "heroLabel": "", "lines": [], "footer": "",
 }
 

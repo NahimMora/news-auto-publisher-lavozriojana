@@ -227,6 +227,25 @@ class WeatherAlertNewsTests(unittest.TestCase):
             self.assertFalse(w(alert))
 
 
+class HighlightPhraseTests(unittest.TestCase):
+    def test_local_selector_picks_the_core_and_never_dangles(self):
+        from openIA.caption_generator import select_highlight_phrase as h
+
+        self.assertEqual(h("Murió el joven que había volcado con su auto en la Ruta 75"), "Murió el joven")
+        self.assertEqual(h("Corte de agua este miércoles en gran parte de la capital"), "Corte de agua")
+        self.assertEqual(h("Confirmaron muerte cerebral para el joven accidentado en Sanagasta"), "Confirmaron muerte cerebral")
+        # Nunca termina en un calificativo ni cruza la puntuación.
+        self.assertNotIn("presunto", h("Investigan a un empleado judicial por presunto pedido de coimas").split()[-1])
+        self.assertNotIn(":", h("Jubilación obligatoria: suspenderán la Quincenita a quienes no inicien el trámite"))
+
+    def test_notice_story_carries_the_phrase(self):
+        from utils.social_formats import notice_story
+
+        props = notice_story({"service": "agua", "title": "CORTE DE AGUA ESTE MIÉRCOLES EN GRAN PARTE DE LA CAPITAL", "excerpt": "",
+                              "url": "u", "published_at": ""})
+        self.assertEqual(props["highlightTerms"], ["Corte de agua"])
+
+
 class PlaceTests(unittest.TestCase):
     def test_strip_places_without_dangling_connectors(self):
         from utils.visual_v2_props import strip_places as s

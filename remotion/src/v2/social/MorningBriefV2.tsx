@@ -14,6 +14,7 @@
 import React from "react";
 import { AbsoluteFill, Img, staticFile } from "remotion";
 import { z } from "zod";
+import { EmphText, markData, markPhrase } from "../emphasis";
 import { fit } from "../fit";
 import { useV2FontsReady } from "../fonts";
 import { C, rgba, sectionStyle } from "../tokens";
@@ -34,6 +35,7 @@ export const MorningBriefV2Schema = z.object({
   seccion: z.string().default(""),
   titulo: z.string().default(""),
   deck: z.string().default(""),
+  highlightTerms: z.array(z.string()).default([]),
   assetFile: z.string().default(""),
   services: z.array(ServiceRow).default([]),
 });
@@ -130,7 +132,7 @@ const Cover: React.FC<{ props: MorningBriefV2Props }> = ({ props }) => {
 const News: React.FC<{ props: MorningBriefV2Props }> = ({ props }) => {
   const sec = sectionStyle(props.seccion);
   const deck = props.deck
-    ? fit({ text: props.deck, maxWidth: INNER - 30, maxHeight: 130, min: 26, max: 32, weight: 500, lh: 1.28, stretch: "semi-condensed", maxLines: 3 })
+    ? fit({ text: props.deck, maxWidth: INNER - 30, maxHeight: 130, min: 26, max: 32, weight: 800, lh: 1.28, stretch: "semi-condensed", maxLines: 3 })
     : null;
   const headline = fit({ text: props.titulo, maxWidth: INNER, maxHeight: 360, min: 52, max: 92, weight: 900, lh: 0.98, stretch: "condensed", maxLines: 4 });
   // La foto crece hasta donde empieza el texto: sin aire muerto abajo.
@@ -153,16 +155,23 @@ const News: React.FC<{ props: MorningBriefV2Props }> = ({ props }) => {
         <span style={{ display: "flex", alignItems: "center", padding: "0 28px", backgroundColor: INK.bg, ...caps(24, C.white, 900, 0.16) }}>{sec.label}</span>
       </div>
       <div style={{ position: "absolute", left: M, right: M, top: textTop + 34, display: "flex", flexDirection: "column", gap: 26 }}>
-        <div style={{ ...display(headline.fontSize, PAPER.ink, 900, "condensed"), lineHeight: `${headline.lineHeight}px`, letterSpacing: "-0.01em" }}>
-          {headline.lines.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
+        {/* Núcleo del titular en rojo y 900; el resto más liviano. */}
+        <EmphText
+          lines={headline.lines}
+          tokens={markPhrase(props.titulo, props.highlightTerms)}
+          lineHeight={headline.lineHeight}
+          base={{ ...display(headline.fontSize, rgba(PAPER.ink, 0.88), 700, "condensed"), letterSpacing: "-0.01em" }}
+          strong={{ color: C.red, fontWeight: 900 }}
+        />
         {deck ? (
-          <div style={{ ...display(deck.fontSize, PAPER.mute, 500), lineHeight: `${deck.lineHeight}px`, borderLeft: `6px solid ${sec.accent}`, paddingLeft: 24 }}>
-            {deck.lines.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
+          <div style={{ borderLeft: `6px solid ${sec.accent}`, paddingLeft: 24 }}>
+            <EmphText
+              lines={deck.lines}
+              tokens={markData(props.deck)}
+              lineHeight={deck.lineHeight}
+              base={display(deck.fontSize, PAPER.mute, 500)}
+              strong={{ color: PAPER.ink, fontWeight: 800 }}
+            />
           </div>
         ) : null}
       </div>

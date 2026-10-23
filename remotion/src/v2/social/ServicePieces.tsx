@@ -15,6 +15,7 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
 import { z } from "zod";
+import { EmphText, markData, markPhrase } from "../emphasis";
 import { fit } from "../fit";
 import { C, rgba } from "../tokens";
 import { Brand, caps, display } from "./chrome";
@@ -359,7 +360,8 @@ export const ServicePlate: React.FC<PlateProps> = ({
         maxHeight: Math.max(40, budget / Math.max(1, rows.length) - 28 * k),
         min: 26,
         max: (i === 0 ? 44 : 34) * k,
-        weight: i === 0 ? 800 : 500,
+        // Se mide con el peso de los datos resaltados (ver ../emphasis.tsx).
+        weight: 800,
         lh: 1.15,
         stretch: "semi-condensed",
         maxLines: 2,
@@ -376,17 +378,19 @@ export const ServicePlate: React.FC<PlateProps> = ({
           style={{
             borderTop: `2px solid ${i === 0 ? theme.accent : theme.rule}`,
             padding: `${14 * k}px 0`,
-            ...display(
+          }}
+        >
+          <EmphText
+            lines={f.lines}
+            tokens={i === 0 ? markPhrase(rows[i], []) : markData(rows[i])}
+            lineHeight={f.lineHeight}
+            base={display(
               f.fontSize,
               i === 0 ? theme.ink : theme.mute,
               i === 0 ? 800 : 500,
-            ),
-            lineHeight: `${f.lineHeight}px`,
-          }}
-        >
-          {f.lines.map((l, j) => (
-            <div key={j}>{l}</div>
-          ))}
+            )}
+            strong={{ color: theme.ink, fontWeight: 800 }}
+          />
         </div>
       ))}
     </div>

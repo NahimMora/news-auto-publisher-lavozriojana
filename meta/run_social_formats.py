@@ -32,6 +32,7 @@ from utils.logging_setup import setup_logger
 from utils.remotion_renderer import RemotionRenderError
 from utils.social_time import hhmm, now_ar, quiet_hours, today_ar
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
+from utils.visual_v2_props import highlight_terms_for
 
 logger = setup_logger("run_social_formats", "social_formats.log")
 
@@ -95,10 +96,12 @@ def _updates(instagram: bool, facebook: bool) -> tuple[int, int]:
         try:
             props = sp.story_props(
                 kind="update",
-                titulo=(fetch_article_title(cand) or cand["original_title"].capitalize()),
+                # Mismo hecho: el título anterior ya va tachado en "Antes"; sin repetirlo arriba.
+                titulo="" if cand.get("kind") == "event" else (fetch_article_title(cand) or cand["original_title"].capitalize()),
                 # Mismo hecho con dato nuevo: antes, lo que ya habíamos publicado.
                 before=cand["original_title"] if cand.get("kind") == "event" else su.phrase(cand["noun"], cand["before"]),
                 after=new_title,
+                highlightTerms=highlight_terms_for(new_title, {}),
                 timeLabel=when,
                 sourceLabel=f"Según la nota publicada a las {when}.",
             )
