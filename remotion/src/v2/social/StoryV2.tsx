@@ -6,9 +6,10 @@
 //   breaking  igual que post, con el rótulo "Último momento".
 //   reel      la portada del Reel a pantalla completa + llamado.
 //   update    seguimiento: dato anterior tachado y dato nuevo de la fuente.
-//   weather   clima del SMN: actual, pronóstico de 5 días y alertas.
+//   weather   clima del SMN: actual, pronóstico de 5 días y alertas (mismo
+//             sistema que las placas de servicio).
 //   alert     alerta meteorológica del SMN para La Rioja.
-//   dollar    cotizaciones del día.
+//   dollar    cotizaciones del día (ídem).
 //   notice    aviso de servicio (corte de luz/agua, rutas) tomado de una nota.
 //   holidays  próximos feriados.
 //   payments  cronograma de pagos de Hacienda (ver ServicePieces.tsx).
@@ -22,8 +23,8 @@ import { z } from "zod";
 import { fit } from "../fit";
 import { useV2FontsReady } from "../fonts";
 import { C, V2_FONT_SERIF, rgba } from "../tokens";
-import { FieldBackdrop, PhotoBackdrop, STORY, SourceLine, StoryCta, StoryMasthead, Tab, caps, display, serif } from "./chrome";
-import { ServicePiecesSchema, ServicePlate } from "./ServicePieces";
+import { Brand, FieldBackdrop, PhotoBackdrop, STORY, SourceLine, StoryCta, StoryMasthead, Tab, caps, display, serif } from "./chrome";
+import { PlateBackdrop, ServicePiecesSchema, ServicePlate, TagPair, THEMES } from "./ServicePieces";
 
 const WeatherDay = z.object({ label: z.string(), max: z.number(), min: z.number(), rain: z.number().default(0) });
 const DollarRow = z.object({ name: z.string(), buy: z.string().default(""), sell: z.string(), delta: z.number().default(0) });
@@ -152,60 +153,98 @@ const UpdateStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
 };
 
 // ── Clima ───────────────────────────────────────────────────────────────
+// Azul noche de las placas de servicio. Temperatura actual gigante, cielo
+// y mínima/máxima de hoy al lado; pronóstico en cinco columnas con la franja
+// de cada día sobre la misma escala; alerta del SMN en una banda al pie.
+const INK = THEMES.ink;
+const WARM = "#F2994A";
+
 const WeatherStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
   const days = props.days.slice(0, 5);
+  const today = days[0];
   const lo = Math.min(...days.map((d) => d.min), props.temp);
   const hi = Math.max(...days.map((d) => d.max), props.temp);
   const span = Math.max(1, hi - lo);
-  const barX = 300;
-  const barW = W - barX - 150;
   const alertOn = Boolean(props.alertSummary) && !/^sin alertas/i.test(props.alertSummary);
+  const temp = `${Math.round(props.temp)}°`;
+  const tempFit = fit({ text: temp, maxWidth: 560, maxHeight: 420, min: 200, max: 420, weight: 900, lh: 0.9, stretch: "condensed", maxLines: 1 });
+  const sideW = W - tempFit.widest - 36;
+  const sky = fit({ text: props.sky, maxWidth: sideW, maxHeight: 190, min: 44, max: 76, weight: 900, lh: 0.98, stretch: "condensed", maxLines: 3 });
+  const colGap = 14;
+  const colW = (W - colGap * (days.length - 1)) / Math.max(1, days.length);
+  const barH = 190;
   return (
     <AbsoluteFill>
-      <FieldBackdrop from="#16304d" to={C.ink} dots={rgba(C.white, 0.08)} />
-      <StoryMasthead tab={<Tab label="El tiempo" fill={C.blue} />} />
-      <div style={{ position: "absolute", left: M, right: M, top: 430, display: "flex", flexDirection: "column", gap: 18 }}>
-        <div style={caps(26, rgba(C.white, 0.75), 800, 0.18)}>{props.place}</div>
-        <div style={serif(38, C.white)}>{props.dateLabel}</div>
+      <PlateBackdrop tone="ink" />
+      <AbsoluteFill style={{ background: `radial-gradient(70% 40% at 100% 30%, ${rgba(WARM, props.temp >= 28 ? 0.2 : 0.06)} 0%, ${rgba(WARM, 0)} 70%)` }} />
+      <div style={{ position: "absolute", left: M, right: M, top: STORY.top, display: "flex", flexDirection: "column", gap: 28 }}>
+        <Brand color={C.white} seal={78} size={32} sub="" />
+        <TagPair label="El tiempo" fill={C.blue} color={C.white} detail={props.place} theme={INK} />
       </div>
-      <div style={{ position: "absolute", left: M - 8, top: 560, display: "flex", alignItems: "flex-start", gap: 34 }}>
-        <div style={{ ...display(300, C.white, 900, "condensed"), lineHeight: 0.9, letterSpacing: "-0.04em" }}>
-          {Math.round(props.temp)}°
+      <div style={{ position: "absolute", left: M, right: M, top: 470, display: "flex", flexDirection: "column", gap: 10 }}>
+        <span style={caps(26, INK.mute, 800, 0.16)}>{props.dateLabel}</span>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 36 }}>
+          <div style={{ ...display(tempFit.fontSize, C.white, 900, "condensed"), lineHeight: `${tempFit.lineHeight}px`, letterSpacing: "-0.03em" }}>{temp}</div>
+          <div style={{ width: sideW, display: "flex", flexDirection: "column", gap: 22, paddingTop: 24 }}>
+            <div style={{ ...display(sky.fontSize, C.white, 900, "condensed"), lineHeight: `${sky.lineHeight}px` }}>
+              {sky.lines.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </div>
+            {today ? (
+              <div style={{ display: "flex", gap: 12 }}>
+                {[
+                  ["Mín", today.min, INK.accent],
+                  ["Máx", today.max, WARM],
+                ].map(([label, value, color]) => (
+                  <div key={label as string} style={{ flex: 1, borderTop: `6px solid ${color}`, backgroundColor: rgba(C.white, 0.06), padding: "14px 16px" }}>
+                    <div style={caps(20, INK.mute, 800, 0.16)}>{label as string}</div>
+                    <div style={{ ...display(64, C.white, 900, "condensed"), lineHeight: 1, marginTop: 8 }}>{Math.round(value as number)}°</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 18, paddingTop: 40 }}>
-          <div style={display(58, C.white, 800)}>{props.sky}</div>
-          <div style={serif(32, rgba(C.white, 0.78))}>{props.detail}</div>
-        </div>
+        {props.detail ? <span style={{ ...caps(24, INK.mute, 700, 0.1), whiteSpace: "normal", lineHeight: 1.3, marginTop: 12 }}>{props.detail}</span> : null}
       </div>
-      <div style={{ position: "absolute", left: M, right: M, top: 900, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", ...caps(21, rgba(C.white, 0.6), 700, 0.16), paddingBottom: 20 }}>
-          <span>Próximos días</span>
-          <span>Mín. · Máx.</span>
-        </div>
+      <div style={{ position: "absolute", left: M, right: M, top: 1000, display: "flex", gap: colGap }}>
         {days.map((d, i) => {
-          const x0 = ((d.min - lo) / span) * barW;
-          const x1 = ((d.max - lo) / span) * barW;
+          const top = ((hi - d.max) / span) * barH;
+          const bottom = ((hi - d.min) / span) * barH;
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", height: 96, borderTop: `2px solid ${rgba(C.white, 0.14)}` }}>
-              <div style={{ width: 150, ...caps(30, C.white, 800, 0.08) }}>{d.label}</div>
-              <div style={{ width: barX - 150, ...display(34, rgba(C.white, 0.6), 700), textAlign: "right", paddingRight: 24 }}>{Math.round(d.min)}°</div>
-              <div style={{ position: "relative", width: barW, height: 12, borderRadius: 6, backgroundColor: rgba(C.white, 0.1) }}>
+            <div
+              key={i}
+              style={{
+                width: colW,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 12,
+                padding: "20px 0 18px",
+                backgroundColor: i === 0 ? rgba(C.white, 0.09) : rgba(C.white, 0.035),
+                borderTop: `4px solid ${i === 0 ? C.red : INK.rule}`,
+              }}
+            >
+              <span style={caps(24, i === 0 ? C.white : INK.mute, 900, 0.12)}>{d.label}</span>
+              <span style={{ ...display(54, C.white, 900, "condensed"), lineHeight: 1 }}>{Math.round(d.max)}°</span>
+              <div style={{ position: "relative", width: 14, height: barH, borderRadius: 7, backgroundColor: rgba(C.white, 0.08) }}>
                 <div
                   style={{
                     position: "absolute",
-                    left: x0,
-                    width: Math.max(14, x1 - x0),
-                    top: 0,
-                    bottom: 0,
-                    borderRadius: 6,
-                    background: `linear-gradient(90deg, #7fb2e5, #f2a54a)`,
+                    left: 0,
+                    right: 0,
+                    top,
+                    height: Math.max(14, bottom - top),
+                    borderRadius: 7,
+                    background: `linear-gradient(180deg, ${WARM}, ${INK.accent})`,
                   }}
                 />
               </div>
-              <div style={{ width: 150, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                <span style={display(40, C.white, 850)}>{Math.round(d.max)}°</span>
-                {d.rain > 0 ? <span style={caps(17, "#9cc7f0", 700, 0.06)}>{d.rain.toLocaleString("es-AR")} mm</span> : null}
-              </div>
+              <span style={{ ...display(40, INK.mute, 800, "condensed"), lineHeight: 1 }}>{Math.round(d.min)}°</span>
+              <span style={{ ...caps(18, d.rain > 0 ? INK.accent : rgba(C.white, 0.3), 800, 0.06), height: 18 }}>
+                {d.rain > 0 ? `${d.rain.toLocaleString("es-AR")} mm` : "Sin lluvia"}
+              </span>
             </div>
           );
         })}
@@ -215,18 +254,19 @@ const WeatherStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
           position: "absolute",
           left: M,
           right: M,
-          top: 1440,
+          top: 1478,
           display: "flex",
           alignItems: "center",
-          gap: 20,
-          padding: "24px 28px",
-          backgroundColor: alertOn ? rgba("#E0A800", 0.22) : rgba(C.white, 0.08),
-          borderLeft: `8px solid ${alertOn ? "#E0A800" : "#3fb37f"}`,
+          gap: 18,
+          padding: "20px 24px",
+          backgroundColor: alertOn ? "#E3A008" : rgba(C.white, 0.06),
+          border: alertOn ? "none" : `2px solid ${INK.rule}`,
         }}
       >
-        <span style={caps(24, C.white, 800, 0.1)}>{props.alertSummary || "Sin alertas del SMN para La Rioja"}</span>
+        <span style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: alertOn ? INK.bg : "#3DD68C", flexShrink: 0 }} />
+        <span style={{ ...caps(24, alertOn ? INK.bg : C.white, 900, 0.1), whiteSpace: "normal", lineHeight: 1.2 }}>{props.alertSummary || "Sin alertas del SMN para La Rioja"}</span>
       </div>
-      <SourceLine left={props.sourceLabel || "Fuente: Servicio Meteorológico Nacional"} />
+      <SourceLine left={props.sourceLabel || "Fuente: Servicio Meteorológico Nacional"} color={C.white} top={1586} />
     </AbsoluteFill>
   );
 };
@@ -272,39 +312,77 @@ const AlertStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
 };
 
 // ── Dólar ───────────────────────────────────────────────────────────────
-const DollarStory: React.FC<{ props: StoryV2Props }> = ({ props }) => (
-  <AbsoluteFill>
-    <FieldBackdrop from="#10261f" to={C.ink} dots={rgba(C.white, 0.06)} />
-    <StoryMasthead tab={<Tab label="Economía" fill={C.navy} />} />
-    <div style={{ position: "absolute", left: M, right: M, top: 440, display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={display(104, C.white, 900, "condensed")}>Dólar hoy</div>
-      <div style={serif(36, rgba(C.white, 0.8))}>{props.dateLabel}</div>
-    </div>
-    <div style={{ position: "absolute", left: M, right: M, top: 700, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", ...caps(21, rgba(C.white, 0.55), 700, 0.16), paddingBottom: 22 }}>
-        <span style={{ flex: 1 }}>Cotización</span>
-        <span style={{ width: 250, textAlign: "right" }}>Compra</span>
-        <span style={{ width: 300, textAlign: "right" }}>Venta</span>
+// Las dos primeras cotizaciones (oficial y blue) en tarjetas grandes; el
+// resto en filas. Variación desde el último aviso en un chip: sube en rojo,
+// baja en verde. La brecha sale del texto que arma Python.
+const UP = "#FF6B5E";
+const DOWN = "#3DD68C";
+
+const Delta: React.FC<{ value: number; size?: number }> = ({ value, size = 22 }) =>
+  value ? (
+    <span style={{ ...caps(size, value > 0 ? UP : DOWN, 900, 0.06), display: "inline-flex", alignItems: "center", gap: 8 }}>
+      {value > 0 ? "▲" : "▼"} ${Math.abs(value).toLocaleString("es-AR", { maximumFractionDigits: 2 })}
+    </span>
+  ) : (
+    <span style={caps(size, THEMES.ink.mute, 800, 0.06)}>Sin cambios</span>
+  );
+
+const DollarStory: React.FC<{ props: StoryV2Props }> = ({ props }) => {
+  const featured = props.rows.slice(0, 2);
+  const rest = props.rows.slice(2, 5);
+  const gap = /brecha[^:]*:\s*([\d.,]+\s*%)/i.exec(props.body)?.[1] ?? "";
+  const cardW = (W - 20) / 2;
+  // Las filas restantes llenan el alto hasta la banda de brecha.
+  const rowH = Math.min(190, 392 / Math.max(1, rest.length));
+  return (
+    <AbsoluteFill>
+      <PlateBackdrop tone="ink" />
+      <div style={{ position: "absolute", left: M, right: M, top: STORY.top, display: "flex", flexDirection: "column", gap: 28 }}>
+        <Brand color={C.white} seal={78} size={32} sub="" />
+        <TagPair label="Economía" fill={C.red} color={C.white} detail={props.dateLabel} theme={INK} />
       </div>
-      {props.rows.map((row, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "center", height: 186, borderTop: `2px solid ${rgba(C.white, 0.14)}` }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
-            <span style={display(46, C.white, 800)}>{row.name}</span>
-            {(row.delta ?? 0) !== 0 ? (
-              <span style={caps(20, row.delta > 0 ? "#f08a7e" : "#6fd3a0", 800, 0.06)}>
-                {row.delta > 0 ? "▲" : "▼"} ${Math.abs(row.delta).toLocaleString("es-AR", { maximumFractionDigits: 2 })} desde el último aviso
-              </span>
-            ) : null}
+      <div style={{ position: "absolute", left: M, right: M, top: 470, ...display(176, C.white, 900, "condensed"), lineHeight: 0.92, letterSpacing: "-0.02em" }}>
+        DÓLAR <span style={{ color: INK.accent }}>HOY</span>
+      </div>
+      <div style={{ position: "absolute", left: M, right: M, top: 660, display: "flex", gap: 20 }}>
+        {featured.map((row, i) => {
+          const sell = fit({ text: `$${row.sell}`, maxWidth: cardW - 56, maxHeight: 150, min: 80, max: 140, weight: 900, lh: 1, stretch: "condensed", maxLines: 1 });
+          return (
+            <div key={i} style={{ width: cardW, backgroundColor: i === 1 ? C.blue : rgba(C.white, 0.07), border: i === 1 ? "none" : `2px solid ${INK.rule}`, padding: "28px 28px 26px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <span style={caps(28, C.white, 900, 0.14)}>{row.name}</span>
+              <span style={{ ...display(sell.fontSize, C.white, 900, "condensed"), lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>${row.sell}</span>
+              <span style={caps(20, rgba(C.white, 0.7), 800, 0.12)}>Venta</span>
+              <div style={{ height: 2, backgroundColor: rgba(C.white, 0.18), margin: "4px 0" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ ...caps(22, rgba(C.white, 0.85), 800, 0.08), fontVariantNumeric: "tabular-nums" }}>{row.buy ? `Compra $${row.buy}` : ""}</span>
+                <Delta value={row.delta ?? 0} size={20} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ position: "absolute", left: M, right: M, top: 1048, display: "flex", flexDirection: "column" }}>
+        {rest.map((row, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", height: rowH, borderTop: `2px solid ${i === 0 ? INK.accent : INK.rule}`, gap: 20 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <span style={{ ...display(rowH > 150 ? 64 : 52, C.white, 900, "condensed"), lineHeight: 1 }}>{row.name}</span>
+              <Delta value={row.delta ?? 0} size={18} />
+            </div>
+            <span style={{ width: 230, textAlign: "right", ...caps(24, INK.mute, 800, 0.06), fontVariantNumeric: "tabular-nums" }}>{row.buy ? `Compra $${row.buy}` : ""}</span>
+            <span style={{ width: 330, textAlign: "right", ...display(rowH > 150 ? 96 : 76, C.white, 900, "condensed"), lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>${row.sell}</span>
           </div>
-          <span style={{ width: 250, textAlign: "right", ...display(38, rgba(C.white, 0.6), 700), fontVariantNumeric: "tabular-nums" }}>{row.buy ? `$${row.buy}` : "—"}</span>
-          <span style={{ width: 300, textAlign: "right", ...display(60, C.white, 900, "condensed"), fontVariantNumeric: "tabular-nums" }}>${row.sell}</span>
+        ))}
+      </div>
+      {gap ? (
+        <div style={{ position: "absolute", left: M, right: M, top: 1458, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", backgroundColor: rgba(C.white, 0.06), border: `2px solid ${INK.rule}` }}>
+          <span style={caps(24, INK.mute, 800, 0.14)}>Brecha blue / oficial</span>
+          <span style={{ ...display(58, C.white, 900, "condensed"), lineHeight: 1 }}>{gap}</span>
         </div>
-      ))}
-      {props.body ? <div style={{ ...serif(32, rgba(C.white, 0.72)), marginTop: 36 }}>{props.body}</div> : null}
-    </div>
-    <SourceLine left={props.sourceLabel || "Fuente: dolarapi.com"} right={props.timeLabel ? `Actualizado ${props.timeLabel}` : "lavozriojana.com"} />
-  </AbsoluteFill>
-);
+      ) : null}
+      <SourceLine left={props.sourceLabel || "Fuente: dolarapi.com"} right={props.timeLabel ? `Actualizado ${props.timeLabel}` : "lavozriojana.com"} color={C.white} top={1586} />
+    </AbsoluteFill>
+  );
+};
 
 // ── Aviso de servicio ───────────────────────────────────────────────────
 const SERVICE = {

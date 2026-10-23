@@ -48,7 +48,9 @@ const STATUS: Record<
   cancelado: { label: "Cancelado", fill: "#4B5563", color: C.white },
 };
 
-const THEMES = {
+// Tonos compartidos con las historias de clima y dólar y el carrusel de la
+// mañana: mismo sistema para todas las piezas de servicio.
+export const THEMES = {
   paper: {
     bg: "#F3F5F8",
     ink: "#0D1B2A",
@@ -65,7 +67,76 @@ const THEMES = {
   },
 } as const;
 
-type Theme = (typeof THEMES)[keyof typeof THEMES];
+export type Theme = (typeof THEMES)[keyof typeof THEMES];
+
+// Fondo: "ink" azul noche con luz arriba a la izquierda y cuadrícula de
+// 54 px; "paper" blanco que baja a gris frío.
+export const PlateBackdrop: React.FC<{ tone: "paper" | "ink" }> = ({
+  tone,
+}) => {
+  const theme = THEMES[tone];
+  return (
+    <AbsoluteFill style={{ backgroundColor: theme.bg }}>
+      {tone === "ink" ? (
+        <>
+          <AbsoluteFill
+            style={{
+              background: `radial-gradient(120% 80% at 0% 0%, ${rgba("#1B4A75", 0.55)} 0%, ${rgba(theme.bg, 0)} 60%)`,
+            }}
+          />
+          <AbsoluteFill
+            style={{
+              backgroundImage: `linear-gradient(${rgba(C.white, 0.035)} 2px, transparent 2px), linear-gradient(90deg, ${rgba(C.white, 0.035)} 2px, transparent 2px)`,
+              backgroundSize: "54px 54px",
+            }}
+          />
+        </>
+      ) : (
+        <AbsoluteFill
+          style={{
+            background: `linear-gradient(180deg, ${C.white} 0%, ${theme.bg} 70%)`,
+          }}
+        />
+      )}
+    </AbsoluteFill>
+  );
+};
+
+// Rótulo doble: bloque de color (estado o tipo de pieza) + detalle con borde.
+export const TagPair: React.FC<{
+  label: string;
+  fill: string;
+  color: string;
+  detail?: string;
+  theme: Theme;
+  k?: number;
+}> = ({ label, fill, color, detail, theme, k = 1 }) => (
+  <div style={{ display: "flex", alignItems: "stretch" }}>
+    <span
+      style={{
+        ...caps(26 * k, color, 900, 0.16),
+        backgroundColor: fill,
+        padding: `${14 * k}px ${20 * k}px`,
+      }}
+    >
+      {label}
+    </span>
+    {detail ? (
+      <span
+        style={{
+          ...caps(26 * k, theme.ink, 800, 0.14),
+          padding: `${14 * k}px ${20 * k}px`,
+          border: `2px solid ${theme.rule}`,
+          borderLeft: "none",
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {detail}
+      </span>
+    ) : null}
+  </div>
+);
 
 const MONTHS = [
   "Ene",
@@ -424,27 +495,7 @@ export const ServicePlate: React.FC<PlateProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: theme.bg }}>
-      {tone === "ink" ? (
-        <>
-          <AbsoluteFill
-            style={{
-              background: `radial-gradient(120% 80% at 0% 0%, ${rgba("#1B4A75", 0.55)} 0%, ${rgba(theme.bg, 0)} 60%)`,
-            }}
-          />
-          <AbsoluteFill
-            style={{
-              backgroundImage: `linear-gradient(${rgba(C.white, 0.035)} 2px, transparent 2px), linear-gradient(90deg, ${rgba(C.white, 0.035)} 2px, transparent 2px)`,
-              backgroundSize: "54px 54px",
-            }}
-          />
-        </>
-      ) : (
-        <AbsoluteFill
-          style={{
-            background: `linear-gradient(180deg, ${C.white} 0%, ${theme.bg} 70%)`,
-          }}
-        />
-      )}
+      <PlateBackdrop tone={tone} />
       <div
         style={{
           position: "absolute",
@@ -471,32 +522,15 @@ export const ServicePlate: React.FC<PlateProps> = ({
             sub=""
           />
         </div>
-        <div
-          style={{ display: "flex", alignItems: "stretch", marginTop: 28 * k }}
-        >
-          <span
-            style={{
-              ...caps(26 * k, tag.color, 900, 0.16),
-              backgroundColor: tag.fill,
-              padding: `${14 * k}px ${20 * k}px`,
-            }}
-          >
-            {tag.label}
-          </span>
-          {kicker ? (
-            <span
-              style={{
-                ...caps(26 * k, theme.ink, 800, 0.14),
-                padding: `${14 * k}px ${20 * k}px`,
-                border: `2px solid ${theme.rule}`,
-                borderLeft: "none",
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              {kicker}
-            </span>
-          ) : null}
+        <div style={{ marginTop: 28 * k }}>
+          <TagPair
+            label={tag.label}
+            fill={tag.fill}
+            color={tag.color}
+            detail={kicker}
+            theme={theme}
+            k={k}
+          />
         </div>
         <div
           style={{
