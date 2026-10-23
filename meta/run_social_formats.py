@@ -6,8 +6,9 @@
 * Seguimiento: si una noticia publicada cambia una cifra en una nota
   posterior, historia de actualización + comentario en Instagram y texto
   editado en Facebook.
-* Placas de servicio: cronograma de pagos de Hacienda y sismos sentidos
-  (INPRES), como post y como historia (``utils/service_posts.py``).
+* Placas de servicio: cronograma de pagos de Hacienda y sismos con
+  epicentro en La Rioja (INPRES), como post y/o historia
+  (``utils/service_posts.py``).
 
 Cada formato tiene su interruptor (apagado por defecto) y su estado propio
 (``data/social_formats_state.json``); ninguno consume cupos del feed.
@@ -137,34 +138,56 @@ def _updates(instagram: bool, facebook: bool) -> tuple[int, int]:
 
 
 def _service_posts(instagram: bool, facebook: bool) -> tuple[int, int]:
-    """(publicadas, fallidas). Va antes que la etapa de historias: la historia
-    automática del post queda cubierta por la historia de servicio."""
+    """(placas con algo publicado, placas fallidas). Va antes que la etapa de
+    historias: la historia automática del post queda cubierta por la de
+    servicio. Cada placa dice qué lleva (post en Instagram, en Facebook,
+    historia) y sólo se publica lo que falta."""
     from utils import service_posts as spost
     from utils import story_publisher as sp
 
     state = sf.load_state()
+    story_state = sp.load_state()
+    story_ig = instagram and sp.instagram_enabled()
+    story_fb = facebook and sp.facebook_enabled()
+
+    def parts(job: dict) -> dict:
+        return spost.pending_parts(job, state, story_state, instagram=instagram, facebook=facebook, stories=story_ig or story_fb)
+
     done = failed = 0
-    for job in spost.due_service_posts(done=lambda key: spost.already_done(key, state))[:2]:
-        try:
-            card = spost.render_card(job["props"])
-        except (RemotionRenderError, OSError) as exc:
-            logger.warning("No se pudo renderizar la placa %s: %s", job["key"], exc)
-            failed += 1
-            continue
-        outcome = spost.publish_post(job, card, instagram=instagram, facebook=facebook)
-        if "success" not in (outcome["ig"], outcome["fb"]):
-            failed += 1
-            if "rate_limit" in (outcome["ig"], outcome["fb"]):
-                break
-            continue
-        done += 1
-        story_ig = instagram and sp.instagram_enabled()
-        story_fb = facebook and sp.facebook_enabled()
-        if story_ig or story_fb:
+    for job in spost.due_service_posts(state=state, wanted=lambda job: any(parts(job).values()))[:2]:
+        need = parts(job)
+        ig_id = ((state.get("service_posts") or {}).get(job["key"]) or {}).get("ig_id") or ""
+        published = False
+        if need["ig"] or need["fb"]:
             try:
-                spost.publish_story(job, outcome.get("ig_id") or "", instagram=story_ig, facebook=story_fb)
+                card = spost.render_card(job["props"])
+            except (RemotionRenderError, OSError) as exc:
+                logger.warning("No se pudo renderizar la placa %s: %s", job["key"], exc)
+                failed += 1
+                continue
+            outcome = spost.publish_post(job, card, instagram=need["ig"], facebook=need["fb"])
+            ig_id = outcome.get("ig_id") or ig_id
+            if "success" not in (outcome["ig"], outcome["fb"]):
+                # La historia espera al post: se reintentan juntos.
+                failed += 1
+                if "rate_limit" in (outcome["ig"], outcome["fb"]):
+                    break
+                continue
+            published = True
+        if need["story"] or (published and ig_id):
+            try:
+                story = spost.publish_story(job, ig_id if published else "", instagram=story_ig, facebook=story_fb)
             except (RemotionRenderError, OSError) as exc:
                 logger.warning("No se pudo renderizar la historia de la placa %s: %s", job["key"], exc)
+                story = {"ig": "failed", "fb": "failed"}
+            if "success" in story.values():
+                published = True
+            elif need["story"] and not published:
+                failed += 1
+                if "rate_limit" in story.values():
+                    break
+                continue
+        done += int(published)
     return done, failed
 
 

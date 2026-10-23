@@ -2486,3 +2486,35 @@ mantenimiento), UNLaR (bloquea lectores) ni buses (directorios fijos).
 
 **Rollback**: `SCRAPER_JUDICIALES_ENABLED = "0"`, `PAYMENT_POSTS_ENABLED = "false"`,
 `QUAKE_POSTS_ENABLED = "false"` en el script de arranque.
+
+## 2026-10-23 — Placas de servicio v2 (pagos y sismos)
+
+**Contexto**: las placas del 22/10 repetían la lista de organismos en la imagen
+y publicaban sismos sentidos desde 3,0 aunque el epicentro estuviera fuera de la
+provincia. El operador fijó reglas de formato para todas las placas de servicio.
+
+**Decisión del operador**:
+
+- Plantilla única para post (1080×1350) e historia (1080×1920): zonas libres de
+  250 px arriba y 350 px abajo, etiqueta de estado con color fijo (HOY, MAÑANA,
+  ACTUALIZADO, CANCELADO), un solo dato protagonista, pie "Fuente · actualizado
+  HH:MM" y un máximo de 25 palabras.
+- **Sismos**: sólo con epicentro en La Rioja y magnitud ≥ 4,0, a cualquier hora,
+  en post, historia y Facebook. Fuente: listado inmediato de INPRES
+  (`sismos.xml`, dice si es automático o revisado) más el detalle (distancias
+  a localidades). Si el dato es automático, la placa lo dice; si INPRES lo
+  corrige, historia ACTUALIZADO. El caption pregunta "¿Lo sentiste? ¿Desde
+  dónde?".
+- **Pagos**: historia a las 7 cada día de pago; post en Instagram sólo el primer
+  día del cronograma (mismo concepto) y en Facebook todos los días de pago. La
+  placa dice "Cobran estatales", la fecha, el concepto y el próximo pago si ya
+  está anunciado; la lista de organismos va al texto del post.
+
+**No se puede con estas reglas**: aviso útil desde el Source Registry (sólo
+guarda texto libre; extraer qué cambia, para quién y desde cuándo sin IA no es
+confiable) y cortes de luz/agua (EDELaR sin vía pública). Las historias de cortes
+existentes (desde notas propias) no siempre tienen lugar: queda pendiente decidir
+si se apagan o se filtran.
+
+**Rollback**: `PAYMENT_POSTS_ENABLED = "false"` / `QUAKE_POSTS_ENABLED = "false"`
+en el script de arranque; volver al commit `948065d` restaura las placas v1.

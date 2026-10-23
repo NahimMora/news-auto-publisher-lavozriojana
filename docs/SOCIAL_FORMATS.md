@@ -15,7 +15,7 @@ cupos ni dedup con el feed. El backoff de rate limit de Meta sí se comparte.
 | "La semana en cinco" | Reel IG + video FB | domingos desde las 20 (`WEEKLY_RECAP_HOUR`) | ídem | ídem |
 | Seguimiento de noticias en desarrollo | historia IG + FB, comentario en el post de IG, texto editado en FB | cada ciclo | `utils/story_updates.py` | ídem (`updates`) |
 | Respuestas a preguntas | IG + FB | cada ciclo, 7–24 h | `utils/comment_replies.py`, `meta/run_comment_replies.py` | `data/comment_replies.json` |
-| Placas de servicio: cronograma de pagos de Hacienda y sismos sentidos en La Rioja (INPRES) | post IG + FB (1080×1350) y su historia | pagos: el día anterior (desde que Hacienda lo publica) o la mañana del pago, 7–22 h; sismos: magnitud ≥ 3,0 de las últimas 12 h, 7–23 h | `utils/service_posts.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` (`service_posts`) |
+| Placas de servicio: cronograma de pagos de Hacienda y sismos con epicentro en La Rioja (INPRES) | pagos: historia cada día de pago, post IG sólo el primer día del cronograma, post FB todos los días; sismos: post IG + FB y historia (más historia ACTUALIZADO si INPRES lo corrige) | pagos: día de pago, 7–22 h; sismos: magnitud ≥ 4,0 (`QUAKE_MIN_MAGNITUDE`) de las últimas 12 h, a cualquier hora | `utils/service_posts.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` (`service_posts`) |
 | Reporte cada 3 días + vigilante | correo | tareas `LaVozRiojana-Report` (9 h cada 3 días) y `LaVozRiojana-Watchdog` (15 min) | `utils/ops_report.py`, `utils/mailer.py`, `cli.py report/watchdog` | `data/ops_report_state.json` |
 
 ## Diseño (Remotion, `remotion/src/v2/social/`)
@@ -66,12 +66,29 @@ imagen OG del sitio ya trae el titular escrito.
 | Feriados | JSON oficial `argentina.gob.ar/sites/default/files/holidays-<año>-es.json` (se excluyen los "especiales" de otras provincias) |
 | Cortes y rutas | notas propias del archivo editorial (`classify_notice`) |
 | Cronograma de pagos | `hacienda.larioja.gob.ar/wp-json/wp/v2/posts`: posts "QUINCENA/HABERES <MES> – <DÍA> dd/mm" con la lista de organismos (por banco si la separa) |
-| Sismos sentidos | `contenidos.inpres.gob.ar/mapa/sentidos.xml` (sólo HTTP): últimos 50 sentidos; entran los sentidos en una localidad riojana o con epicentro en La Rioja |
+| Sismos | `contenidos.inpres.gob.ar/mapa/sismos.xml` (sólo HTTP, el listado inmediato: `color_link` 00f = automático, 000 = revisado, f00 = sentido) + `epicentro3.php?s=<id>` (distancias a localidades tal como las informa INPRES, la más cercana primero). Entran sólo los de `prov` LA RIOJA |
 
-Las placas de servicio salen como post y como historia con el mismo
-contenido (`ServiceCardV2` y `StoryV2` kinds `payments`/`quake`, piezas en
-`remotion/src/v2/social/ServicePieces.tsx`). La historia de servicio cubre la
-historia automática del post ("Nueva publicación"), que no se duplica.
+Las placas de servicio usan una sola plantilla para post y historia
+(`ServicePlate` en `remotion/src/v2/social/ServicePieces.tsx`, usada por
+`ServiceCardV2` y `StoryV2` kinds `payments`/`quake`):
+
+- zonas libres de 250 px arriba y 350 px abajo (sólo fondo);
+- etiqueta de estado con color fijo: HOY rojo, MAÑANA azul, ACTUALIZADO ámbar,
+  CANCELADO gris;
+- un dato protagonista (pagos: "Cobran estatales" + fecha; sismo: magnitud) y
+  hasta tres renglones de apoyo;
+- pie "Fuente · actualizado HH:MM";
+- como máximo 25 palabras (`service_posts.plate_words`): si sobran, se quitan
+  renglones opcionales; si aun así no entra, la placa no sale.
+
+Pagos: la placa dice "Cobran estatales", la fecha, el concepto y el próximo
+pago si Hacienda ya lo anunció; la lista de organismos va en el texto del post.
+Sismos: si el dato es automático la placa lo dice ("Dato automático"); si INPRES
+lo revisa con otra magnitud o localidad (el id puede correrse unos segundos: se
+empareja por hora con 3 min de margen), sale una historia ACTUALIZADO con el
+valor anterior. El texto del post pregunta "¿Lo sentiste? ¿Desde dónde?". La
+historia de servicio cubre la historia automática del post ("Nueva
+publicación"), que no se duplica.
 
 Una alerta del SMN que menciona La Rioja pero cuyo formato no se reconoce no
 se publica: queda en `logs/social_formats.log` y en el reporte.

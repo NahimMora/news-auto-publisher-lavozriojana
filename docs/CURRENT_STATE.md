@@ -47,9 +47,15 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   la Función Judicial. Antes de reescribir, Gemini puntúa (0–10) y detecta el
   mismo caso contra lo encolado en 72 h; pasan sólo con `JUDICIAL_MIN_SCORE` (7).
   Título, nota Web y caption llevan `JUDICIAL_RULES`.
-- Placas de servicio (2026-10-22, `PAYMENT_POSTS_ENABLED`, `QUAKE_POSTS_ENABLED`):
-  cronograma de pagos de Hacienda y sismos sentidos en La Rioja (INPRES, ≥ 3,0)
-  como post + historia, sin IA (`utils/service_posts.py`, `docs/SOCIAL_FORMATS.md`).
+- Placas de servicio v2 (2026-10-23, `PAYMENT_POSTS_ENABLED`, `QUAKE_POSTS_ENABLED`):
+  plantilla única sin IA (estado HOY/MAÑANA/ACTUALIZADO/CANCELADO, un dato
+  protagonista, pie "Fuente · actualizado HH:MM", ≤ 25 palabras, zonas libres de
+  250 px arriba y 350 px abajo). Pagos de Hacienda: historia cada día de pago
+  desde las 7, post IG sólo el primer día del cronograma y FB todos los días.
+  Sismos con epicentro en La Rioja y magnitud ≥ 4,0 (INPRES `sismos.xml` +
+  detalle), a cualquier hora, post IG + FB + historia; si era automático y
+  INPRES lo revisa con otro valor, historia ACTUALIZADO (`utils/service_posts.py`,
+  `docs/SOCIAL_FORMATS.md`).
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y

@@ -405,12 +405,8 @@ def fetch_payment_schedule(*, fetcher=None) -> list[dict]:
     return out
 
 
-# ── INPRES: sismos sentidos ──────────────────────────────────────────────
+# ── INPRES: últimos sismos + detalle ─────────────────────────────────────
 # Sólo HTTP: el HTTPS de contenidos.inpres.gob.ar no responde.
-INPRES_FELT_URL = "http://contenidos.inpres.gob.ar/mapa/sentidos.xml"
-_INTENSITY_ENTRY = re.compile(r"^\s*(?P<intensity>[IVX]+(?:\s*a\s*[IVX]+)?)\s*-\s*(?P<place>.+?)\s*$")
-
-
 def _decode_feed(raw: bytes) -> str:
     """El XML dice ISO-8859-1 pero a veces trae UTF-8: se prueba UTF-8 primero."""
     try:
@@ -420,49 +416,6 @@ def _decode_feed(raw: bytes) -> str:
     return re.sub(r"^<\?xml[^>]*\?>", "", text.lstrip("\ufeff").lstrip())
 
 
-def parse_felt_quakes(raw: bytes, province: str = "La Rioja") -> list[dict]:
-    """Sismos del feed de INPRES sentidos en ``province`` (por localidad o epicentro)."""
-    import xml.etree.ElementTree as ET
-
-    try:
-        root = ET.fromstring(_decode_feed(raw))
-    except ET.ParseError as exc:
-        raise ServiceDataError("xml_invalido") from exc
-    target = _fold(province)
-    out = []
-    for item in root.iter("item"):
-        quake_id = str(item.findtext("idSismo") or "").strip()
-        try:
-            moment = datetime.strptime(quake_id, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-            magnitude = float(str(item.findtext("magnitude") or "").replace(",", "."))
-        except ValueError:
-            continue
-        felt = []
-        for entry in str(item.findtext("intensity") or "").split(";"):
-            match = _INTENSITY_ENTRY.match(entry)
-            if match:
-                felt.append({"place": re.sub(r"\s+", " ", match.group("place")), "intensity": re.sub(r"\s+", " ", match.group("intensity"))})
-        felt_here = [f for f in felt if _fold(f["place"]).endswith(target) or _fold(f["place"]) == f"ciudad de {target}"]
-        epicenter_here = _fold(str(item.findtext("province") or "")) == target
-        if not felt_here and not epicenter_here:
-            continue
-        out.append({
-            "id": quake_id,
-            "at": moment.isoformat(),
-            "magnitude": magnitude,
-            "depth": re.sub(r"\s*\.\s*$", "", str(item.findtext("depth") or "").strip()),
-            "epicenter": str(item.findtext("epiczone") or "").strip().rstrip("."),
-            "province": str(item.findtext("province") or "").strip(),
-            "felt": felt_here + [f for f in felt if f not in felt_here],
-        })
-    return out
-
-
-def fetch_felt_quakes(*, province: str = "La Rioja", fetcher=None) -> list[dict]:
-    return parse_felt_quakes(_get(INPRES_FELT_URL, fetcher), province)
-
-
-# ── INPRES: listado inmediato + detalle (placas v2) ──────────────────────
 INPRES_LIST_URL = "http://contenidos.inpres.gob.ar/mapa/sismos.xml"
 INPRES_DETAIL_URL = "http://contenidos.inpres.gob.ar/epicentro3.php?s={id}"
 # Leyenda de la página de INPRES: azul = automático, negro = revisado, rojo = sentido.

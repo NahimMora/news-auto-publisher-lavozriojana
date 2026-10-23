@@ -51,11 +51,12 @@ $env:SOCIAL_FORMATS_FACEBOOK_ENABLED = "true"
 $env:MORNING_BRIEF_ENABLED = "true"
 $env:WEEKLY_RECAP_ENABLED = "true"
 $env:STORY_UPDATES_ENABLED = "true"
-# Placas de servicio (2026-10-22): cronograma de pagos de Hacienda y sismos
-# sentidos en La Rioja (INPRES, magnitud >= 3,0), como post + historia.
+# Placas de servicio v2 (2026-10-23): cronograma de pagos de Hacienda (historia
+# cada día de pago desde las 7; post IG el primer día, FB todos) y sismos con
+# epicentro en La Rioja (INPRES, magnitud >= 4,0, a cualquier hora).
 $env:PAYMENT_POSTS_ENABLED = "true"
 $env:QUAKE_POSTS_ENABLED = "true"
-$env:QUAKE_MIN_MAGNITUDE = "3.0"
+$env:QUAKE_MIN_MAGNITUDE = "4.0"
 # Primera semana: las respuestas se proponen y se revisan (cli.py comment-replies).
 $env:COMMENT_REPLIES_MODE = "suggest"
 # Imágenes estáticas de IG fuera de 0-7 h (alcance mediano de madrugada ~20 vs ~200
