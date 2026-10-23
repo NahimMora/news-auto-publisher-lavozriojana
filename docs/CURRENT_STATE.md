@@ -56,6 +56,12 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   detalle), a cualquier hora, post IG + FB + historia; si era automático y
   INPRES lo revisa con otro valor, historia ACTUALIZADO (`utils/service_posts.py`,
   `docs/SOCIAL_FORMATS.md`).
+- Sistema visual de servicio (2026-10-23): las historias de clima, alerta, dólar,
+  avisos, feriados y seguimiento y el carrusel "Lo que tenés que saber hoy" usan el
+  mismo sistema que las placas (`THEMES`, `PlateBackdrop`, `TagPair` en
+  `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
+  condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
+  textos y las reglas de publicación son los mismos.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y
