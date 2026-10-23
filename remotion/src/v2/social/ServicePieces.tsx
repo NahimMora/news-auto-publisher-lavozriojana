@@ -1,4 +1,4 @@
-// Placa de servicio (v2), compartida por la historia (StoryV2, kinds
+﻿// Placa de servicio (v2), compartida por la historia (StoryV2, kinds
 // "payments" y "quake") y el post 1080×1350 (ServiceCardV2):
 //
 //   · zonas libres de 250 px arriba y 350 px abajo (ahí sólo va el fondo);
@@ -7,14 +7,17 @@
 //   · hasta tres renglones de apoyo (`lines`), en orden de importancia;
 //   · pie "Fuente · actualizado HH:MM" (`footer`).
 //
-// Python arma todos los textos con lo que publica la fuente y controla el
-// máximo de 25 palabras; la composición sólo los dispone.
+// Dos tonos: "paper" (pagos: gris frío claro, tinta azul noche, hoja de
+// calendario con la fecha) e "ink" (sismo: azul noche con cuadrícula de
+// sismógrafo, traza sísmica y barra de magnitud junto al número). La traza y la barra
+// son gráficas: no suman palabras. Python arma todos los textos con lo que
+// publica la fuente y controla el máximo de 25 palabras.
 import React from "react";
 import { AbsoluteFill } from "remotion";
 import { z } from "zod";
 import { fit } from "../fit";
-import { C, V2_FONT_SERIF, rgba } from "../tokens";
-import { Brand, FieldBackdrop, caps, display, serif } from "./chrome";
+import { C, rgba } from "../tokens";
+import { Brand, caps, display } from "./chrome";
 
 export const PLATE_SAFE = { top: 250, bottom: 350 } as const;
 
@@ -41,8 +44,203 @@ const STATUS: Record<
 > = {
   hoy: { label: "Hoy", fill: C.red, color: C.white },
   manana: { label: "Mañana", fill: C.blue, color: C.white },
-  actualizado: { label: "Actualizado", fill: "#F2A900", color: C.ink },
-  cancelado: { label: "Cancelado", fill: "#5B5F66", color: C.white },
+  actualizado: { label: "Actualizado", fill: "#E3A008", color: "#0D1B2A" },
+  cancelado: { label: "Cancelado", fill: "#4B5563", color: C.white },
+};
+
+const THEMES = {
+  paper: {
+    bg: "#F3F5F8",
+    ink: "#0D1B2A",
+    mute: "#56657A",
+    rule: rgba("#0D1B2A", 0.13),
+    accent: C.blue,
+  },
+  ink: {
+    bg: "#07121E",
+    ink: C.white,
+    mute: "#9FB2C6",
+    rule: rgba(C.white, 0.14),
+    accent: "#6EA8DC",
+  },
+} as const;
+
+type Theme = (typeof THEMES)[keyof typeof THEMES];
+
+const MONTHS = [
+  "Ene",
+  "Feb",
+  "Mar",
+  "Abr",
+  "May",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dic",
+];
+
+// Pseudoaleatorio con semilla: la misma placa siempre dibuja la misma traza.
+function seeded(seed: string): () => number {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return () => {
+    h = Math.imul(h ^ (h >>> 15), h | 1);
+    h ^= h + Math.imul(h ^ (h >>> 7), h | 61);
+    return ((h ^ (h >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Traza de sismógrafo: ruido de fondo, arribo brusco y decaimiento. La
+// amplitud crece con la magnitud.
+const Seismogram: React.FC<{
+  width: number;
+  height: number;
+  magnitude: number;
+  seed: string;
+  color: string;
+}> = ({ width, height, magnitude, seed, color }) => {
+  const rand = seeded(seed);
+  const n = 220;
+  const mid = height / 2;
+  const scale = Math.min(1, Math.max(0.35, magnitude / 7));
+  const points: string[] = [];
+  for (let i = 0; i <= n; i++) {
+    const x = (i / n) * width;
+    const t = i / n;
+    const env =
+      t < 0.34
+        ? 0.05
+        : t < 0.4
+          ? 0.05 + ((t - 0.34) / 0.06) * 0.95
+          : Math.exp(-(t - 0.4) * 4.2);
+    const sign = i % 2 === 0 ? 1 : -1;
+    const y =
+      mid + sign * env * scale * (0.35 + rand() * 0.65) * (height / 2 - 4);
+    points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+  }
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ display: "block" }}
+    >
+      <line
+        x1={0}
+        y1={mid}
+        x2={width}
+        y2={mid}
+        stroke={rgba(color, 0.25)}
+        strokeWidth={1.5}
+      />
+      <polyline
+        points={points.join(" ")}
+        fill="none"
+        stroke={color}
+        strokeWidth={2.6}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+};
+
+// Barra de magnitud de 1 a 9: segmentos llenos hasta el valor publicado.
+const MagnitudeBar: React.FC<{
+  value: number;
+  width: number;
+  k: number;
+  theme: Theme;
+}> = ({ value, width, k, theme }) => {
+  const segments = 9;
+  const gap = 6 * k;
+  const w = (width - gap * (segments - 1)) / segments;
+  return (
+    <div style={{ display: "flex", gap, alignItems: "flex-end" }}>
+      {Array.from({ length: segments }, (_, i) => {
+        const fill = Math.min(1, Math.max(0, value - i));
+        return (
+          <div
+            key={i}
+            style={{
+              width: w,
+              height: (14 + i * 3.2) * k,
+              backgroundColor: theme.rule,
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: `${fill * 100}%`,
+                backgroundColor: theme.accent,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// Hoja de calendario con la fecha ("Jueves 15/10"). Sin fecha reconocible,
+// muestra el rótulo tal cual.
+const CalendarLeaf: React.FC<{ label: string; k: number; theme: Theme }> = ({
+  label,
+  k,
+  theme,
+}) => {
+  const m = /^(\S+)\s+(\d{1,2})\/(\d{1,2})$/.exec(label.trim());
+  const w = 196 * k;
+  return (
+    <div
+      style={{
+        width: w,
+        flexShrink: 0,
+        backgroundColor: C.white,
+        boxShadow: `0 ${10 * k}px ${28 * k}px ${rgba(theme.ink, 0.14)}`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+      }}
+    >
+      <div
+        style={{
+          alignSelf: "stretch",
+          backgroundColor: C.red,
+          padding: `${12 * k}px 0`,
+          textAlign: "center",
+          ...caps(24 * k, C.white, 900, 0.2),
+        }}
+      >
+        {m ? MONTHS[Number(m[3]) - 1] : ""}
+      </div>
+      <div
+        style={{
+          ...display((m ? 104 : 34) * k, theme.ink, 900, "condensed"),
+          lineHeight: 1,
+          padding: `${14 * k}px 0 ${6 * k}px`,
+        }}
+      >
+        {m ? m[2] : label}
+      </div>
+      {m ? (
+        <div
+          style={{
+            ...caps(20 * k, theme.mute, 800, 0.16),
+            paddingBottom: 18 * k,
+          }}
+        >
+          {m[1]}
+        </div>
+      ) : null}
+    </div>
+  );
 };
 
 interface PlateProps {
@@ -70,56 +268,182 @@ export const ServicePlate: React.FC<PlateProps> = ({
   height,
   margin,
 }) => {
-  const ink = tone === "paper" ? C.paperInk : C.white;
-  const mute = tone === "paper" ? C.paperMute : rgba(C.white, 0.72);
-  const accent = tone === "paper" ? C.red : "#F2A900";
+  const theme = THEMES[tone];
   const tag = STATUS[status];
   const top = PLATE_SAFE.top;
-  const bottom = height - PLATE_SAFE.bottom;
+  const zone = height - PLATE_SAFE.bottom - top;
   const inner = width - margin * 2;
-  const zone = bottom - top;
   // La historia tiene más alto útil que el post: todo crece hasta un 30 %.
   const k = Math.min(1.3, Math.max(1, zone / 1000));
-  // Alto fijo: marca 64, estado 30+62, rótulo del dato 20+30, margen de
-  // renglones 30 y pie 28+40. Los renglones reservan ~58 px cada uno y el
-  // dato protagonista se queda con el resto.
-  const fixed = (64 + 92 + 50 + 30 + 68) * k;
-  const rows = lines.slice(0, 3);
-  const rowsH = (rows.length * 58 + Math.max(0, rows.length - 1) * 18) * k;
   const numeric = /^[\d.,]+$/.test(hero);
-  const heroFit = fit({
-    text: hero,
-    maxWidth: inner,
-    maxHeight: Math.max(80, zone - fixed - rowsH - 28 * k),
-    min: 64,
-    max: (numeric ? 340 : 150) * k,
-    weight: 900,
-    lh: numeric ? 1.0 : 0.98,
-    stretch: "condensed",
-    maxLines: numeric ? 1 : 3,
-  });
-  const lineBudget = zone - fixed - heroFit.height - 28 * k;
-  const lineFits = rows.map((text, i) =>
-    fit({
-      text,
-      maxWidth: inner,
-      maxHeight: Math.max(48, lineBudget / Math.max(1, rows.length) - 18 * k),
-      min: 28,
-      max: (i === 0 ? 50 : 40) * k,
-      weight: i === 0 ? 800 : 500,
-      lh: 1.18,
-      italic: i !== 0,
-      family: i === 0 ? undefined : V2_FONT_SERIF,
-      stretch: "semi-condensed",
-      maxLines: 2,
-    }),
+  const rows = lines.slice(0, 3);
+
+  // Alto fijo: marca + estado (144) y pie (66); 28 de aire entre bloques.
+  const body = zone - (144 + 66 + 56) * k;
+  const rowFits = (w: number, budget: number) =>
+    rows.map((text, i) =>
+      fit({
+        text,
+        maxWidth: w,
+        maxHeight: Math.max(40, budget / Math.max(1, rows.length) - 28 * k),
+        min: 26,
+        max: (i === 0 ? 44 : 34) * k,
+        weight: i === 0 ? 800 : 500,
+        lh: 1.15,
+        stretch: "semi-condensed",
+        maxLines: 2,
+      }),
+    );
+
+  const Rows: React.FC<{ fits: ReturnType<typeof rowFits> }> = ({ fits }) => (
+    <div
+      style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}
+    >
+      {fits.map((f, i) => (
+        <div
+          key={i}
+          style={{
+            borderTop: `2px solid ${i === 0 ? theme.accent : theme.rule}`,
+            padding: `${14 * k}px 0`,
+            ...display(
+              f.fontSize,
+              i === 0 ? theme.ink : theme.mute,
+              i === 0 ? 800 : 500,
+            ),
+            lineHeight: `${f.lineHeight}px`,
+          }}
+        >
+          {f.lines.map((l, j) => (
+            <div key={j}>{l}</div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
+
+  let content: React.ReactNode;
+  if (numeric) {
+    const rowsH = rows.length * 66 * k;
+    const heroFit = fit({
+      text: hero,
+      maxWidth: inner * 0.6,
+      maxHeight: Math.max(120, body - rowsH - 28 * k),
+      min: 90,
+      max: 330 * k,
+      weight: 900,
+      lh: 1.0,
+      stretch: "condensed",
+      maxLines: 1,
+    });
+    const magnitude = Number(hero.replace(",", "."));
+    const side = inner - heroFit.widest - 40 * k;
+    content = (
+      <>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 40 * k,
+          }}
+        >
+          <div
+            style={{
+              ...display(heroFit.fontSize, theme.ink, 900, "condensed"),
+              lineHeight: `${heroFit.lineHeight}px`,
+            }}
+          >
+            {heroFit.lines[0]}
+          </div>
+          <div
+            style={{
+              width: side,
+              display: "flex",
+              flexDirection: "column",
+              gap: 16 * k,
+              paddingBottom: heroFit.fontSize * 0.14,
+            }}
+          >
+            <div style={{ opacity: 0.85, marginBottom: 8 * k }}>
+              <Seismogram
+                width={side}
+                height={heroFit.height * 0.4}
+                magnitude={magnitude}
+                seed={`${hero}${rows[0] ?? ""}`}
+                color={theme.accent}
+              />
+            </div>
+            <span style={caps(26 * k, theme.mute, 800, 0.16)}>{heroLabel}</span>
+            <MagnitudeBar value={magnitude} width={side} k={k} theme={theme} />
+          </div>
+        </div>
+        <div style={{ marginTop: 28 * k, display: "flex" }}>
+          <Rows fits={rowFits(inner, body - heroFit.height - 28 * k)} />
+        </div>
+      </>
+    );
+  } else {
+    const rowH = 196 * k;
+    const heroFit = fit({
+      text: hero,
+      maxWidth: inner,
+      maxHeight: Math.max(100, body - rowH - 28 * k),
+      min: 64,
+      max: 140 * k,
+      weight: 900,
+      lh: 0.96,
+      stretch: "condensed",
+      maxLines: 2,
+    });
+    const textW = inner - 196 * k - 36 * k;
+    content = (
+      <>
+        <div
+          style={{
+            ...display(heroFit.fontSize, theme.ink, 900, "condensed"),
+            lineHeight: `${heroFit.lineHeight}px`,
+          }}
+        >
+          {heroFit.lines.map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+        <div
+          style={{
+            marginTop: 28 * k,
+            display: "flex",
+            gap: 36 * k,
+            alignItems: "flex-start",
+          }}
+        >
+          <CalendarLeaf label={heroLabel} k={k} theme={theme} />
+          <Rows fits={rowFits(textW, rowH)} />
+        </div>
+      </>
+    );
+  }
+
   return (
-    <AbsoluteFill>
-      {tone === "paper" ? (
-        <AbsoluteFill style={{ backgroundColor: C.paper }} />
+    <AbsoluteFill style={{ backgroundColor: theme.bg }}>
+      {tone === "ink" ? (
+        <>
+          <AbsoluteFill
+            style={{
+              background: `radial-gradient(120% 80% at 0% 0%, ${rgba("#1B4A75", 0.55)} 0%, ${rgba(theme.bg, 0)} 60%)`,
+            }}
+          />
+          <AbsoluteFill
+            style={{
+              backgroundImage: `linear-gradient(${rgba(C.white, 0.035)} 2px, transparent 2px), linear-gradient(90deg, ${rgba(C.white, 0.035)} 2px, transparent 2px)`,
+              backgroundSize: "54px 54px",
+            }}
+          />
+        </>
       ) : (
-        <FieldBackdrop from="#3a2400" to={C.ink} dots={rgba("#F2A900", 0.1)} />
+        <AbsoluteFill
+          style={{
+            background: `linear-gradient(180deg, ${C.white} 0%, ${theme.bg} 70%)`,
+          }}
+        />
       )}
       <div
         style={{
@@ -132,31 +456,46 @@ export const ServicePlate: React.FC<PlateProps> = ({
           flexDirection: "column",
         }}
       >
-        <Brand
-          color={ink}
-          seal={Math.round(64 * k)}
-          size={Math.round(28 * k)}
-          sub=""
-        />
         <div
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: 24 * k,
-            marginTop: 30 * k,
           }}
+        >
+          <Brand
+            color={theme.ink}
+            seal={Math.round(60 * k)}
+            size={Math.round(26 * k)}
+            sub=""
+          />
+        </div>
+        <div
+          style={{ display: "flex", alignItems: "stretch", marginTop: 28 * k }}
         >
           <span
             style={{
-              ...caps(30 * k, tag.color, 900, 0.14),
+              ...caps(26 * k, tag.color, 900, 0.16),
               backgroundColor: tag.fill,
-              padding: `${16 * k}px ${22 * k}px`,
+              padding: `${14 * k}px ${20 * k}px`,
             }}
           >
             {tag.label}
           </span>
           {kicker ? (
-            <span style={caps(28 * k, accent, 900, 0.12)}>{kicker}</span>
+            <span
+              style={{
+                ...caps(26 * k, theme.ink, 800, 0.14),
+                padding: `${14 * k}px ${20 * k}px`,
+                border: `2px solid ${theme.rule}`,
+                borderLeft: "none",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              {kicker}
+            </span>
           ) : null}
         </div>
         <div
@@ -165,74 +504,34 @@ export const ServicePlate: React.FC<PlateProps> = ({
             display: "flex",
             flexDirection: "column",
             justifyContent: k > 1 ? "center" : "flex-start",
+            paddingTop: 28 * k,
           }}
         >
-          <div
-            style={{
-              marginTop: 28 * k,
-              ...display(heroFit.fontSize, ink, 900, "condensed"),
-              lineHeight: `${heroFit.lineHeight}px`,
-            }}
-          >
-            {heroFit.lines.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
-          </div>
-          {heroLabel ? (
-            <div
-              style={{
-                ...caps(30 * k, mute, 800, 0.14),
-                marginTop: 20 * k,
-              }}
-            >
-              {heroLabel}
-            </div>
-          ) : null}
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 18 * k,
-              marginTop: 30 * k,
-              borderLeft: `6px solid ${accent}`,
-              paddingLeft: 26 * k,
-            }}
-          >
-            {lineFits.map((f, i) => (
-              <div
-                key={i}
-                style={{
-                  ...(i === 0
-                    ? display(f.fontSize, ink, 800)
-                    : serif(f.fontSize, mute)),
-                  lineHeight: `${f.lineHeight}px`,
-                }}
-              >
-                {f.lines.map((l, j) => (
-                  <div key={j}>{l}</div>
-                ))}
-              </div>
-            ))}
-          </div>
+          {content}
         </div>
         <div
           style={{
             marginTop: 28 * k,
             display: "flex",
             flexDirection: "column",
-            gap: 18 * k,
+            gap: 16 * k,
           }}
         >
-          <div style={{ height: 2, backgroundColor: rgba(ink, 0.2) }} />
+          <div style={{ height: 2, backgroundColor: theme.rule }} />
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
-              ...caps(20 * k, rgba(ink, 0.7), 700, 0.12),
+              gap: 24,
+              ...caps(19 * Math.min(k, 1.1), theme.mute, 700, 0.12),
             }}
           >
-            <span>{footer}</span>
-            <span>lavozriojana.com</span>
+            <span
+              style={{ whiteSpace: "normal", minWidth: 0, lineHeight: 1.3 }}
+            >
+              {footer}
+            </span>
+            <span style={{ flexShrink: 0 }}>lavozriojana.com</span>
           </div>
         </div>
       </div>
