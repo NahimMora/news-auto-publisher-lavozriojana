@@ -51,6 +51,8 @@ def main() -> StageResult:
             "most_viewed_24h": len(docs["mas-visto"]["ventanas"]["24h"]),
             "updates": len(docs["actualizaciones"]["items"]),
             "videos": len(docs["videos"]["items"]),
+            "stories": len(docs["historias"]["items"]),
+            "breaking": bool(docs["ultimo-momento"]["nota"]),
         },
     )
     # Una fuente caída (el SMN, Hacienda) no es una falla de la etapa: se

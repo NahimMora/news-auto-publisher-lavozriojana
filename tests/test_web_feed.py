@@ -80,6 +80,35 @@ class UpdatesAndVideosTests(unittest.TestCase):
         self.assertEqual(getter.call_count, 2)
 
 
+class StoriesAndBreakingTests(unittest.TestCase):
+    def test_stories_come_only_from_verified_update_chains(self):
+        from utils.web_feed import build_stories
+
+        third = {"titulo": "DETUVIERON AL CONDUCTOR", "canonical_url": "https://nr/9", "web_url": "https://lvr/detenido", "published_at_ts": NOW - 60,
+                 "event_update": {"of_canonical_url": "https://nr/2", "novedad": "Detuvieron al conductor"}}
+        doc = build_stories(WEB + [third], now=NOW, story_key_for=lambda url: "event:abc" if url == "https://lvr/cerebral" else "")
+        [story] = doc["items"]
+        self.assertEqual([n["url"] for n in story["notas"]], ["https://lvr/cerebral", "https://lvr/murio", "https://lvr/detenido"])
+        self.assertEqual((story["storyKey"], story["titulo"]), ("event:abc", "DETUVIERON AL CONDUCTOR"))
+        self.assertEqual(story["notas"][2]["novedad"], "Detuvieron al conductor")
+        # Sin actualizaciones no hay historias (nunca se agrupa por parecido).
+        self.assertEqual(build_stories([WEB[2]], now=NOW)["items"], [])
+
+    def test_breaking_note_and_alert(self):
+        from utils.web_feed import build_breaking
+
+        flags = {"breaking": {"post_id": "6321", "activated_at": "2026-10-23T19:02:41Z"}}
+        lookup = lambda pid: {"titulo": "Detuvieron a dos ladrones", "url": "https://lvr/robo", "seccion": "policiales"} if pid == "6321" else None  # noqa: E731
+        activated = datetime.fromisoformat("2026-10-23T19:02:41+00:00").timestamp()
+        doc = build_breaking(flags, alert={"estado": "activa", "nivel": "amarilla"}, now=activated + 3600, lookup=lookup)
+        self.assertEqual((doc["nota"]["url"], doc["nota"]["vigente"]), ("https://lvr/robo", True))
+        self.assertEqual(doc["alerta"]["nivel"], "amarilla")
+        late = build_breaking(flags, alert={"estado": "sin_alerta"}, now=activated + 7 * 3600, lookup=lookup)
+        self.assertFalse(late["nota"]["vigente"])
+        self.assertIsNone(late["alerta"])
+        self.assertEqual(build_breaking({"breaking": None}, alert=None, now=NOW), {"nota": None, "alerta": None})
+
+
 class ServicesTests(unittest.TestCase):
     def test_each_source_fails_alone_and_keeps_last_good(self):
         from utils.web_feed import build_services
@@ -149,7 +178,7 @@ class PublishTests(unittest.TestCase):
                 with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
                     json.dump(value, handle)
             docs, failed = web_feed.collect(now=datetime.fromtimestamp(NOW, tz=AR_TZ), fetch_links=False)
-            self.assertEqual(sorted(docs), ["actualizaciones", "mas-visto", "servicios", "videos"])
+            self.assertEqual(sorted(docs), ["actualizaciones", "historias", "mas-visto", "servicios", "ultimo-momento", "videos"])
             self.assertEqual(docs["servicios"]["dolar"], {"ok": True})
             with open(os.path.join(tmp, "web_feed_state.json"), encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["servicios"], {"dolar": {"ok": True}})

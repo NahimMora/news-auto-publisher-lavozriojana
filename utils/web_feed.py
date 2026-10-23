@@ -12,6 +12,9 @@ tiene (contrato en ``docs/WEB_FEED.md``):
 * ``actualizaciones.json``: notas que actualizan otra (``utils/same_event.py``),
   con la URL de la anterior, para mostrar el aviso en la nota vieja.
 * ``videos.json``: Reels publicados en Instagram con su enlace.
+* ``historias.json``: cronologías, sólo de cadenas de actualizaciones
+  verificadas del mismo hecho (nunca del agrupamiento automático).
+* ``ultimo-momento.json``: la nota marcada en el CMS y la alerta del SMN.
 * ``index.json``: qué hay y cuándo se actualizó.
 
 Sólo datos ya publicados o de fuentes oficiales: nada se inventa ni se
@@ -134,6 +137,89 @@ def build_updates(web: list, *, now: float, days: int = 7) -> dict:
         })
     items.sort(key=lambda i: i["nota"]["publicada"], reverse=True)
     return {"items": items}
+
+
+# ── Cronologías ──────────────────────────────────────────────────────────
+def build_stories(web: list, *, now: float, days: int = 30, story_key_for=None) -> dict:
+    """Cadenas de actualizaciones verificadas del mismo hecho (nunca el
+    agrupamiento automático, que mezclaba hechos). Cada historia trae sus
+    notas en orden y la ``storyKey`` con que el CMS las une, si la hay."""
+    by_url = _web_by_canonical(web)
+    parent: dict[str, str] = {}
+    for r in web:
+        update = r.get("event_update") if isinstance(r, dict) else None
+        if isinstance(update, dict) and r.get("canonical_url") and update.get("of_canonical_url") in by_url:
+            parent[str(r["canonical_url"])] = str(update["of_canonical_url"])
+
+    def root(url: str) -> str:
+        seen = set()
+        while url in parent and url not in seen:
+            seen.add(url)
+            url = parent[url]
+        return url
+
+    chains: dict[str, list[str]] = {}
+    for child in parent:
+        top = root(child)
+        members = chains.setdefault(top, [top])
+        for url in (child, parent[child]):
+            if url not in members:
+                members.append(url)
+    items = []
+    for top, members in chains.items():
+        notes = sorted((by_url[u] for u in members if u in by_url), key=lambda r: float(r.get("published_at_ts") or 0))
+        if len(notes) < 2 or now - float(notes[-1].get("published_at_ts") or 0) > days * 86400:
+            continue
+        items.append({
+            "storyKey": (story_key_for(notes[0]["web_url"]) if story_key_for else "") or "",
+            "titulo": str(notes[-1].get("titulo") or ""),
+            "actualizado": _iso(notes[-1].get("published_at_ts")),
+            "notas": [{
+                "titulo": str(n.get("titulo") or ""), "url": n["web_url"], "publicada": _iso(n.get("published_at_ts")),
+                "novedad": str((n.get("event_update") or {}).get("novedad") or ""),
+            } for n in notes],
+        })
+    items.sort(key=lambda i: i["actualizado"], reverse=True)
+    return {"origen": "actualizaciones verificadas del mismo hecho", "items": items}
+
+
+def _archive_story_key(url: str) -> str:
+    try:
+        from editorial_context import archive_index as ai
+
+        article = ai.get_by_canonical_url(url)
+    except Exception:
+        return ""
+    key = article.story_key if article else ""
+    return key if key.startswith("event:") else ""
+
+
+# ── Último momento ───────────────────────────────────────────────────────
+def build_breaking(flags: dict, *, alert: dict | None, now: float, lookup=None, max_hours: float = 6) -> dict:
+    """La nota marcada "Último momento" en el CMS (con su hora) y la alerta del
+    SMN si hay una vigente. La marca no vence sola en el CMS: ``vigente`` dice
+    si se activó en las últimas ``max_hours``."""
+    note = None
+    breaking = (flags or {}).get("breaking") if isinstance(flags, dict) else None
+    if isinstance(breaking, dict) and breaking.get("post_id"):
+        found = (lookup or _archive_by_post_id)(str(breaking["post_id"]))
+        if found:
+            try:
+                activated = datetime.fromisoformat(str(breaking.get("activated_at") or "").replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                activated = 0
+            note = {**found, "activado": _iso(activated) if activated else "", "vigente": bool(activated) and now - activated <= max_hours * 3600}
+    active_alert = alert if isinstance(alert, dict) and alert.get("estado") == "activa" else None
+    return {"nota": note, "alerta": active_alert}
+
+
+def _archive_by_post_id(post_id: str) -> dict | None:
+    """La nota del CMS por su id: la cola Meta guarda ``web_post_id`` junto a
+    ``web_url`` (el archivo editorial no tiene el post_id de las notas propias)."""
+    for item in _load("noticias_meta.json", []):
+        if isinstance(item, dict) and str(item.get("web_post_id") or "") == post_id and item.get("web_url"):
+            return {"titulo": str(item.get("titulo") or ""), "url": item["web_url"], "seccion": str(item.get("seccion") or "").lower()}
+    return None
 
 
 # ── Videos ───────────────────────────────────────────────────────────────
@@ -365,6 +451,8 @@ def collect(*, now: datetime | None = None, fetch_links: bool = True) -> tuple[d
         "servicios": services,
         "actualizaciones": build_updates(web, now=ts),
         "videos": build_videos(reels, permalinks),
+        "historias": build_stories(web, now=ts, story_key_for=_archive_story_key),
+        "ultimo-momento": build_breaking(_load("editorial_flags.json", {}), alert=services.get("alerta"), now=ts),
     }
     stamp = _now_iso(moment)
     docs = {name: {"version": VERSION, "actualizado": stamp, **doc} for name, doc in docs.items()}

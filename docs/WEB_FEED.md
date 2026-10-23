@@ -18,7 +18,8 @@ la web arme sus propios widgets. Etapa `meta/run_web_feed.py`, código
 
 ```json
 {"version": 1, "actualizado": "2026-10-23T11:20:00-03:00",
- "feeds": {"mas-visto": "https://media.lavozriojana.com/feed/v1/mas-visto.json", "servicios": "…", "actualizaciones": "…", "videos": "…"}}
+ "feeds": {"mas-visto": "https://media.lavozriojana.com/feed/v1/mas-visto.json", "servicios": "…", "actualizaciones": "…",
+           "videos": "…", "historias": "…", "ultimo-momento": "…"}}
 ```
 
 ## `mas-visto.json`
@@ -109,3 +110,39 @@ nuevos con enlace verificado.
 - `instagram.miniatura` es una URL firmada del CDN de Instagram que **vence en
   pocos días**: usarla sólo en el momento o resolver con el embed oficial de
   Instagram a partir de `instagram.url`.
+
+## `historias.json`
+
+Cronologías armadas **sólo** con actualizaciones verificadas del mismo hecho
+(desde el 2026-10-23). El agrupamiento automático anterior quedó apagado porque
+mezclaba hechos distintos (docs/KNOWN_ISSUES.md #101). Historias con al menos
+dos notas y movimiento en los últimos 30 días.
+
+```json
+{"origen": "actualizaciones verificadas del mismo hecho",
+ "items": [{"storyKey": "event:3f2a…", "titulo": "IMPUTAN POR HOMICIDIO SIMPLE A LOS CINCO DETENIDOS…",
+            "actualizado": "2026-10-23T16:01:04-03:00",
+            "notas": [{"titulo": "AVANZA LA INVESTIGACIÓN…", "url": "https://lavozriojana.com/noticias/avanza-…", "publicada": "…", "novedad": ""},
+                      {"titulo": "IMPUTAN POR HOMICIDIO…", "url": "https://lavozriojana.com/noticias/imputan-…", "publicada": "…",
+                       "novedad": "Imputaron a los cinco detenidos por el homicidio de Nancy Godoy"}]}]}
+```
+
+- `notas` en orden cronológico (la primera es la original). `titulo` de la
+  historia es el de la nota más nueva. `novedad` vacía en la original.
+- `storyKey` es la misma que trae cada post del CMS en `storyKey` (puede llegar
+  vacía en cadenas anteriores al 2026-10-23). En la página de una nota: si su
+  post trae `storyKey` que empieza con `event:`, mostrar la cronología de esa
+  historia; cualquier otra `storyKey` se ignora.
+
+## `ultimo-momento.json`
+
+```json
+{"nota": {"titulo": "Detuvieron a dos ladrones tras robar a una docente…", "url": "https://lavozriojana.com/noticias/…",
+          "seccion": "policiales", "activado": "2026-10-23T16:02:41-03:00", "vigente": true},
+ "alerta": {…mismo bloque que servicios.alerta, sólo si está activa…}}
+```
+
+- `nota`: la marcada "Último momento" en el CMS (`isBreaking`); `null` si no
+  hay. La marca no vence sola: `vigente` es `true` si se activó en las últimas
+  6 horas. Mostrar la banda sólo con `vigente: true`.
+- `alerta`: alerta o aviso del SMN vigente para La Rioja, o `null`.
