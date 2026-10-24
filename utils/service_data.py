@@ -231,7 +231,7 @@ def _cap_departments(area_desc: str, polygons: list[str]) -> list[str]:
 
 
 def parse_cap(xml: bytes | str) -> dict | None:
-    """Un XML CAP del SMN → ``{event, level, kind, expires, departments, cancel}``.
+    """Un XML CAP del SMN → ``{event, level, kind, expires, sent, departments, cancel}``.
     ``None`` si no se puede leer."""
     import xml.etree.ElementTree as ET
 
@@ -260,6 +260,8 @@ def parse_cap(xml: bytes | str) -> dict | None:
         # "AVISO NARANJA POR TORMENTAS…" es un aviso a muy corto plazo (dos horas).
         "kind": "aviso" if _fold(headline).startswith("aviso") else "alerta",
         "expires": text(info, "expires"),
+        # Hora de emisión o actualización de esta alerta por el SMN.
+        "sent": text(root, "sent"),
         "description": text(info, "description"),
         "departments": departments,
         "cancel": text(root, "msgType").lower() == "cancel" or text(root, "status").lower() != "actual",
@@ -286,7 +288,8 @@ def fetch_alerts(*, province: str = "La Rioja", fetcher=None, cache: dict | None
     moment = now_ar(now)
     active = []
     for url in links:
-        if url not in cache:
+        # Las entradas de antes de leer ``sent`` se vuelven a bajar una vez.
+        if url not in cache or (cache[url] and "sent" not in cache[url]):
             try:
                 cache[url] = parse_cap(_get(url, fetcher)) or {}
             except ServiceDataError as exc:
@@ -313,6 +316,7 @@ def fetch_alerts(*, province: str = "La Rioja", fetcher=None, cache: dict | None
         "kind": top["kind"],
         "zones": zones,
         "expires": max(a["expires"] for a in same),
+        "sent": max((a.get("sent") or "" for a in same), default=""),
         "description": top.get("description", ""),
         "raw": f"{top['kind']} {top['level']} {top['event']}: {', '.join(zones)}"[:400],
     }
