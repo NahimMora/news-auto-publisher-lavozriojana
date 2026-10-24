@@ -419,17 +419,37 @@ def reel_records(x_reels: dict, paparazzi_jobs: dict, web: list | None = None) -
     return out
 
 
+_IG_CDN = re.compile(r"^https://[^/?#]+\.(?:cdninstagram\.com|fbcdn\.net)/")
+
+
+def video_source(media_url, *, now: float, margin_hours: float = 2) -> tuple[str | None, str | None]:
+    """El mp4 del Reel (``media_url`` de la Graph API, en el CDN de Instagram)
+    y cuándo vence su firma (parámetro ``oe``, hexadecimal en epoch). Sin
+    firma legible, o si vence dentro de ``margin_hours``, no se ofrece: la web
+    cae al reproductor de Instagram."""
+    url = str(media_url or "")
+    match = re.search(r"[?&]oe=([0-9A-Fa-f]{6,10})(?:&|$)", url)
+    if not _IG_CDN.match(url) or not match:
+        return None, None
+    expires = int(match.group(1), 16)
+    if expires - now < margin_hours * 3600:
+        return None, None
+    return url, _iso(expires)
+
+
 def build_videos(reels: list[dict], permalinks: dict, *, now: float, limit: int = 25) -> dict:
     items = []
     for r in reels:
         meta = permalinks.get(r["media_id"]) or {}
         if not meta.get("permalink") or not r["titulo"] or not r["at"] or r["at"] > now:
             continue  # sin enlace verificado no se ofrece; nada programado a futuro
+        video, expires = video_source(meta.get("media_url"), now=now) if meta.get("media_type") == "VIDEO" else (None, None)
         items.append({
             "titulo": r["titulo"],
             "publicado": _iso(r["at"]),
             "origen": r["origen"],
-            "instagram": {"url": meta["permalink"], "miniatura": meta.get("thumbnail_url") or None, "tipo": meta.get("media_type") or None},
+            "instagram": {"url": meta["permalink"], "miniatura": meta.get("thumbnail_url") or None,
+                          "video": video, "video_vence": expires, "tipo": meta.get("media_type") or None},
             "url_nota": r["url_nota"],
             "fuente_video": r["fuente_video"],
         })
@@ -656,7 +676,7 @@ def fetch_permalinks(media_ids: list[str], known: dict, *, refresh: list[str] | 
 
         def getter(media_id: str) -> dict | None:
             response = requests.get(f"{GRAPH_API}/{media_id}", params={
-                "fields": "permalink,thumbnail_url,media_type,timestamp", "access_token": IG_ACCESS_TOKEN,
+                "fields": "permalink,thumbnail_url,media_type,media_url,timestamp", "access_token": IG_ACCESS_TOKEN,
             }, timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")))
             return response.json() if response.status_code == 200 else None
 
@@ -670,7 +690,7 @@ def fetch_permalinks(media_ids: list[str], known: dict, *, refresh: list[str] | 
             logger.info("Permalink de Instagram no disponible para %s: %s", media_id, type(exc).__name__)
             continue
         if isinstance(data, dict) and str(data.get("permalink") or "").startswith("https://www.instagram.com/"):
-            new[media_id] = {k: str(data.get(k) or "") for k in ("permalink", "thumbnail_url", "media_type", "timestamp")}
+            new[media_id] = {k: str(data.get(k) or "") for k in ("permalink", "thumbnail_url", "media_type", "media_url", "timestamp")}
     return new
 
 
@@ -749,6 +769,8 @@ def _check_item(name: str, item) -> str:
             return "instagram.url"
         if item.get("url_nota") is not None and not _is_news_url(item["url_nota"]):
             return "url_nota"
+        if ig.get("video") is not None and not (_IG_CDN.match(str(ig["video"])) and _is_dt(ig.get("video_vence"))):
+            return "instagram.video"
     elif name == "cortes":
         if item.get("servicio") not in ("luz", "agua", "rutas") or not _is_title(item.get("titulo")) or not _is_dt(item.get("publicado")):
             return "servicio/titulo/publicado"

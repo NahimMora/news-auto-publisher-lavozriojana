@@ -117,8 +117,26 @@ class UpdatesAndVideosTests(unittest.TestCase):
         links = {m: {"permalink": f"https://www.instagram.com/reel/{m}AAAA/", "media_type": "VIDEO"} for m in ("v1", "v4")}
         doc = build_videos(reels, links, now=NOW)
         [item] = doc["items"]
-        self.assertEqual(item["instagram"], {"url": "https://www.instagram.com/reel/v1AAAA/", "miniatura": None, "tipo": "VIDEO"})
+        self.assertEqual(item["instagram"], {"url": "https://www.instagram.com/reel/v1AAAA/", "miniatura": None, "video": None,
+                                             "video_vence": None, "tipo": "VIDEO"})
         self.assertEqual((item["titulo"], item["url_nota"], item["fuente_video"]), ("Choque en la ruta 38", None, "https://x.com/a/status/1"))
+
+    def test_video_source_comes_from_the_instagram_cdn_with_its_expiry(self):
+        from utils.web_feed import build_videos, video_source
+
+        oe = format(int(NOW) + 30 * 3600, "X")
+        mp4 = f"https://instagram.fsla2-1.fna.fbcdn.net/o1/v/t16/f2/m86/AQN.mp4?_nc_ht=x&oe={oe}&_nc_sid=1"
+        url, expires = video_source(mp4, now=NOW)
+        self.assertEqual(url, mp4)
+        self.assertEqual(expires, datetime.fromtimestamp(int(NOW) + 30 * 3600, tz=AR_TZ).isoformat(timespec="seconds"))
+        # Por vencer, sin firma o fuera del CDN de Instagram: no se ofrece.
+        soon = mp4.replace(oe, format(int(NOW) + 3600, "X"))
+        for bad in (soon, mp4.split("?")[0], "https://evil.com/a.mp4?oe=" + oe, ""):
+            self.assertEqual(video_source(bad, now=NOW), (None, None))
+        reels = [{"media_id": "v1", "titulo": "Choque", "origen": "nota", "fuente_video": None, "url_nota": None, "at": NOW - 60}]
+        links = {"v1": {"permalink": "https://www.instagram.com/reel/AAAAA/", "media_type": "VIDEO", "media_url": mp4}}
+        [item] = build_videos(reels, links, now=NOW)["items"]
+        self.assertEqual((item["instagram"]["video"], item["instagram"]["video_vence"]), (mp4, expires))
 
     def test_permalinks_are_read_once_but_video_thumbnails_every_run(self):
         from utils.web_feed import fetch_permalinks

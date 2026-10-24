@@ -140,7 +140,9 @@ nuevos con enlace verificado, sin nada programado a futuro.
 
 ```json
 {"items": [{"titulo": "Ataque a piedrazos contra una familia en Chamical", "publicado": "…", "origen": "nota",
-            "instagram": {"url": "https://www.instagram.com/reel/…/", "miniatura": "https://scontent…", "tipo": "VIDEO"},
+            "instagram": {"url": "https://www.instagram.com/reel/…/", "miniatura": "https://scontent…",
+                          "video": "https://instagram.fsla2-1.fna.fbcdn.net/…mp4?…&oe=…", "video_vence": "2026-10-25T10:30:00-03:00",
+                          "tipo": "VIDEO"},
             "url_nota": "https://lavozriojana.com/noticias/…", "fuente_video": null}]}
 ```
 
@@ -150,6 +152,14 @@ nuevos con enlace verificado, sin nada programado a futuro.
 - `instagram.miniatura` es el `thumbnail_url` de la Graph API: una URL firmada
   del CDN de Instagram que **vence en pocos días**, por eso se vuelve a pedir
   en cada corrida.
+- `instagram.video` es el mp4 del Reel (`media_url` de la Graph API, de
+  nuestra propia cuenta) en el CDN de Instagram, para un `<video>` nativo sin
+  subir el archivo a R2. Admite pedidos por rango y CORS abierto.
+  - `video_vence` es cuándo vence su firma (parámetro `oe`; hoy unas 32 h).
+    Se renueva cada hora.
+  - Llega `null` si no es video, si no hay firma legible o si vence en menos
+    de 2 h. En ese caso, y también si el `<video>` falla, la web usa el
+    reproductor de Instagram (`https://www.instagram.com/reel/<código>/embed/`).
 
 ## `historias.json`
 
