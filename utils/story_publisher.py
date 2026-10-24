@@ -65,6 +65,15 @@ def max_per_day() -> int:
     return _int("STORY_MAX_PER_DAY", 20)
 
 
+def manual_post_stories() -> bool:
+    """Con ``POST_STORIES_MANUAL`` las historias "Nueva publicación" y de Reel
+    no salen por API en Instagram (consumen el tope de 100 publicaciones por
+    día): el operador las sube a mano con la plantilla de fondo y el sticker de
+    link. Último momento y servicio siguen automáticos; Facebook no cuenta
+    para ese tope y sigue igual."""
+    return _flag("POST_STORIES_MANUAL")
+
+
 def in_quiet_hours() -> bool:
     return quiet_hours(window=os.getenv("STORY_QUIET_HOURS", "0-7"))
 
@@ -305,6 +314,12 @@ def post_story_candidates(media: list[dict], *, lookback_hours: float, state: di
         })
     out.sort(key=lambda c: (c["rank"], -c["ts"]))
     return out
+
+
+def is_manual_story(candidate: dict) -> bool:
+    """Historia de publicación que va a mano: "Nueva publicación" o Reel (no
+    último momento)."""
+    return bool(candidate.get("reel")) or not candidate.get("explicit_breaking")
 
 
 def story_for_candidate(candidate: dict) -> tuple[dict, str | None]:

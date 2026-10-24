@@ -58,6 +58,12 @@ _SNAPSHOT_FIELDS = (
 _GIVEN_UP = {"dead_letter", "expired"}
 
 
+def _video_key(noticia: dict) -> str:
+    """El mismo archivo de video puede venir en notas distintas (Paparazzi
+    reutiliza el clip en varias notas del mismo tema): se compara sin query."""
+    return str(noticia.get("video_url") or "").strip().split("?", 1)[0].split("#", 1)[0].lower()
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -124,6 +130,8 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
     cutoff = _cutoff(current)
     noticias = load_json(META_INPUT, [], expected_type=list)
     posted = load_json(REELS_POSTED_PATH, {"posted": {}}, expected_type=dict).get("posted") or {}
+    posted_videos = {_video_key(record) for record in posted.values() if isinstance(record, dict)}
+    duplicates = {"video": 0}
 
     candidates: list[tuple[str, dict]] = []
     for noticia in noticias:
@@ -138,20 +146,41 @@ def ingest(*, now: float | None = None) -> dict[str, int]:
         key = reel_dedup_key(noticia)
         if key in posted:
             continue
+        video = _video_key(noticia)
+        if video and video in posted_videos:
+            duplicates["video"] += 1
+            continue
         snapshot = {field: noticia[field] for field in _SNAPSHOT_FIELDS if noticia.get(field) not in (None, "")}
         if local:
             snapshot.update(_local_reel_fields(noticia))
         candidates.append((key, {"noticia": snapshot, "queued_at": queued}))
 
     counts = {"new": 0}
+    if duplicates["video"]:
+        logger.info("Notas con video ya usado en otro Reel (omitidas): %s", duplicates["video"])
     if not candidates:
         return counts
 
     def mutate(state):
         jobs = state.setdefault("jobs", {})
+        # Un video ya encolado o publicado (no los abandonados) no genera otro Reel.
+        videos = {
+            _video_key(job.get("noticia") or {})
+            for job in jobs.values()
+            if isinstance(job, dict) and job.get("status") not in _GIVEN_UP
+        }
+        videos.discard("")
         for key, payload in candidates:
             if key in jobs:
                 continue
+            video = _video_key(payload["noticia"])
+            if video in videos:
+                logger.info(
+                    "Reel omitido por video repetido: %s", str(payload["noticia"].get("titulo") or "")[:90]
+                )
+                continue
+            if video:
+                videos.add(video)
             jobs[key] = {
                 **payload,
                 "status": "pending",

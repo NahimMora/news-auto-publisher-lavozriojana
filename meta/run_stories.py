@@ -67,8 +67,15 @@ def main() -> StageResult:
 
     lookback = float(os.getenv("STORY_POST_LOOKBACK_HOURS", "6"))
     media = sp.recent_instagram_media()
+    manual = sp.manual_post_stories()
     for candidate in sp.post_story_candidates(media, lookback_hours=lookback, state=state):
-        jobs.append((candidate["key"], {}, None, {"kind": "post", "label": candidate["title"][:80], "candidate": candidate}))
+        meta = {"kind": "post", "label": candidate["title"][:80], "candidate": candidate}
+        if manual and sp.is_manual_story(candidate):
+            # En Instagram la sube el operador; sin Facebook no queda nada que hacer.
+            if not facebook:
+                continue
+            meta["instagram"] = False
+        jobs.append((candidate["key"], {}, None, meta))
 
     selected = jobs[:budget]
     succeeded = failed = 0
@@ -97,7 +104,13 @@ def main() -> StageResult:
                     os.unlink(temp_asset)
                 except OSError:
                     pass
-        outcome = sp.publish_story(key, jpeg, instagram=instagram, facebook=facebook, meta={"kind": meta["kind"], "label": meta["label"]})
+        outcome = sp.publish_story(
+            key,
+            jpeg,
+            instagram=instagram and meta.get("instagram", True),
+            facebook=facebook,
+            meta={"kind": meta["kind"], "label": meta["label"]},
+        )
         outcomes[key] = outcome
         if "success" in outcome.values():
             succeeded += 1

@@ -70,7 +70,7 @@ def is_rate_limited() -> bool:
     return False
 
 
-def _set_rate_limit_backoff() -> int:
+def _set_rate_limit_backoff(data: dict | None = None, status_code: int | None = None) -> int:
     blocked_until = int(time.time()) + IG_RATE_LIMIT_BACKOFF_SECONDS
     update_json(
         IG_RATE_LIMIT_PATH,
@@ -85,7 +85,16 @@ def _set_rate_limit_backoff() -> int:
         {},
         expected_type=dict,
     )
-    logger.error("IG rate limit detectado; backoff hasta %s", blocked_until)
+    error = (data or {}).get("error") if isinstance((data or {}).get("error"), dict) else {}
+    # code 9/2207042 = tope de 100 publicaciones por 24 h; 4/32/613 = límite de
+    # llamadas de la app o de la cuenta (lecturas incluidas).
+    logger.error(
+        "IG rate limit detectado (http=%s code=%s subcode=%s); backoff hasta %s",
+        status_code,
+        error.get("code"),
+        error.get("error_subcode"),
+        blocked_until,
+    )
     return blocked_until
 
 
@@ -232,7 +241,7 @@ def _error_result(response, *, outcome: str = "not_published") -> OperationResul
             response=data or None,
         )
     if _is_rate_limit_error(data, response.status_code):
-        until = _set_rate_limit_backoff()
+        until = _set_rate_limit_backoff(data, response.status_code)
         return OperationResult(
             StageStatus.DEGRADED,
             error_type="rate_limit",
@@ -277,7 +286,7 @@ def _wait_video_container(container_id: str) -> OperationResult:
             continue
         data = _safe_json(response)
         if _is_rate_limit_error(data, response.status_code):
-            until = _set_rate_limit_backoff()
+            until = _set_rate_limit_backoff(data, response.status_code)
             return OperationResult(
                 StageStatus.DEGRADED,
                 error_type="rate_limit",
@@ -388,6 +397,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         )
 
     tmp_path = ""
+    step = "render"
     try:
         from layout.image_generator import generate_instagram_with_engine
 
@@ -413,6 +423,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
             tmp_path = handle.name
             handle.write(jpeg_bytes)
+        step = "r2"
         public_url, key = r2_storage.upload_temp(tmp_path, ttl_hint="ig")
         return (
             OperationResult(
@@ -424,12 +435,20 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
             key,
         )
     except Exception as exc:
+        # Antes todo se informaba como falla de R2 aunque fallara el render.
+        error_type = "r2_upload_error" if step == "r2" else "image_render_error"
+        logger.error(
+            "Imagen de Instagram no disponible (%s): %s: %s",
+            "falló la subida a R2" if step == "r2" else "falló el render de la placa",
+            type(exc).__name__,
+            str(exc)[:300],
+        )
         allow = str(os.getenv("IG_ALLOW_ORIGINAL_IMAGE_FALLBACK", "false")).lower() in {
             "1", "true", "yes", "si", "sí",
         }
         if allow and _is_http_url(original_url):
             logger.warning(
-                "R2 falló (%s); fallback original habilitado explícitamente",
+                "Imagen propia no disponible (%s); fallback original habilitado explícitamente",
                 type(exc).__name__,
             )
             return (
@@ -439,7 +458,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
                     details={
                         "image_source": "original",
                         "fallback_used": True,
-                        "fallback_reason": "r2_error",
+                        "fallback_reason": "r2_error" if step == "r2" else "render_error",
                     },
                 ),
                 original_url,
@@ -448,7 +467,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         return (
             OperationResult(
                 StageStatus.FAILED,
-                error_type="r2_upload_error",
+                error_type=error_type,
                 details={"fallback_allowed": allow},
             ),
             "",
@@ -1228,7 +1247,7 @@ def graph_get(path: str, params: dict) -> dict | None:
     data = _safe_json(response)
     if response.status_code != 200:
         if _is_rate_limit_error(data, response.status_code):
-            _set_rate_limit_backoff()
+            _set_rate_limit_backoff(data, response.status_code)
         logger.warning("Lectura de Instagram rechazada: http %s", response.status_code)
         return None
     return data

@@ -8,6 +8,7 @@ import { AUTOMATIC_IG_V2_H, AUTOMATIC_IG_V2_W, AutomaticInstagramCardV2, Automat
 import { FB_OG_V2_H, FB_OG_V2_W, FacebookOgCardV2, FacebookOgCardV2Schema } from "./FacebookOgCardV2";
 import { REEL } from "./tokens";
 import { StoryV2, StoryV2Schema } from "./social/StoryV2";
+import { ManualStoryTemplate } from "./social/ManualStoryTemplate";
 import { ServiceCardV2 } from "./social/ServiceCardV2";
 import { MorningBriefV2, MorningBriefV2Schema } from "./social/MorningBriefV2";
 import { WeeklyRecapV2, WeeklyRecapV2Props, WeeklyRecapV2Schema, recapDuration } from "./social/WeeklyRecapV2";
@@ -81,6 +82,7 @@ export const V2Compositions: React.FC = () => (
       schema={StoryV2Schema}
       defaultProps={StoryV2Schema.parse({ kind: "post" })}
     />
+    <Still id="ManualStoryTemplate" component={ManualStoryTemplate} width={1080} height={1920} />
     <Still
       id="ServiceCardV2"
       component={ServiceCardV2}

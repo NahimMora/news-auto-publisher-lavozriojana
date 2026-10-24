@@ -416,6 +416,38 @@ class PaparazziVideoJobsTests(unittest.TestCase):
         self.assertEqual([reel_dedup_key(fresh)], [job_id for job_id, _ in pending])
         self.assertEqual(fresh["video_url"], pending[0][1]["noticia"]["video_url"])
 
+    def test_same_video_in_another_note_does_not_create_second_reel(self):
+        # Paparazzi reutiliza el mismo clip en notas distintas del mismo tema.
+        now = int(time.time())
+        first = {**_paparazzi("a", video=True), "queued_at": now - 120}
+        same_clip = {**_paparazzi("b", video=True), "queued_at": now - 60}
+        same_clip["video_url"] = first["video_url"] + "?v=2"
+        self._write_meta([first, same_clip])
+        self.assertEqual({"new": 1}, self.jobs.ingest(now=now))
+
+        # Ya publicado: el video queda en la evidencia y bloquea una nota posterior.
+        from utils.paparazzi_reels import reel_dedup_key
+
+        later = {**_paparazzi("c", video=True), "queued_at": now - 30, "video_url": first["video_url"]}
+        self.posted.write_text(
+            json.dumps({"posted": {reel_dedup_key(first): {"video_url": first["video_url"]}}}), encoding="utf-8"
+        )
+        Path(self.jobs.STATE_PATH).unlink()
+        self._write_meta([later])
+        self.assertEqual({"new": 0}, self.jobs.ingest(now=now))
+
+    def test_abandoned_job_does_not_block_same_video(self):
+        now = int(time.time())
+        first = {**_paparazzi("a", video=True), "queued_at": now - 120}
+        self._write_meta([first])
+        self.jobs.ingest(now=now)
+        from utils.paparazzi_reels import reel_dedup_key
+
+        self.jobs.transition(reel_dedup_key(first), status="dead_letter", reason="x")
+        retry = {**_paparazzi("b", video=True), "queued_at": now - 60, "video_url": first["video_url"]}
+        self._write_meta([first, retry])
+        self.assertEqual({"new": 1}, self.jobs.ingest(now=now))
+
     def test_respects_operational_cutoff_and_flag(self):
         now = int(time.time())
         self._write_meta([{**_paparazzi("v", video=True), "queued_at": now - 60}])

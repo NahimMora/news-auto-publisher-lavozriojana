@@ -10,6 +10,7 @@ cupos ni dedup con el feed. El backoff de rate limit de Meta sí se comparte.
 | Formato | Dónde | Cuándo | Módulo | Estado |
 |---|---|---|---|---|
 | Historia de cada publicación de Instagram | IG + FB (misma imagen) | cada ciclo, 7–24 h | `utils/story_publisher.py`, `meta/run_stories.py` | `data/stories_state.json` |
+| Con `POST_STORIES_MANUAL=true` (apagado por defecto): las historias "Nueva publicación" y de Reel no salen por API en IG | FB automática; en IG la sube el operador sobre el fondo `ManualStoryTemplate` (post compartido + sticker de link) | — | ídem, `remotion/src/v2/social/ManualStoryTemplate.tsx` | ídem |
 | Historias de servicio: clima SMN, alertas, dólar, feriados, cortes de luz/agua, rutas | IG + FB | clima 7–11 h; dólar 11–13 y 16–18 h hábiles si cambió; feriado 7 y 1 día antes; alertas y avisos cuando aparecen | `utils/social_formats.py`, `utils/service_data.py` | ídem |
 | "Lo que tenés que saber hoy" | carrusel IG (7 láminas) + álbum FB | desde las 8 (`MORNING_BRIEF_HOUR`), una vez por día | `utils/social_formats.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` |
 | "La semana en cinco" | Reel IG + video FB | domingos desde las 20 (`WEEKLY_RECAP_HOUR`) | ídem | ídem |

@@ -2555,3 +2555,27 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   pipeline no tiene esa métrica).
 - Rollback: `WEB_FEED_ENABLED=false`; los archivos quedan con su última
   `actualizado`.
+
+## 2026-10-24 — Tope de 100 publicaciones de Instagram y Reels repetidos
+
+- Contexto: Meta permite 100 publicaciones por API cada 24 h y las historias
+  cuentan (`content_publishing_limit`: 85/100 el 24/10 a las 13 h). En las 24 h
+  previas al corte del 24/10 hubo 96: 44 posts, 28 historias y 24 Reels. Además
+  salieron Reels repetidos porque Paparazzi reutiliza el mismo clip en notas
+  distintas (p. ej. `nfm0LHYu` en dos notas sobre Gisela Gordillo).
+- Decisión: `POST_STORIES_MANUAL` (apagado por defecto) saca de la API de
+  Instagram las historias "Nueva publicación" y de Reel; el operador las sube
+  a mano sobre el fondo vacío `ManualStoryTemplate` (Remotion), con la
+  publicación compartida y el sticker de link a la web, que la API no permite.
+  Último momento y servicio siguen automáticos; Facebook no cuenta para el
+  tope y sigue igual. El ingreso de Reels descarta una nota cuyo video (URL sin
+  query) ya está en un job vivo o en la evidencia publicada.
+- Diagnóstico: el backoff de rate limit registra http/code/subcode de Meta
+  (tope diario 9/2207042 vs. límite de llamadas 4/32/613); la imagen de
+  Instagram distingue `image_render_error` de `r2_upload_error` y registra la
+  excepción; la disponibilidad de Remotion se da por buena si el servidor de
+  render responde `/health`, sin `npx remotion versions` (60 s bajo carga
+  mandaron diez placas OG al diseño de respaldo el 23/10).
+- Datos de alcance (10 días): los Reels de Infobae policiales (mediana 1.384)
+  rinden más que los posts policiales locales (267): no se recortan.
+- Rollback: `POST_STORIES_MANUAL=false`.

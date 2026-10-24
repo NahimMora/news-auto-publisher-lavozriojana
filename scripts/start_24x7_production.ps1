@@ -46,6 +46,8 @@ $env:REEL_COVER_FACEBOOK_ENABLED = "true"
 # para La Rioja, carrusel de las 8, Reel de los domingos y seguimiento.
 $env:IG_STORIES_ENABLED = "true"
 $env:FB_STORIES_ENABLED = "true"
+# Historias "Nueva publicación" y de Reel en Instagram: las sube el operador (tope de 100 por día de Meta).
+$env:POST_STORIES_MANUAL = "true"
 $env:SOCIAL_FORMATS_INSTAGRAM_ENABLED = "true"
 $env:SOCIAL_FORMATS_FACEBOOK_ENABLED = "true"
 $env:MORNING_BRIEF_ENABLED = "true"

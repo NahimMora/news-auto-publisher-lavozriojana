@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -97,6 +98,40 @@ class InstagramDailyLimitTests(unittest.TestCase):
         self.assertEqual("rate_limit", result.error_type)
         self.assertTrue(result.retryable)
         self.assertEqual(123, result.next_retry_at)
+
+    def test_rate_limit_backoff_logs_meta_code(self):
+        from meta import ig_client
+
+        response = mock.Mock(status_code=400)
+        response.json.return_value = {"error": {"code": 9, "error_subcode": 2207042}}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            ig_client, "IG_RATE_LIMIT_PATH", os.path.join(tmp, "rl.json")
+        ), self.assertLogs(ig_client.logger, "ERROR") as logs:
+            ig_client._error_result(response)
+        self.assertIn("code=9 subcode=2207042", logs.output[0])
+
+    def _prepare_image(self, *, render_fails):
+        from meta import ig_client
+
+        generate = mock.Mock(side_effect=RuntimeError("remotion caído")) if render_fails else mock.Mock(return_value=(b"jpg", "remotion"))
+        upload = mock.Mock(side_effect=RuntimeError("r2 caído"))
+        with mock.patch("layout.image_generator.generate_instagram_with_engine", generate), mock.patch.object(
+            ig_client.r2_storage, "upload_temp", upload
+        ), mock.patch.object(ig_client.r2_storage, "is_configured", return_value=True), mock.patch("openIA.caption_generator.ensure_locality_and_deck"), mock.patch.dict(
+            os.environ, {"IG_ALLOW_ORIGINAL_IMAGE_FALLBACK": "false"}
+        ), self.assertLogs(ig_client.logger, "ERROR") as logs:
+            result = ig_client._prepare_image({"titulo": "t", "imagen_url": "https://example.com/a.jpg"})
+        return result[0], logs.output
+
+    def test_image_render_failure_is_not_reported_as_r2(self):
+        result, logs = self._prepare_image(render_fails=True)
+        self.assertEqual("image_render_error", result.error_type)
+        self.assertIn("remotion caído", logs[0])
+
+    def test_r2_failure_keeps_r2_error_type(self):
+        result, logs = self._prepare_image(render_fails=False)
+        self.assertEqual("r2_upload_error", result.error_type)
+        self.assertIn("r2 caído", logs[0])
 
 
 class QuietHoursTests(unittest.TestCase):

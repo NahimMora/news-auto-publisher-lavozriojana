@@ -145,6 +145,13 @@ def remotion_available(*, force_recheck: bool = False) -> bool:
     if not os.path.isdir(REMOTION_DIR):
         _availability_cache["available"] = (False, time.time())
         return False
+    # Si el servidor de render persistente responde, Remotion está disponible:
+    # no hace falta ``npx remotion versions``, que con la máquina cargada pasó
+    # los 60 s (23/10) y mandó diez placas OG al diseño de respaldo.
+    info = None if RENDER_SERVER_DISABLED else _read_server_info()
+    if info and _server_health_check(info.get("port", -1)):
+        _availability_cache["available"] = (True, time.time())
+        return True
     try:
         result = subprocess.run(
             _npx_args(["remotion", "versions"]),

@@ -55,6 +55,7 @@ def _mark_posted(dedup_key: str, noticia: dict, *, ig_id: str, fb_id: str) -> No
             "posted_at": int(time.time()),
             "titulo": noticia.get("titulo", ""),
             "canonical_url": noticia.get("canonical_url") or noticia.get("url") or "",
+            "video_url": noticia.get("video_url") or "",
             "instagram_id": ig_id,
             "facebook_id": fb_id,
         }

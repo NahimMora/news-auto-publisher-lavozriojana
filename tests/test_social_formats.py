@@ -320,6 +320,50 @@ class StoryPublisherTests(_TempState):
         fb.assert_not_called()
         self.assertTrue(self.sp.already_done("svc:weather:2026-10-18"))
 
+    def _run_stories(self, candidates, *, facebook=True):
+        from meta import run_stories
+
+        plan = mock.Mock()
+        plan.channel_enabled.side_effect = lambda channel: channel == "instagram" or facebook
+        env = {"IG_STORIES_ENABLED": "true", "FB_STORIES_ENABLED": "true", "POST_STORIES_MANUAL": "true", "SERVICE_STORIES_ENABLED": "false"}
+        asset = self.path("a.jpg")
+
+        def candidate_asset(_candidate):
+            with open(asset, "wb") as fh:
+                fh.write(b"x")
+            return {"kind": "post"}, asset
+
+        with mock.patch.dict(os.environ, env), mock.patch.object(run_stories, "deployment_plan", return_value=plan), mock.patch.object(
+            self.sp, "in_quiet_hours", return_value=False
+        ), mock.patch.object(self.sp, "recent_instagram_media", return_value=[]), mock.patch.object(
+            self.sp, "post_story_candidates", return_value=candidates
+        ), mock.patch.object(self.sp, "story_for_candidate", side_effect=candidate_asset), mock.patch.object(
+            self.sp, "render_story", return_value=b"jpeg"
+        ), mock.patch.object(self.sp, "publish_story", return_value={"ig": "success", "fb": "success"}) as publish:
+            run_stories.main()
+        return {call.args[0]: call.kwargs for call in publish.call_args_list}
+
+    def test_manual_mode_post_and_reel_stories_skip_instagram_only(self):
+        base = {"image_url": "u", "seccion": "", "ts": time.time(), "breaking": False}
+        new_post = {**base, "key": "post:1", "media_id": "1", "reel": False, "explicit_breaking": False, "title": "Nota"}
+        breaking = {**base, "key": "post:2", "media_id": "2", "reel": False, "explicit_breaking": True, "title": "Último momento"}
+        reel = {**base, "key": "post:3", "media_id": "3", "reel": True, "explicit_breaking": False, "title": "Reel"}
+        calls = self._run_stories([new_post, breaking, reel])
+        self.assertEqual((False, True), (calls["post:1"]["instagram"], calls["post:1"]["facebook"]))
+        self.assertTrue(calls["post:2"]["instagram"])  # último momento sigue automático
+        self.assertEqual((False, True), (calls["post:3"]["instagram"], calls["post:3"]["facebook"]))
+
+        # Sin Facebook, la "Nueva publicación" no se renderiza ni se publica.
+        self.assertNotIn("post:1", self._run_stories([new_post], facebook=False))
+
+    def test_manual_mode_off_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("POST_STORIES_MANUAL", None)
+            self.assertFalse(self.sp.manual_post_stories())
+        self.assertTrue(self.sp.is_manual_story({"reel": False, "explicit_breaking": False}))
+        self.assertTrue(self.sp.is_manual_story({"reel": True}))
+        self.assertFalse(self.sp.is_manual_story({"explicit_breaking": True}))
+
     def test_props_are_complete(self):
         props = self.sp.story_props(kind="dollar", rows=[{"name": "Oficial", "sell": "1.535"}])
         self.assertEqual(set(self.sp.STORY_DEFAULTS) - set(props), set())
