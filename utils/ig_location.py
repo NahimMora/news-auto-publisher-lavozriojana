@@ -4,7 +4,8 @@ La localidad sale del campo ``locality`` que completa la reescritura sólo si
 el texto la nombra (nunca se infiere). Se busca en ``config/ig_locations.json``;
 sin ID cargado, la publicación sale sin ubicación, como antes. La API de
 búsqueda de lugares de Meta está deprecada: los IDs se cargan a mano desde
-``instagram.com/explore/locations/<ID>/``.
+el ``facebook_places_id`` del buscador de lugares de instagram.com (el ``pk`` de
+``instagram.com/explore/locations/<pk>/`` NO sirve: es un ID interno de Instagram).
 
 Apagado por defecto: ``IG_LOCATION_ENABLED``. Las historias no admiten ubicación.
 """

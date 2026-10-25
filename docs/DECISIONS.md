@@ -2599,8 +2599,11 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   publicó). Simulación sobre 1.500 notas de la cola: 72 con etiqueta.
 - Ubicación: `utils/ig_location.py` + `config/ig_locations.json` por el campo
   `locality` de la nota. La búsqueda de lugares de la API está deprecada
-  (v8.0): los IDs se cargan a mano desde `instagram.com/explore/locations/<ID>/`;
-  sin ID, sin ubicación.
+  (v8.0): se cargó el `facebook_places_id` (página de lugar de Facebook, lo
+  que pide `location_id`) de las 20 localidades, sacado del buscador de lugares
+  de instagram.com el 2026-10-25 (entrada "<Localidad>, La Rioja, Argentina"
+  con coordenadas en la provincia; el `pk` de `explore/locations` no sirve).
+  Sin ID, sin ubicación.
 - Flags: `GOV_TAGS_ENABLED`, `IG_LOCATION_ENABLED` (apagados por defecto,
   encendidos en `scripts/start_24x7_production.ps1`). Rollback: `false`.
 - Revisión: el directorio se revisa cada mes; Zárate pasa a fiscal general a
