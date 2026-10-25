@@ -138,11 +138,22 @@ RIOJAN_LOCALITY_TERMS = {
 }
 
 
+# Fuentes que sólo dejan pasar notas riojanas: Medios Rioja por la categoría
+# del RSS (Locales/Departamentales) y Fénix por su filtro de vínculo riojano
+# (``main_fenix._discard``). Sus notas hiperlocales no siempre nombran una
+# localidad ("incendio en el barrio Las Talas").
+RIOJAN_BY_SOURCE = {"mediosrioja_locales", "mediosrioja_interior", "fenix_locales"}
+
+
 def detect_riojan_link(noticia: dict) -> tuple[bool, str]:
     """True si existe evidencia determinística de vínculo con La Rioja."""
     hashtag = str(noticia.get("hashtag_localidad") or "").strip()
     if hashtag:
         return True, f"hashtag_localidad:{hashtag}"
+
+    source = str(noticia.get("source") or "").strip().lower()
+    if source in RIOJAN_BY_SOURCE:
+        return True, f"source:{source}"
 
     category = normalize_category(noticia.get("seccion") or noticia.get("categoria"))
     if category == "interior":

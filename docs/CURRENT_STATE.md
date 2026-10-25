@@ -1,7 +1,33 @@
 # Estado actual
 
-Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
-Registry; el resto del documento describe el estado previo y sigue vigente).
+Última actualización: 2026-10-25 (cupo de Instagram, etiquetas del Gobierno,
+ubicación y Medios Rioja; el resto del documento describe el estado previo y sigue
+vigente).
+
+## Cupo de Instagram, etiquetas del Gobierno y ubicación (2026-10-24/25)
+
+- Meta permite 100 publicaciones por API cada 24 h y las historias cuentan.
+  `POST_STORIES_MANUAL=true` (producción): las historias "Nueva publicación" y de
+  Reel ya no salen por API en Instagram; el operador las sube a mano sobre el fondo
+  `ManualStoryTemplate`. Último momento, servicio y Facebook siguen automáticos.
+- Reels sin repetir: una nota cuyo video ya está en un Reel vivo o publicado no
+  genera otro (Paparazzi reutiliza clips).
+- Diagnóstico: el backoff de IG registra http/code/subcode de Meta; la imagen de IG
+  distingue `image_render_error` de `r2_upload_error`; la disponibilidad de
+  Remotion usa el `/health` del servidor de render antes que `npx`.
+- Etiquetas del Gobierno (`GOV_TAGS_ENABLED=true`): `utils/gov_tags.py` +
+  `config/gov_directory.json` (37 cuentas verificadas). Una nota local que nombra
+  un ministerio u organismo etiqueta en IG a la cuenta del área y a su responsable
+  y los menciona con @; nunca policiales ni ministerios en notas del Gobierno
+  nacional; topes 4 por post y 20 por 24 h. Facebook sin @.
+- Ubicación (`IG_LOCATION_ENABLED=true`): `config/ig_locations.json` con el
+  `facebook_places_id` de 20 localidades; se usa la del campo `locality`.
+- Si Meta rechaza etiquetas o ubicación, el contenedor se reintenta una vez sin
+  ellas. Primera verificación en publicaciones reales: pendiente (IG en horario
+  silencioso 0-7 h al momento del deploy).
+- Vínculo riojano por fuente: `RIOJAN_BY_SOURCE` en `utils/editorial_router.py`
+  (Medios Rioja y Fénix) evita que una nota hiperlocal sin localidad nombrada
+  quede como candidata en IG.
 
 ## Token de Meta rotado y reset social (2026-10-15)
 
