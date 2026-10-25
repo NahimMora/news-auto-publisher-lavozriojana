@@ -2608,3 +2608,19 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   encendidos en `scripts/start_24x7_production.ps1`). Rollback: `false`.
 - Revisión: el directorio se revisa cada mes; Zárate pasa a fiscal general a
   principios de noviembre de 2026.
+
+## 2026-10-25 — Medios Rioja como fuente local
+
+- Contexto: en la competencia rinden las policiales y sucesos hiperlocales de
+  Capital (choques con la esquina exacta, allanamientos, incendios). Medios Rioja
+  publica ~20 notas por día con ese tipo de cobertura y tiene RSS de WordPress.
+- Decisión: `scraping/base_mediosrioja.py` + `main_mediosrioja.py`
+  (`SCRAPER_MEDIOSRIOJA_ENABLED`). Se usa la categoría del RSS como vínculo
+  riojano (Locales/Departamentales, nunca Nacionales/Internacionales): a
+  diferencia de Fénix, el sitio separa lo nacional, y un filtro por palabras
+  descartaba notas como "Incendio de pastizales en el barrio Las Talas". QA
+  read-only del 25/10: 5 notas locales de 20 del feed, todas con foto.
+- Duplicados con Nueva Rioja/Tiempo Popular: los resuelve el control de mismo
+  hecho existente (`SAME_EVENT_CHECK_ENABLED`, una llamada a Gemini por nota con
+  candidatas), que ya incluye a Medios Rioja como fuente local.
+- Rollback: `SCRAPER_MEDIOSRIOJA_ENABLED = "0"` en el script de arranque.

@@ -241,7 +241,7 @@ def remember_dollar(values: dict) -> None:
 
 
 # ── Selección de notas (carrusel y resumen) ──────────────────────────────
-_LOCAL_SOURCES = ("nuevarioja", "tiempopopular", "fenix", "judicial_")
+_LOCAL_SOURCES = ("nuevarioja", "tiempopopular", "fenix", "mediosrioja", "judicial_")
 _WEATHER = ("pronostico", "temperatura", "el tiempo en", "clima en", "frente frio")
 _SENSITIVE = ("abuso", "violacion", "femicidio", "suicid", "menor de edad", "intimo", "pornograf", "grooming")
 _CATEGORY_WEIGHT = {

@@ -699,6 +699,9 @@ RIOJAN_SOURCE_SECTIONS = {
     "nuevarioja_interior",
     # Fénix sólo deja pasar notas con vínculo riojano (main_fenix._discard).
     "fenix_locales",
+    # Medios Rioja: sólo Locales/Departamentales con vínculo riojano (main_mediosrioja._discard).
+    "mediosrioja_locales",
+    "mediosrioja_interior",
     "judicial_mpf",
     "judicial_justicia",
 }

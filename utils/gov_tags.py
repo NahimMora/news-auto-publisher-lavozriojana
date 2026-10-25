@@ -35,7 +35,7 @@ logger = setup_logger("gov_tags", "gov_tags.log")
 
 DIRECTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "gov_directory.json")
 
-_LOCAL_SOURCES = ("nuevarioja", "tiempopopular", "fenix", "judicial_")
+_LOCAL_SOURCES = ("nuevarioja", "tiempopopular", "fenix", "mediosrioja", "judicial_")
 _NOT_LOCAL_SOURCES = ("nuevarioja_internacionales",)
 _ROLE_WORDS = (
     "ministr", "secretari", "subsecretari", "gobernador", "vicegobernador", "jefe de gabinete",

@@ -34,6 +34,13 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   nacionales quedan en el histórico como `fenix_sin_vinculo_riojano`. Una nota
   publicada como "NOTA EN REDACCIÓN" se difiere (`article_in_progress`, sin falla ni
   histórico) y se reintenta en el ciclo siguiente.
+- Medios Rioja (2026-10-25): `main_mediosrioja.py` lee el RSS de
+  mediosrioja.com.ar (`SCRAPER_MEDIOSRIOJA_ENABLED`, apagado por defecto, activo en
+  producción). Sólo entran ítems de categoría Locales o Departamentales que no sean
+  Nacionales/Internacionales; Departamentales va como `interior`
+  (`mediosrioja_interior`), el resto como `mediosrioja_locales`. Aporta policiales y
+  sucesos hiperlocales de Capital y del interior. Las notas que repiten un hecho de
+  Nueva Rioja/Tiempo Popular las frena `SAME_EVENT_CHECK_ENABLED` en la reescritura.
 - Reels locales (2026-10-22, `LOCAL_VIDEO_REEL_ENABLED`, apagado por defecto y
   activo en producción): Tiempo Popular, Nueva Rioja y Fénix guardan el primer
   YouTube del cuerpo (`video_embed_url`, `video_embed_author`). Si la nota

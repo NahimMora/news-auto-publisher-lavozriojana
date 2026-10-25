@@ -51,6 +51,8 @@ _SOURCE_LABELS = {
     "tiempopopular.com.ar": "Tiempo Popular",
     "fenix": "Fénix 95.1",
     "fenix951.com.ar": "Fénix 95.1",
+    "mediosrioja": "Medios Rioja",
+    "mediosrioja.com.ar": "Medios Rioja",
     "judicial_mpf": "Ministerio Público Fiscal de La Rioja",
     "judicial_justicia": "Función Judicial de La Rioja",
 }

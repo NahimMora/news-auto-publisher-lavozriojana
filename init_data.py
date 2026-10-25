@@ -35,6 +35,8 @@ FILES = {
     "noticias_ejecutadas_nuevarioja_internacionales.json": [],
     "noticias_ejecutadas_fenix.json": [],
     "noticias_norewrite_fenix.json": [],
+    "noticias_ejecutadas_mediosrioja.json": [],
+    "noticias_norewrite_mediosrioja.json": [],
     "noticias_ejecutadas_judiciales_mpf.json": [],
     "noticias_ejecutadas_judiciales_justicia.json": [],
     "noticias_norewrite_judiciales.json": [],

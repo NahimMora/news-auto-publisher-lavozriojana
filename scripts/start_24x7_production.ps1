@@ -110,6 +110,7 @@ $env:IG_LOCAL_FILL_CATEGORIES = "interior"
 $env:IG_LOCAL_DAILY_MAX = "30"
 # Fénix 95.1 (Locales): sólo notas con vínculo riojano. Ver docs/DECISIONS.md 2026-10-22.
 $env:SCRAPER_FENIX_ENABLED = "1"
+$env:SCRAPER_MEDIOSRIOJA_ENABLED = "1"
 # Locales de policiales/interior con YouTube incrustado: Reel sólo en Instagram
 # (Facebook sigue con link). Ver docs/DECISIONS.md 2026-10-22.
 $env:LOCAL_VIDEO_REEL_ENABLED = "true"

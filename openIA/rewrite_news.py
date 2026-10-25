@@ -55,6 +55,7 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_fenix.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_mediosrioja.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_judiciales.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
     # Infobae policiales: el scraper escribía desde 2026-08 pero nunca se leía

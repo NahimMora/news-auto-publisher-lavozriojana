@@ -436,6 +436,7 @@ def validate_config(
         ("SCRAPER_NR_INTERIOR_ENABLED", "true"),
         ("SCRAPER_NR_INTERNACIONALES_ENABLED", "true"),
         ("SCRAPER_FENIX_ENABLED", "false"),
+        ("SCRAPER_MEDIOSRIOJA_ENABLED", "false"),
         ("SCRAPER_JUDICIALES_ENABLED", "false"),
         ("ALERTS_ENABLED", "false"),
         ("ALERT_RECOVERY_ENABLED", "true"),
