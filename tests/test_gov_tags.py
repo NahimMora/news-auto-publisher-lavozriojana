@@ -64,8 +64,10 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(["mineducacionlarioja", "arielmartinezlar"], gov_tags.handles_for(note))
 
     def test_ministry_without_verified_minister_tags_only_institution(self):
+        note = _local("La Secretaría de Justicia informó la campaña de mediación en Chilecito.")
+        self.assertEqual(["secretariadejusticialr"], gov_tags.handles_for(note))
         note = _local("El Ministerio de Salud informó la campaña de vacunación en Chilecito.")
-        self.assertEqual(["saludlarioja"], gov_tags.handles_for(note))
+        self.assertEqual(["saludlarioja", "juancarlosvergaralr"], gov_tags.handles_for(note))
 
     def test_accents_and_case_do_not_matter(self):
         note = _local("el ministerio de educacion confirmó el calendario")
