@@ -164,6 +164,10 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         "texto_instagram": caption,
         "caption": caption,
         "seccion": seccion,
+        # Fuente y localidad: etiquetas del Gobierno y ubicación (utils/gov_tags.py, utils/ig_location.py).
+        "source": noticia.get("source") or "",
+        "locality": noticia.get("locality") or "",
+        "excerpt": noticia.get("excerpt") or "",
         "imagen_url": render_item["imagen_url"],
         "video_url": public_url,
         "share_to_feed": True,

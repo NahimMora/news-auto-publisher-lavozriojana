@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from utils import r2_storage
+from utils import gov_tags, ig_location, r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
 from utils.news_dedup import find_duplicate
@@ -137,6 +137,7 @@ def _mark_posted(dedup_key: str, noticia: dict, external_id: str) -> None:
             "seccion",
             "source",
             "media_type",
+            "gov_tags",
         ):
             if noticia.get(field):
                 record[field] = noticia[field]
@@ -220,7 +221,47 @@ def _video_url(noticia: dict) -> str:
 
 
 def _build_caption(noticia: dict) -> str:
-    return build_instagram_caption(noticia)
+    caption = build_instagram_caption(noticia)
+    tags = noticia.get("gov_tags") or []
+    if not tags:
+        return caption
+    # Menciones sólo en Instagram: Facebook arma su texto sin ellas.
+    line = gov_tags.caption_line(tags)
+    return f"{caption[: 2200 - len(line) - 2]}\n\n{line}"
+
+
+def _gov_tags_for(noticia: dict, state: dict | None = None) -> list[str]:
+    """Etiquetas del Gobierno para la nota (ver ``utils/gov_tags.py``)."""
+    if not gov_tags.enabled():
+        return []
+    try:
+        state = state if state is not None else _load_state()
+    except JsonStateError:
+        return []  # sin poder contar el tope diario, no se etiqueta
+    used = gov_tags.tags_used_last_24h(_posted_records(state))
+    tags = gov_tags.select_tags(noticia, used_last_24h=used)
+    if tags:
+        logger.info("Etiquetas del Gobierno: %s", gov_tags.caption_line(tags))
+    return tags
+
+
+def _create_container_with_extras(payload: dict, extras: dict) -> tuple[OperationResult, dict]:
+    """Crea el contenedor con etiquetas/ubicación; si Meta rechaza el pedido
+    (cuenta que no se puede etiquetar, ubicación inválida) reintenta una vez
+    sin ellas. Es seguro: un contenedor rechazado no se publicó."""
+    if not extras:
+        return _create_container(payload), {}
+    created = _create_container({**payload, **extras})
+    if created.ok or created.error_type != "request_rejected":
+        return created, extras if created.ok else {}
+    error = (created.response or {}).get("error") or {}
+    logger.warning(
+        "Meta rechazó etiquetas/ubicación (code=%s subcode=%s %s); se publica sin ellas",
+        error.get("code"),
+        error.get("error_subcode"),
+        sorted(extras),
+    )
+    return _create_container(payload), {}
 
 
 def _safe_json(response) -> dict:
@@ -525,6 +566,9 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
 
     if original_published(noticia, "instagram"):
         noticia = {**noticia, "show_update": True}
+    tags = _gov_tags_for(noticia, state)
+    if tags:
+        noticia = {**noticia, "gov_tags": tags}
 
     r2_key: str | None = None
     image_details: dict = {}
@@ -545,6 +589,7 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
         cover_url = str(noticia.get("cover_url") or noticia.get("imagen_url") or "").strip()
         if _is_http_url(cover_url):
             payload["cover_url"] = cover_url
+        extras = {"user_tags": gov_tags.reel_user_tags(tags)} if tags else {}
     else:
         prepared, image_url, r2_key = _prepare_image(noticia)
         if not prepared.ok:
@@ -555,8 +600,13 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             "caption": _build_caption(noticia),
             "access_token": IG_ACCESS_TOKEN,
         }
+        extras = {"user_tags": gov_tags.image_user_tags(tags)} if tags else {}
+    # La localidad puede completarse recién al preparar la imagen.
+    location_id = ig_location.location_id_for(noticia)
+    if location_id:
+        extras["location_id"] = location_id
 
-    created = _create_container(payload)
+    created, applied = _create_container_with_extras(payload, extras)
     if not created.ok:
         if r2_key:
             r2_storage.delete(r2_key)
@@ -590,6 +640,7 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             details={"publication_outcome": "confirmed", "container_id": container_id},
         )
     published.details.update(image_details)
+    published.details.update({"gov_tags": tags, "user_tags_applied": "user_tags" in applied, "location_id": applied.get("location_id", "")})
     logger.info("Publicado en Instagram: %s", str(noticia.get("titulo") or "")[:70])
     return published
 
@@ -631,6 +682,9 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
     video_url = _video_url(item)
     if not video_url:
         return OperationResult(StageStatus.FAILED, error_type="invalid_video_url")
+    tags = _gov_tags_for(item)
+    if tags:
+        item = {**item, "gov_tags": tags}
     payload = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -653,7 +707,11 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
         if _is_http_url(fallback_cover):
             payload["cover_url"] = fallback_cover
 
-    created = _create_container(payload)
+    extras = {"user_tags": gov_tags.reel_user_tags(tags)} if tags else {}
+    location_id = ig_location.location_id_for(item)
+    if location_id:
+        extras["location_id"] = location_id
+    created, applied = _create_container_with_extras(payload, extras)
     if not created.ok:
         return created
     ready = _wait_video_container(created.external_id)
@@ -661,6 +719,7 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
         return ready
     published = _publish_container(created.external_id)
     if published.ok:
+        published.details.update({"gov_tags": tags, "user_tags_applied": "user_tags" in applied, "location_id": applied.get("location_id", "")})
         logger.info(
             "Reel de paparazzi publicado en Instagram: %s",
             str(item.get("titulo_reel") or item.get("titulo") or "")[:70],

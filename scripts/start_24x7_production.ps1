@@ -48,6 +48,9 @@ $env:IG_STORIES_ENABLED = "true"
 $env:FB_STORIES_ENABLED = "true"
 # Historias "Nueva publicación" y de Reel en Instagram: las sube el operador (tope de 100 por día de Meta).
 $env:POST_STORIES_MANUAL = "true"
+# Etiquetas del Gobierno (config/gov_directory.json) y ubicación (config/ig_locations.json) en Instagram.
+$env:GOV_TAGS_ENABLED = "true"
+$env:IG_LOCATION_ENABLED = "true"
 $env:SOCIAL_FORMATS_INSTAGRAM_ENABLED = "true"
 $env:SOCIAL_FORMATS_FACEBOOK_ENABLED = "true"
 $env:MORNING_BRIEF_ENABLED = "true"

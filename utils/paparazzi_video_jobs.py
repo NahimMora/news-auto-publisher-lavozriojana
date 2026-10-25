@@ -53,6 +53,8 @@ _SNAPSHOT_FIELDS = (
     "paparazzi_relevance_score",
     "reel_channels",
     "video_credit",
+    "locality",
+    "excerpt",
 )
 
 _GIVEN_UP = {"dead_letter", "expired"}

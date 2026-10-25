@@ -48,12 +48,12 @@ def _retry_or_dead(job_id: str, job: dict, reason: str) -> None:
     pv.transition(job_id, status=status, reason=reason, attempts=attempts)
 
 
-def _record_evidence(job_id: str, noticia: dict, *, ig_id: str, fb_id: str) -> None:
+def _record_evidence(job_id: str, noticia: dict, *, ig_id: str, fb_id: str, gov_tags: list[str] | None = None) -> None:
     try:
         paparazzi_reels._mark_posted(job_id, noticia, ig_id=ig_id, fb_id=fb_id)
         if ig_id:
             ig_client._mark_posted(
-                paparazzi_reels._instagram_dedup_key(noticia), {**noticia, "media_type": "reel"}, ig_id
+                paparazzi_reels._instagram_dedup_key(noticia), {**noticia, "media_type": "reel", "gov_tags": gov_tags}, ig_id
             )
     except JsonStateError as exc:
         logger.error("Reel publicado pero no se persistió la evidencia de dedup: %s", exc)
@@ -94,7 +94,9 @@ def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
             facebook_id=fb_id,
             completed_at=int(time.time()),
         )
-        _record_evidence(job_id, noticia, ig_id=ig_id, fb_id=fb_id)
+        _record_evidence(
+            job_id, noticia, ig_id=ig_id, fb_id=fb_id, gov_tags=(ig_result.details.get("gov_tags") if ig_id else None) or []
+        )
         logger.info(
             "Reel de nota con video publicado: %s | ig=%s fb=%s",
             str(noticia.get("titulo") or "")[:80],

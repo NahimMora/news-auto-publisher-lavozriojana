@@ -2579,3 +2579,29 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
 - Datos de alcance (10 días): los Reels de Infobae policiales (mediana 1.384)
   rinden más que los posts policiales locales (267): no se recortan.
 - Rollback: `POST_STORIES_MANUAL=false`.
+
+## 2026-10-24 — Etiquetas del Gobierno y ubicación en Instagram
+
+- Pedido: si una nota nombra un ministerio, etiquetar en Instagram a la
+  cuenta del ministerio y a su responsable, además de mencionarlos con @.
+- Decisión: `utils/gov_tags.py` con directorio versionado
+  `config/gov_directory.json`. Sólo cuentas confirmadas con Business Discovery
+  (el nombre de la cuenta coincide con el titular); las que no respondieron
+  (p. ej. Vergara, Scaglioni, Bazán, @jose.delg95) quedan afuera hasta
+  verificarlas. Detección determinista, sin IA: notas locales, nunca policiales
+  (`GOV_TAGS_EXCLUDED_SECTIONS`), sin ministerios si la nota habla del Gobierno
+  nacional, y un nombre propio sólo cuenta si el texto nombra un cargo
+  (evita homónimos: "Jerónimo Quintela", presidente de Edelar). Topes:
+  `GOV_TAGS_MAX_PER_POST=4`, `GOV_TAGS_DAILY_MAX=20`. Las menciones van sólo
+  al caption de Instagram; Facebook no puede etiquetar páginas por API y su
+  texto queda sin @. Si Meta rechaza el contenedor por una etiqueta o la
+  ubicación, se reintenta una vez sin ellas (el contenedor rechazado no se
+  publicó). Simulación sobre 1.500 notas de la cola: 72 con etiqueta.
+- Ubicación: `utils/ig_location.py` + `config/ig_locations.json` por el campo
+  `locality` de la nota. La búsqueda de lugares de la API está deprecada
+  (v8.0): los IDs se cargan a mano desde `instagram.com/explore/locations/<ID>/`;
+  sin ID, sin ubicación.
+- Flags: `GOV_TAGS_ENABLED`, `IG_LOCATION_ENABLED` (apagados por defecto,
+  encendidos en `scripts/start_24x7_production.ps1`). Rollback: `false`.
+- Revisión: el directorio se revisa cada mes; Zárate pasa a fiscal general a
+  principios de noviembre de 2026.

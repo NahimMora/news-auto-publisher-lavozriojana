@@ -1,0 +1,25 @@
+{
+  "_doc": "Localidad (como la escribe el campo locality de la nota) -> ID de ubicación de Instagram/Facebook. El ID sale del link instagram.com/explore/locations/<ID>/... Vacío = esa localidad sale sin ubicación. Ver utils/ig_location.py.",
+  "locations": {
+    "Capital": "",
+    "La Rioja": "",
+    "Chilecito": "",
+    "Chamical": "",
+    "Aimogasta": "",
+    "Chepes": "",
+    "Villa Unión": "",
+    "Famatina": "",
+    "Olta": "",
+    "Ulapes": "",
+    "Villa Sanagasta": "",
+    "Nonogasta": "",
+    "Anillaco": "",
+    "Milagro": "",
+    "Tama": "",
+    "Malanzán": "",
+    "Villa Castelli": "",
+    "Vinchina": "",
+    "Patquía": "",
+    "Arauco": ""
+  }
+}
