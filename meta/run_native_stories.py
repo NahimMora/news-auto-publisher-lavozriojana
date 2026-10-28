@@ -65,8 +65,9 @@ def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
     reel = info.get("media_product_type") == "REELS" or candidate.get("reel", False)
     image_url = str(info.get("thumbnail_url") if info.get("media_type") == "VIDEO" else info.get("media_url") or "")
     aspect, image = ns.measure_aspect(image_url) if image_url else (0.0, b"")
-    if not aspect:
-        aspect = 9 / 16 if reel else 0.8
+    if not aspect or not image:
+        # La imagen del post va dibujada en la historia: sin ella no sale.
+        return None, "post_image_unavailable", b""
     location, reason = ns.location_for(candidate["item"])
     if reason:
         logger.info("Historia nativa %s sin ubicación: %s", candidate["media_id"], reason)
@@ -86,7 +87,7 @@ def _write_preview(candidate: dict, payload: dict, image: bytes) -> str:
     return ns.render_preview(payload, path, image)
 
 
-def publish_one(client, candidate: dict, payload: dict, attempts: int) -> dict:
+def publish_one(client, candidate: dict, payload: dict, attempts: int, image: bytes) -> dict:
     """Publica, verifica y registra. Devuelve ``{"status", ...}``. Propaga
     ``NativeStoryError`` de tipo blocked/credential para frenar la etapa."""
     from meta import instagrapi_client as igc
@@ -94,7 +95,11 @@ def publish_one(client, candidate: dict, payload: dict, attempts: int) -> dict:
     media_id = candidate["media_id"]
     ns.mark(media_id, status=ns.STATUS_PROCESSING, attempts=attempts, media_pk=payload["media"]["media_pk"],
             web_url=payload["link"]["url"], started_at=int(time.time()), error="")
-    background = ns.write_background()
+    try:
+        background = ns.write_story_image(payload, image)
+    except (ValueError, OSError) as exc:
+        reason = f"story_image_failed: {type(exc).__name__}"
+        return {"status": ns.register_failure(media_id, reason, attempts=attempts)["status"], "error": reason}
     try:
         result = client.publish(payload, background)
     except igc.NativeStoryError as err:
@@ -236,7 +241,7 @@ def _run(dry: bool, started: float) -> StageResult:
                 succeeded += 1
                 continue
             attempts = int((jobs.get(media_id) or {}).get("attempts") or 0) + 1
-            outcome = publish_one(client, candidate, payload, attempts)
+            outcome = publish_one(client, candidate, payload, attempts, image)
             outcomes[media_id] = outcome
             if outcome["status"] == ns.STATUS_COMPLETED:
                 succeeded += 1

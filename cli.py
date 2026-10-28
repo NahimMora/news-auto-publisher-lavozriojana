@@ -888,13 +888,13 @@ def cmd_native_stories(args) -> int:
     if (ns.load_state().get("jobs") or {}).get(args.media_id, {}).get("status") == ns.STATUS_COMPLETED:
         print(red("Esa publicación ya tiene historia nativa: no se duplica."))
         return 1
-    payload, reason, _image = rns.prepare(candidate)
+    payload, reason, image = rns.prepare(candidate)
     if payload is None:
         print(red(f"No se puede armar: {reason}"))
         return 1
     try:
         client.connect()
-        outcome = rns.publish_one(client, candidate, payload, attempts=1)
+        outcome = rns.publish_one(client, candidate, payload, attempts=1, image=image)
     except igc.NativeStoryError as err:
         print(red(f"No publicada: {err.kind}/{err.code}"))
         return 1

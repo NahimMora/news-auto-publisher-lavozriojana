@@ -447,47 +447,128 @@ def validate_payload(payload: dict) -> list[str]:
     return errors
 
 
-# ── Vista previa (dry-run) ───────────────────────────────────────────────
-def _font(size: int):
+# ── Imagen de la historia ────────────────────────────────────────────────
+# Los stickers que llegan por la API son sólo zonas tocables: Instagram no los
+# dibuja (la app los pega en la imagen antes de subirla). Por eso la imagen
+# lleva, exactamente debajo de cada zona, la publicación y las dos pastillas.
+FONT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "layout", "fonts", "Archivo[wdth,wght].ttf")
+LINK_TEXT = "NOTICIA COMPLETA AQUÍ"
+LINK_COLOR = "#0A66C2"
+LOCATION_COLOR = "#8A2BE2"
+PILL_FILL = "#FFFFFF"
+
+
+def _font(size: int, weight: int = 800):
     try:
-        return ImageFont.load_default(size=size)
-    except TypeError:  # Pillow viejo
-        return ImageFont.load_default()
+        font = ImageFont.truetype(FONT_PATH, size)
+        try:
+            font.set_variation_by_axes([weight, 100])  # ejes: peso, ancho
+        except Exception:  # noqa: BLE001 — FreeType sin ejes variables: peso por defecto
+            pass
+        return font
+    except OSError:
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:  # Pillow viejo
+            return ImageFont.load_default()
+
+
+def _px(box: dict) -> tuple[int, int, int, int]:
+    left, top, right, bottom = _edges(box)
+    return (round(left * CANVAS_W), round(top * CANVAS_H), round(right * CANVAS_W), round(bottom * CANVAS_H))
+
+
+def _fit_font(draw, text: str, max_width: int, size: int):
+    while size > 18:
+        font = _font(size)
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+        size -= 2
+    return _font(size)
+
+
+def _pill(image: Image.Image, box: tuple[int, int, int, int], text: str, color: str, icon) -> None:
+    draw = ImageDraw.Draw(image)
+    left, top, right, bottom = box
+    height = bottom - top
+    draw.rounded_rectangle(box, radius=height // 2, fill=PILL_FILL)
+    icon_size = int(height * 0.5)
+    gap = int(height * 0.18)
+    font = _fit_font(draw, text, (right - left) - icon_size - gap - height, int(height * 0.42))
+    text_w = draw.textlength(text, font=font)
+    start = left + ((right - left) - (icon_size + gap + text_w)) / 2
+    icon(image, (int(start), top + (height - icon_size) // 2, int(start) + icon_size, top + (height + icon_size) // 2), color)
+    draw.text((start + icon_size + gap, top + height / 2), text, fill=color, font=font, anchor="lm")
+
+
+def _link_icon(image, box, color) -> None:
+    left, top, right, bottom = box
+    size = right - left
+    scale = 4  # se dibuja grande y se reduce: bordes suaves
+    big = size * scale
+    layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    stroke = max(3, big // 9)
+    w, h = int(big * 0.58), int(big * 0.34)
+    y = (big - h) // 2
+    # Dos eslabones encadenados, girados en diagonal.
+    draw.rounded_rectangle((int(big * 0.04), y, int(big * 0.04) + w, y + h), radius=h // 2, outline=color, width=stroke)
+    draw.rounded_rectangle((big - w - int(big * 0.04), y, big - int(big * 0.04), y + h), radius=h // 2, outline=color, width=stroke)
+    layer = layer.rotate(45, resample=Image.BICUBIC).resize((size, size), Image.LANCZOS)
+    image.paste(layer, (left, top), layer)
+
+
+def _pin_icon(image, box, color) -> None:
+    draw = ImageDraw.Draw(image)
+    left, top, right, bottom = box
+    size = right - left
+    r = size * 0.36
+    cx, cy = left + size / 2, top + r + size * 0.04
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+    draw.polygon([(cx - r * 0.82, cy + r * 0.45), (cx + r * 0.82, cy + r * 0.45), (cx, bottom)], fill=color)
+    inner = r * 0.4
+    draw.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=PILL_FILL)
+
+
+def compose_story(payload: dict, post_image: bytes) -> Image.Image:
+    """Imagen 1080×1920 con la publicación y las pastillas visibles debajo de
+    cada sticker. Sin la imagen del post no se arma (``ValueError``)."""
+    if not post_image:
+        raise ValueError("sin imagen de la publicación")
+    image = Image.new("RGB", (CANVAS_W, CANVAS_H), BACKGROUND_HEX)
+    media = _px(payload["media"])
+    with Image.open(io.BytesIO(post_image)) as post:
+        post = post.convert("RGB")
+        post.thumbnail((media[2] - media[0], media[3] - media[1]), Image.LANCZOS)
+        mask = Image.new("L", post.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, post.width - 1, post.height - 1), radius=28, fill=255)
+        image.paste(post, (media[0] + (media[2] - media[0] - post.width) // 2,
+                           media[1] + (media[3] - media[1] - post.height) // 2), mask)
+    _pill(image, _px(payload["link"]), LINK_TEXT, LINK_COLOR, _link_icon)
+    if payload.get("location"):
+        name = str(payload["location"].get("name") or "").split(",", 1)[0].strip().upper() or "LA RIOJA"
+        _pill(image, _px(payload["location"]), name, LOCATION_COLOR, _pin_icon)
+    return image
+
+
+def write_story_image(payload: dict, post_image: bytes, path: str | None = None) -> str:
+    """JPEG temporal con la imagen de la historia. Devuelve la ruta."""
+    image = compose_story(payload, post_image)
+    if not path:
+        handle, path = tempfile.mkstemp(suffix=".jpg", prefix="lvr_native_story_")
+        os.close(handle)
+    image.save(path, "JPEG", quality=95)
+    return path
 
 
 def render_preview(payload: dict, out_path: str, post_image: bytes = b"") -> str:
-    """PNG de referencia con las cajas de los stickers. Nunca se publica: en la
-    historia real los stickers los dibuja Instagram."""
-    image = Image.new("RGB", (CANVAS_W, CANVAS_H), BACKGROUND_HEX)
-    draw = ImageDraw.Draw(image)
-
-    def px(box):
-        left, top, right, bottom = _edges(box)
-        return (round(left * CANVAS_W), round(top * CANVAS_H), round(right * CANVAS_W), round(bottom * CANVAS_H))
-
-    media = px(payload["media"])
-    if post_image:
-        try:
-            with Image.open(io.BytesIO(post_image)) as post:
-                post = post.convert("RGB")
-                post.thumbnail((media[2] - media[0], media[3] - media[1]))
-                image.paste(post, (media[0] + (media[2] - media[0] - post.width) // 2, media[1] + (media[3] - media[1] - post.height) // 2))
-        except Exception:  # noqa: BLE001 — la vista previa sigue sin miniatura
-            pass
-    draw.rectangle(media, outline="#4C8DFF", width=4)
-    draw.text((media[0] + 12, media[3] - 40), f"STICKER feed_media pk={payload['media']['media_pk']}", fill="#4C8DFF", font=_font(26))
-
-    link = px(payload["link"])
-    draw.rounded_rectangle(link, radius=24, fill="#FFFFFF")
-    draw.text((link[0] + 24, link[1] + 22), "Enlace: Noticia completa aquí", fill="#111318", font=_font(36))
-    draw.text((40, link[1] - 44), payload["link"]["url"][:70], fill="#9AA0A6", font=_font(24))
-
-    if payload.get("location"):
-        loc = px(payload["location"])
-        draw.rounded_rectangle(loc, radius=24, fill="#FFFFFF")
-        draw.text((loc[0] + 24, loc[1] + 18), f"Ubicación: {payload['location']['name']}", fill="#7B2FF7", font=_font(36))
-
-    draw.text((40, CANVAS_H - 120), "VISTA PREVIA - los stickers reales los dibuja Instagram", fill="#E8EAED", font=_font(30))
+    """Vista previa: la misma imagen que se publicaría (más el payload en
+    .json). Sin imagen del post, sólo el fondo con las pastillas."""
+    try:
+        image = compose_story(payload, post_image)
+    except ValueError:
+        image = Image.new("RGB", (CANVAS_W, CANVAS_H), BACKGROUND_HEX)
+        _pill(image, _px(payload["link"]), LINK_TEXT, LINK_COLOR, _link_icon)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     image.save(out_path, "PNG")
     with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as fh:

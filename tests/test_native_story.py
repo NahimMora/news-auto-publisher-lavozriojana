@@ -28,6 +28,14 @@ PERMALINK = "https://www.instagram.com/p/B1LbfVPlwIA/"
 PK = 2110901750722920960
 
 
+def _post_jpeg(color=(200, 30, 30), size=(800, 1000)) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "JPEG")
+    return buf.getvalue()
+
+
 class _Env(unittest.TestCase):
     """Directorios temporales para data/output y flags limpios."""
 
@@ -74,6 +82,32 @@ class BackgroundTests(_Env):
             r, g, b = image.convert("RGB").getpixel((540, 960))
         for got, want in zip((r, g, b), (0x11, 0x13, 0x18)):
             self.assertLessEqual(abs(got - want), 2)
+
+    def test_story_image_draws_post_and_pills_under_each_sticker(self):
+        # Los stickers de la API son invisibles: la imagen tiene que mostrar
+        # la publicación y las pastillas justo debajo de cada zona tocable.
+        payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8,
+                                   location={"external_id": "347961018633223", "name": "Chilecito, La Rioja"}, reel=False)
+        path = ns.write_story_image(payload, _post_jpeg(), str(self.data / "story.jpg"))
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            self.assertEqual((1080, 1920), image.size)
+
+            def at(box, dx=0.0):
+                return image.getpixel((round((box["x"] + dx) * 1080), round(box["y"] * 1920)))
+
+            red = at(payload["media"])
+            self.assertGreater(red[0], 150)
+            self.assertLess(red[1], 80)
+            for name in ("link", "location"):
+                left_edge = payload[name]["width"] / 2 - 0.02
+                self.assertGreater(min(at(payload[name], -left_edge)), 240, name)  # pastilla blanca
+            self.assertLess(max(image.getpixel((540, 60))), 40)  # fondo oscuro fuera de las cajas
+
+    def test_story_image_requires_post_image(self):
+        payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8, location=None, reel=False)
+        with self.assertRaises(ValueError):
+            ns.compose_story(payload, b"")
 
     def test_preview_marks_boxes_and_writes_payload(self):
         payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8,
@@ -286,7 +320,7 @@ class FakeClient:
 
 
 class StageTests(_Env):
-    def run_stage(self, client=None, **kw):
+    def run_stage(self, client=None, image=None, **kw):
         from meta import ig_client
         from meta import instagrapi_client as igc
         from meta import run_native_stories as rns
@@ -296,7 +330,7 @@ class StageTests(_Env):
         info = {"id": "x", "permalink": PERMALINK, "media_type": "IMAGE", "media_url": "https://cdn/x.jpg"}
         with mock.patch.object(rns, "deployment_plan", return_value=plan), mock.patch.object(rns, "quiet_hours", return_value=False), \
                 mock.patch.object(ig_client, "media_info", return_value=info) as media_info, \
-                mock.patch.object(ns, "measure_aspect", return_value=(0.8, b"")), \
+                mock.patch.object(ns, "measure_aspect", return_value=(0.8, _post_jpeg()) if image is None else image), \
                 mock.patch.object(igc, "NativeStoryClient", return_value=client or FakeClient()) as factory:
             result = rns.main(**kw)
         return result, media_info, factory
@@ -351,6 +385,13 @@ class StageTests(_Env):
         self.assertEqual("completed", self.entry(media_id)["status"])
         self.assertEqual("post_without_location", self.entry(media_id)["location_skipped_reason"])
         self.assertEqual("", self.entry(media_id)["location_id"])
+
+    def test_without_post_image_retries_later_and_never_publishes_blank(self):
+        media_id = self.seed()
+        client = FakeClient()
+        self.run_stage(client, image=(0.0, b""))
+        self.assertEqual(0, client.publish_calls)
+        self.assertEqual(("failed", "post_image_unavailable"), (self.entry(media_id)["status"], self.entry(media_id)["error"]))
 
     def test_only_riojan_or_policiales_get_a_story(self):
         media_id = self.seed(titulo="Inflación de septiembre en todo el país", seccion="Economia", location_id="")

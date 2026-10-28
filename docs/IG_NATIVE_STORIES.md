@@ -22,7 +22,15 @@ pueden tocar):
 - **Sólo reutilización**: la historia comparte el post tal cual (más el
   enlace a la nota); no se genera texto, imagen ni diseño nuevo.
 
-Fondo liso #111318 de 1080×1920, sin textos ni marcas. Posiciones relativas:
+**Los stickers de la API son invisibles** (prueba real del 2026-10-28): Instagram
+sólo registra las zonas tocables; la app oficial pega el dibujo del sticker en la
+imagen antes de subirla. Por eso `utils/native_story.compose_story` dibuja, justo
+debajo de cada zona: la imagen del post (esquinas redondeadas), una pastilla
+blanca con eslabón y "NOTICIA COMPLETA AQUÍ" y otra con pin y la localidad. Sin
+la imagen del post la historia no sale (`post_image_unavailable`, se reintenta).
+La vista previa usa la misma función.
+
+Fondo liso #111318 de 1080×1920. Posiciones relativas:
 enlace (0,50; 0,17), ubicación (0,50; 0,25), post centrado en y≈0,57 con hasta
 el 88 % del ancho, sin pisar los stickers de arriba ni la caja de respuesta
 (zona segura 0,12–0,86) y conservando la proporción real de la imagen.
@@ -153,8 +161,8 @@ la vez. `live-test` también compara con `story_info` lo que Instagram devolvió
   siempre. Compartir un Reel así no está verificado; por eso
   `IG_NATIVE_STORY_INCLUDE_REELS=false` hasta probarlo con `live-test` sobre
   un Reel.
-- **Texto del enlace**: el sticker de link usa la presentación nativa de
-  Instagram (el dominio); la API no deja poner "Noticia completa aquí".
+- **Texto del enlace**: como el dibujo lo pone la imagen, la pastilla dice
+  "NOTICIA COMPLETA AQUÍ"; la zona tocable es el sticker de enlace real.
 - **Posiciones**: son pedidos a Instagram; la app dibuja la tarjeta del post a
   su manera y puede ajustar tamaños.
 - **Ubicación en registros viejos**: los posts publicados antes de este cambio
