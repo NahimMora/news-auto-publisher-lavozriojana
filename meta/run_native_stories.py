@@ -74,6 +74,7 @@ def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
     try:
         payload = ns.build_payload(
             media_id=candidate["media_id"], media_pk=media_pk, web_url=web_url, aspect=aspect, location=location, reel=reel,
+            section=candidate["item"].get("seccion") or candidate["item"].get("categoria") or "",
         )
     except ValueError as exc:
         return None, f"invalid_payload: {exc}", b""

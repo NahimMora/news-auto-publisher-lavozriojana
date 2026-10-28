@@ -99,10 +99,14 @@ class BackgroundTests(_Env):
             red = at(payload["media"])
             self.assertGreater(red[0], 150)
             self.assertLess(red[1], 80)
-            for name in ("link", "location"):
-                left_edge = payload[name]["width"] / 2 - 0.02
-                self.assertGreater(min(at(payload[name], -left_edge)), 240, name)  # pastilla blanca
-            self.assertLess(max(image.getpixel((540, 60))), 40)  # fondo oscuro fuera de las cajas
+            link = payload["link"]
+            paper = image.getpixel((540, round((link["y"] - link["height"] * 0.4) * 1920)))
+            self.assertGreater(min(paper), 220)  # botón papel bajo el sticker de enlace
+            loc = payload["location"]
+            chip = image.getpixel((round((loc["x"] + loc["width"] * 0.4) * 1080), round((loc["y"] - loc["height"] * 0.35) * 1920)))
+            self.assertGreater(chip[0], 140)
+            self.assertLess(chip[1], 60)  # etiqueta en el color de la sección (policiales/por defecto: rojo)
+            self.assertLess(max(image.getpixel((540, 60))), 60)  # fondo oscuro fuera de las cajas
 
     def test_story_image_requires_post_image(self):
         payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8, location=None, reel=False)
@@ -212,13 +216,26 @@ class StickerLayoutTests(_Env):
                 self.assertAlmostEqual(aspect, media["width"] * 1080 / (media["height"] * 1920), places=3)
                 self.assertGreater(media["y"] - media["height"] / 2, payload["location"]["y"] + payload["location"]["height"] / 2)
 
-    def test_reference_positions(self):
-        payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=1.0,
+    def test_editorial_block_order_and_alignment(self):
+        # Ubicación arriba alineada al borde del post, post, botón de la nota
+        # debajo del mismo ancho; el bloque queda centrado en la zona segura.
+        payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8,
                                    location={"external_id": "347961018633223", "name": "Chilecito"}, reel=False)
-        self.assertEqual((0.5, 0.17), (payload["link"]["x"], payload["link"]["y"]))
-        self.assertEqual((0.5, 0.25), (payload["location"]["x"], payload["location"]["y"]))
-        self.assertEqual(0.57, payload["media"]["y"])
-        self.assertEqual(0.88, payload["media"]["width"])
+        media, link, loc = payload["media"], payload["link"], payload["location"]
+        self.assertLess(loc["y"], media["y"])
+        self.assertLess(media["y"], link["y"])
+        self.assertAlmostEqual(media["x"] - media["width"] / 2, loc["x"] - loc["width"] / 2, places=4)
+        self.assertAlmostEqual(media["width"], link["width"], places=4)
+        top = loc["y"] - loc["height"] / 2
+        bottom = link["y"] + link["height"] / 2
+        self.assertAlmostEqual(top - ns.SAFE_TOP, ns.SAFE_BOTTOM - bottom, places=3)
+        wide = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=1.0, location=None, reel=False)
+        self.assertEqual(0.84, wide["media"]["width"])
+
+    def test_section_color_matches_the_card(self):
+        self.assertEqual(ns.RED, ns.section_accent("Policiales"))
+        self.assertEqual(ns.NAVY, ns.section_accent("Interior"))
+        self.assertEqual(ns.RED, ns.section_accent(""))
 
     def test_without_location_two_stickers(self):
         payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8, location=None, reel=False)

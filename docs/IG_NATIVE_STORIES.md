@@ -24,16 +24,20 @@ pueden tocar):
 
 **Los stickers de la API son invisibles** (prueba real del 2026-10-28): Instagram
 sólo registra las zonas tocables; la app oficial pega el dibujo del sticker en la
-imagen antes de subirla. Por eso `utils/native_story.compose_story` dibuja, justo
-debajo de cada zona: la imagen del post (esquinas redondeadas), una pastilla
-blanca con eslabón y "NOTICIA COMPLETA AQUÍ" y otra con pin y la localidad. Sin
-la imagen del post la historia no sale (`post_image_unavailable`, se reintenta).
-La vista previa usa la misma función.
+imagen antes de subirla. Por eso `utils/native_story.compose_story` dibuja la
+historia completa, con la paleta y tipografía del Visual System V2:
 
-Fondo liso #111318 de 1080×1920. Posiciones relativas:
-enlace (0,50; 0,17), ubicación (0,50; 0,25), post centrado en y≈0,57 con hasta
-el 88 % del ancho, sin pisar los stickers de arriba ni la caja de respuesta
-(zona segura 0,12–0,86) y conservando la proporción real de la imagen.
+- fondo: la propia foto del post a sangre, desenfocada, con velo de tinta y grano;
+- bloque editorial centrado en la zona segura (0,12–0,86): etiqueta de ubicación
+  arriba alineada al borde del post, el post con sombra y esquinas redondeadas,
+  y debajo el botón papel "LEÉ LA NOTA COMPLETA / en lavozriojana.com";
+- etiqueta y botón en el color de bloque de la sección de la card (rojo en
+  policiales, azul marino en interior/sociedad/etc.);
+- sin cabecera propia: la card ya trae la marca e Instagram muestra la cuenta.
+
+Cada zona tocable coincide con lo dibujado. Sin la imagen del post la historia no
+sale (`post_image_unavailable`, se reintenta). La vista previa usa la misma
+función.
 
 ## Por qué instagrapi
 

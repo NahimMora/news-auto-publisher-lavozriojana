@@ -39,7 +39,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from utils import ig_location
 from utils.file_manager import JsonStateError, load_json, update_json
@@ -60,11 +60,13 @@ BACKGROUND_HEX = "#111318"
 SAFE_TOP = 0.12
 SAFE_BOTTOM = 0.86
 
-LINK_BOX = {"x": 0.5, "y": 0.17, "width": 0.46, "height": 0.055}
-LOCATION_BOX = {"x": 0.5, "y": 0.25, "width": 0.42, "height": 0.05}
-MEDIA_CENTER_Y = 0.57
-MEDIA_MAX_WIDTH = 0.88
-MEDIA_GAP = 0.025
+# Bloque editorial (fracciones del lienzo): ubicación arriba a la izquierda,
+# publicación y botón de la nota debajo, centrados juntos en la zona segura.
+MEDIA_MAX_WIDTH = 0.84
+CHIP_HEIGHT = 0.04
+LINK_HEIGHT = 0.068
+LINK_MIN_WIDTH = 0.62
+BLOCK_GAP = 0.02
 
 STATUS_COMPLETED = "completed"
 STATUS_PROCESSING = "processing"
@@ -346,23 +348,29 @@ def _enrich(recent: list[dict], now: float) -> list[dict]:
 
 
 # ── Diseño ───────────────────────────────────────────────────────────────
-def layout(aspect: float, *, with_location: bool) -> dict:
+def layout(aspect: float, *, with_location: bool, location_label: str = "") -> dict:
     """Cajas relativas (centro x/y, ancho, alto) de los tres stickers.
 
     ``aspect`` = ancho/alto de la publicación (4:5 → 0,8; Reel → 0,5625). El
-    post compartido ocupa hasta el 88 % del ancho sin pisar los stickers de
-    arriba ni la zona de respuesta de abajo, y conserva su proporción.
+    bloque (ubicación, post, botón) se centra en la zona segura; el post
+    conserva su proporción y ocupa hasta el 84 % del ancho.
     """
     aspect = aspect if 0.3 <= aspect <= 2.0 else 0.8
-    upper = LOCATION_BOX if with_location else LINK_BOX
-    top = upper["y"] + upper["height"] / 2 + MEDIA_GAP
-    bottom = SAFE_BOTTOM
-    width = min(MEDIA_MAX_WIDTH, (bottom - top) * CANVAS_H * aspect / CANVAS_W)
+    top, bottom = SAFE_TOP + 0.01, SAFE_BOTTOM - 0.01
+    fixed = LINK_HEIGHT + BLOCK_GAP + ((CHIP_HEIGHT + BLOCK_GAP) if with_location else 0)
+    width = min(MEDIA_MAX_WIDTH, (bottom - top - fixed) * CANVAS_H * aspect / CANVAS_W)
     height = width * CANVAS_W / aspect / CANVAS_H
-    center = min(max(MEDIA_CENTER_Y, top + height / 2), bottom - height / 2)
-    boxes = {"link": dict(LINK_BOX), "media": {"x": 0.5, "y": round(center, 5), "width": round(width, 5), "height": round(height, 5)}}
+    y = top + (bottom - top - fixed - height) / 2
+    boxes: dict = {}
     if with_location:
-        boxes["location"] = dict(LOCATION_BOX)
+        chip_w = min(width, _chip_width(location_label))
+        boxes["location"] = {"x": round(0.5 - width / 2 + chip_w / 2, 5), "y": round(y + CHIP_HEIGHT / 2, 5),
+                             "width": round(chip_w, 5), "height": CHIP_HEIGHT}
+        y += CHIP_HEIGHT + BLOCK_GAP
+    boxes["media"] = {"x": 0.5, "y": round(y + height / 2, 5), "width": round(width, 5), "height": round(height, 5)}
+    y += height + BLOCK_GAP
+    boxes["link"] = {"x": 0.5, "y": round(y + LINK_HEIGHT / 2, 5), "width": round(max(width, LINK_MIN_WIDTH), 5),
+                     "height": LINK_HEIGHT}
     return boxes
 
 
@@ -391,17 +399,19 @@ def measure_aspect(image_url: str) -> tuple[float, bytes]:
 
 
 # ── Payload ──────────────────────────────────────────────────────────────
-def build_payload(*, media_id: str, media_pk: int, web_url: str, aspect: float, location: dict | None, reel: bool) -> dict:
+def build_payload(*, media_id: str, media_pk: int, web_url: str, aspect: float, location: dict | None, reel: bool,
+                  section: str = "") -> dict:
     url = validate_web_url(web_url)
     if int(media_pk) <= 0:
         raise ValueError("media pk inválido")
-    boxes = layout(aspect, with_location=bool(location))
+    boxes = layout(aspect, with_location=bool(location), location_label=location_label(location))
     payload = {
         "graph_media_id": str(media_id),
         "media": {"media_pk": int(media_pk), "reel": bool(reel), **boxes["media"]},
         "link": {"url": url, **boxes["link"]},
         "location": {**location, **boxes["location"]} if location else None,
         "background": {"width": CANVAS_W, "height": CANVAS_H, "color": BACKGROUND_HEX},
+        "section": str(section or ""),
     }
     errors = validate_payload(payload)
     if errors:
@@ -450,27 +460,67 @@ def validate_payload(payload: dict) -> list[str]:
 # ── Imagen de la historia ────────────────────────────────────────────────
 # Los stickers que llegan por la API son sólo zonas tocables: Instagram no los
 # dibuja (la app los pega en la imagen antes de subirla). Por eso la imagen
-# lleva, exactamente debajo de cada zona, la publicación y las dos pastillas.
-FONT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "layout", "fonts", "Archivo[wdth,wght].ttf")
-LINK_TEXT = "NOTICIA COMPLETA AQUÍ"
-LINK_COLOR = "#0A66C2"
-LOCATION_COLOR = "#8A2BE2"
-PILL_FILL = "#FFFFFF"
+# lleva, exactamente debajo de cada zona, la publicación, la ubicación y el
+# botón de la nota. Paleta y tipografía del Visual System V2
+# (remotion/src/v2/tokens.ts): tinta, papel, rojo corporativo, Archivo
+# condensada y Source Serif.
+_ROOT = os.path.dirname(os.path.dirname(__file__))
+FONT_PATH = os.path.join(_ROOT, "layout", "fonts", "Archivo[wdth,wght].ttf")
+SERIF_ITALIC_PATH = os.path.join(_ROOT, "remotion", "public", "fonts", "SourceSerif4-Italic[opsz,wght].ttf")
+LOGO_PATH = os.path.join(_ROOT, "remotion", "public", "logo.png")
+INK = (10, 13, 18)
+PAPER = (242, 238, 230)
+RED = (179, 0, 0)
+WHITE = (255, 255, 255)
+LINK_TEXT = "LEÉ LA NOTA COMPLETA"
+LINK_SUBTEXT = "en lavozriojana.com"
+NAVY = (11, 47, 79)
+BLUE = (47, 111, 176)
+# Color de bloque por sección, el mismo de la card (SECTION_TABLE.field en
+# remotion/src/v2/tokens.ts): la historia continúa visualmente al post.
+_SECTION_FIELD = {
+    "policiales": RED, "locales": RED, "interior": NAVY, "sociedad": NAVY, "economia": NAVY, "salud": NAVY,
+    "educacion": NAVY, "politica": NAVY, "deportes": BLUE, "cultura": (138, 0, 0), "espectaculos": (138, 0, 0),
+}
 
 
-def _font(size: int, weight: int = 800):
+def section_accent(section) -> tuple[int, int, int]:
+    from utils.editorial_priority import normalize_category
+
+    return _SECTION_FIELD.get(normalize_category(section or ""), RED)
+
+
+def _font(size: int, weight: int = 800, width: int = 100, path: str = FONT_PATH):
     try:
-        font = ImageFont.truetype(FONT_PATH, size)
-        try:
-            font.set_variation_by_axes([weight, 100])  # ejes: peso, ancho
-        except Exception:  # noqa: BLE001 — FreeType sin ejes variables: peso por defecto
-            pass
-        return font
+        font = ImageFont.truetype(path, size)
     except OSError:
         try:
             return ImageFont.load_default(size=size)
         except TypeError:  # Pillow viejo
             return ImageFont.load_default()
+    try:
+        values = {b"Weight": weight, b"Width": width, b"Optical size": max(8, min(60, size // 2))}
+        font.set_variation_by_axes([values.get(a["name"], a["default"]) for a in font.get_variation_axes()])
+    except Exception:  # noqa: BLE001 — FreeType sin ejes variables: peso por defecto
+        pass
+    return font
+
+
+def _condensed(size: int, weight: int = 850):
+    return _font(size, weight=weight, width=78)
+
+
+def location_label(location: dict | None) -> str:
+    if not location:
+        return ""
+    return str(location.get("name") or "").split(",", 1)[0].strip().upper() or "LA RIOJA"
+
+
+def _chip_width(label: str) -> float:
+    """Ancho relativo de la etiqueta de ubicación (pin + texto + márgenes)."""
+    height = CHIP_HEIGHT * CANVAS_H
+    text = _condensed(int(height * 0.5), 800).getlength(label or "LA RIOJA")
+    return (height * 0.45 + height * 0.5 + height * 0.25 + text + height * 0.45) / CANVAS_W
 
 
 def _px(box: dict) -> tuple[int, int, int, int]:
@@ -478,76 +528,107 @@ def _px(box: dict) -> tuple[int, int, int, int]:
     return (round(left * CANVAS_W), round(top * CANVAS_H), round(right * CANVAS_W), round(bottom * CANVAS_H))
 
 
-def _fit_font(draw, text: str, max_width: int, size: int):
-    while size > 18:
-        font = _font(size)
-        if draw.textlength(text, font=font) <= max_width:
-            return font
-        size -= 2
-    return _font(size)
+def _spaced(draw, xy, text: str, font, fill, spacing: float) -> float:
+    """Texto con interletrado (Pillow no lo trae). Devuelve el ancho."""
+    x, y = xy
+    for char in text:
+        draw.text((x, y), char, font=font, fill=fill, anchor="ls")
+        x += font.getlength(char) + spacing
+    return x - xy[0] - spacing
 
 
-def _pill(image: Image.Image, box: tuple[int, int, int, int], text: str, color: str, icon) -> None:
+def _backdrop(post: Image.Image) -> Image.Image:
+    """La foto del post a sangre, desenfocada y oscurecida hacia la tinta."""
+    scale = max(CANVAS_W / post.width, CANVAS_H / post.height)
+    cover = post.resize((int(post.width * scale) + 1, int(post.height * scale) + 1), Image.LANCZOS)
+    left, top = (cover.width - CANVAS_W) // 2, (cover.height - CANVAS_H) // 2
+    cover = cover.crop((left, top, left + CANVAS_W, top + CANVAS_H))
+    cover = cover.resize((CANVAS_W // 8, CANVAS_H // 8)).filter(ImageFilter.GaussianBlur(6)).resize((CANVAS_W, CANVAS_H), Image.BICUBIC)
+    # Velo de tinta: más denso arriba y abajo (encabezado y caja de respuesta).
+    veil = Image.new("L", (1, 256))
+    for i in range(256):
+        t = abs(i / 255 - 0.5) * 2
+        veil.putpixel((0, i), int(255 * (0.74 + 0.2 * t ** 1.6)))
+    veil = veil.resize((CANVAS_W, CANVAS_H))
+    image = Image.composite(Image.new("RGB", (CANVAS_W, CANVAS_H), INK), cover, veil)
+    # Grano fino: evita el degradé digital plano.
+    grain = Image.effect_noise((CANVAS_W, CANVAS_H), 22).convert("RGB")
+    return Image.blend(image, grain, 0.035)
+
+
+def _shadow(image: Image.Image, box: tuple[int, int, int, int], radius: int) -> None:
+    pad = 80
+    layer = Image.new("L", (box[2] - box[0] + pad * 2, box[3] - box[1] + pad * 2), 0)
+    ImageDraw.Draw(layer).rounded_rectangle((pad, pad + 26, layer.width - pad, layer.height - pad + 26), radius=radius, fill=200)
+    layer = layer.filter(ImageFilter.GaussianBlur(34))
+    image.paste(Image.new("RGB", layer.size, (0, 0, 0)), (box[0] - pad, box[1] - pad), layer)
+
+
+def _location_chip(image: Image.Image, box: tuple[int, int, int, int], label: str, accent=RED) -> None:
+    draw = ImageDraw.Draw(image, "RGBA")
+    left, top, right, bottom = box
+    height = bottom - top
+    fill = accent + (240,)
+    draw.rounded_rectangle(box, radius=10, fill=fill, outline=(255, 255, 255, 110), width=2)
+    pin = int(height * 0.5)
+    px, py = left + int(height * 0.45), top + (height - pin) // 2
+    r = pin * 0.36
+    cx, cy = px + pin / 2, py + r + pin * 0.04
+    pin_color = WHITE
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=pin_color + (255,))
+    draw.polygon([(cx - r * 0.82, cy + r * 0.45), (cx + r * 0.82, cy + r * 0.45), (cx, py + pin)], fill=pin_color + (255,))
+    inner = r * 0.38
+    draw.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=accent + (255,))
+    font = _condensed(int(height * 0.5), 800)
+    draw.text((px + pin + int(height * 0.25), top + height / 2), label, font=font, fill=WHITE, anchor="lm")
+
+
+def _link_button(image: Image.Image, box: tuple[int, int, int, int], accent=RED) -> None:
     draw = ImageDraw.Draw(image)
     left, top, right, bottom = box
     height = bottom - top
-    draw.rounded_rectangle(box, radius=height // 2, fill=PILL_FILL)
-    icon_size = int(height * 0.5)
-    gap = int(height * 0.18)
-    font = _fit_font(draw, text, (right - left) - icon_size - gap - height, int(height * 0.42))
-    text_w = draw.textlength(text, font=font)
-    start = left + ((right - left) - (icon_size + gap + text_w)) / 2
-    icon(image, (int(start), top + (height - icon_size) // 2, int(start) + icon_size, top + (height + icon_size) // 2), color)
-    draw.text((start + icon_size + gap, top + height / 2), text, fill=color, font=font, anchor="lm")
-
-
-def _link_icon(image, box, color) -> None:
-    left, top, right, bottom = box
-    size = right - left
-    scale = 4  # se dibuja grande y se reduce: bordes suaves
-    big = size * scale
-    layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    stroke = max(3, big // 9)
-    w, h = int(big * 0.58), int(big * 0.34)
-    y = (big - h) // 2
-    # Dos eslabones encadenados, girados en diagonal.
-    draw.rounded_rectangle((int(big * 0.04), y, int(big * 0.04) + w, y + h), radius=h // 2, outline=color, width=stroke)
-    draw.rounded_rectangle((big - w - int(big * 0.04), y, big - int(big * 0.04), y + h), radius=h // 2, outline=color, width=stroke)
-    layer = layer.rotate(45, resample=Image.BICUBIC).resize((size, size), Image.LANCZOS)
-    image.paste(layer, (left, top), layer)
-
-
-def _pin_icon(image, box, color) -> None:
-    draw = ImageDraw.Draw(image)
-    left, top, right, bottom = box
-    size = right - left
-    r = size * 0.36
-    cx, cy = left + size / 2, top + r + size * 0.04
-    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
-    draw.polygon([(cx - r * 0.82, cy + r * 0.45), (cx + r * 0.82, cy + r * 0.45), (cx, bottom)], fill=color)
-    inner = r * 0.4
-    draw.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=PILL_FILL)
+    draw.rounded_rectangle(box, radius=16, fill=PAPER)
+    draw.rectangle((left + 18, top + int(height * 0.22), left + 26, bottom - int(height * 0.22)), fill=accent)  # filete de marca
+    pad = int(height * 0.42)
+    disc = int(height * 0.62)
+    dx, dy = right - pad // 2 - disc, top + (height - disc) // 2
+    draw.ellipse((dx, dy, dx + disc, dy + disc), fill=accent)
+    cx, cy, a = dx + disc / 2, dy + disc / 2, disc * 0.2
+    draw.line((cx - a, cy, cx + a, cy), fill=WHITE, width=6)
+    draw.line((cx + a * 0.15, cy - a * 0.85, cx + a + 2, cy), fill=WHITE, width=6)
+    draw.line((cx + a * 0.15, cy + a * 0.85, cx + a + 2, cy), fill=WHITE, width=6)
+    text_left = left + 26 + pad
+    room = dx - text_left - 16
+    size = int(height * 0.36)
+    title = _condensed(size, 900)
+    while title.getlength(LINK_TEXT) > room and size > 20:
+        size -= 2
+        title = _condensed(size, 900)
+    sub = _font(int(height * 0.2), weight=500, path=SERIF_ITALIC_PATH)
+    draw.text((text_left, top + height * 0.52), LINK_TEXT, font=title, fill=INK, anchor="ls")
+    draw.text((text_left, top + height * 0.58), LINK_SUBTEXT, font=sub, fill=(91, 95, 102), anchor="lt")
 
 
 def compose_story(payload: dict, post_image: bytes) -> Image.Image:
-    """Imagen 1080×1920 con la publicación y las pastillas visibles debajo de
-    cada sticker. Sin la imagen del post no se arma (``ValueError``)."""
+    """Imagen 1080×1920 con la publicación, la ubicación y el botón de la nota
+    debajo de cada sticker. Sin la imagen del post no se arma (``ValueError``)."""
     if not post_image:
         raise ValueError("sin imagen de la publicación")
-    image = Image.new("RGB", (CANVAS_W, CANVAS_H), BACKGROUND_HEX)
     media = _px(payload["media"])
-    with Image.open(io.BytesIO(post_image)) as post:
-        post = post.convert("RGB")
-        post.thumbnail((media[2] - media[0], media[3] - media[1]), Image.LANCZOS)
-        mask = Image.new("L", post.size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, post.width - 1, post.height - 1), radius=28, fill=255)
-        image.paste(post, (media[0] + (media[2] - media[0] - post.width) // 2,
-                           media[1] + (media[3] - media[1] - post.height) // 2), mask)
-    _pill(image, _px(payload["link"]), LINK_TEXT, LINK_COLOR, _link_icon)
+    with Image.open(io.BytesIO(post_image)) as source:
+        post = source.convert("RGB")
+    image = _backdrop(post)
+    accent = section_accent(payload.get("section"))
+    fitted = post.copy()
+    fitted.thumbnail((media[2] - media[0], media[3] - media[1]), Image.LANCZOS)
+    at = (media[0] + (media[2] - media[0] - fitted.width) // 2, media[1] + (media[3] - media[1] - fitted.height) // 2)
+    _shadow(image, (at[0], at[1], at[0] + fitted.width, at[1] + fitted.height), 18)
+    mask = Image.new("L", fitted.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, fitted.width - 1, fitted.height - 1), radius=18, fill=255)
+    image.paste(fitted, at, mask)
     if payload.get("location"):
-        name = str(payload["location"].get("name") or "").split(",", 1)[0].strip().upper() or "LA RIOJA"
-        _pill(image, _px(payload["location"]), name, LOCATION_COLOR, _pin_icon)
+        _location_chip(image, _px(payload["location"]), location_label(payload["location"]), accent)
+    _link_button(image, _px(payload["link"]), accent)
     return image
 
 
@@ -567,8 +648,8 @@ def render_preview(payload: dict, out_path: str, post_image: bytes = b"") -> str
     try:
         image = compose_story(payload, post_image)
     except ValueError:
-        image = Image.new("RGB", (CANVAS_W, CANVAS_H), BACKGROUND_HEX)
-        _pill(image, _px(payload["link"]), LINK_TEXT, LINK_COLOR, _link_icon)
+        image = Image.new("RGB", (CANVAS_W, CANVAS_H), INK)
+        _link_button(image, _px(payload["link"]), section_accent(payload.get("section")))
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     image.save(out_path, "PNG")
     with open(os.path.splitext(out_path)[0] + ".json", "w", encoding="utf-8") as fh:
