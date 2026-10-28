@@ -1,8 +1,20 @@
 # Estado actual
 
-Última actualización: 2026-10-25 (cupo de Instagram, etiquetas del Gobierno,
-ubicación y Medios Rioja; el resto del documento describe el estado previo y sigue
-vigente).
+Última actualización: 2026-10-28 (historias nativas con stickers, apagadas; el
+resto del documento describe el estado previo y sigue vigente).
+
+## Historias nativas de Instagram con stickers (2026-10-28, apagadas)
+
+- `meta/run_native_stories.py` + `utils/native_story.py` +
+  `meta/instagrapi_client.py`: una historia por post del feed con la publicación
+  compartida, el enlace a la nota y la ubicación como stickers nativos (API
+  privada, `instagrapi==3.1.0`). Detalle, variables y limitaciones en
+  `docs/IG_NATIVE_STORIES.md`.
+- `IG_NATIVE_STORIES_ENABLED=false` y `IG_NATIVE_STORIES_DRY_RUN=true` por
+  defecto; no está activado en `scripts/start_24x7_production.ps1`. Sin prueba
+  real hecha: la interactividad de los stickers no está verificada todavía.
+- `ig_posted.json` guarda además `locality`, `ig_location_id` y `web_url` de cada
+  post nuevo (campos opcionales; los registros viejos no los tienen).
 
 ## Cupo de Instagram, etiquetas del Gobierno y ubicación (2026-10-24/25)
 

@@ -2624,3 +2624,25 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   hecho existente (`SAME_EVENT_CHECK_ENABLED`, una llamada a Gemini por nota con
   candidatas), que ya incluye a Medios Rioja como fuente local.
 - Rollback: `SCRAPER_MEDIOSRIOJA_ENABLED = "0"` en el script de arranque.
+
+## 2026-10-28 — Historias nativas con stickers por la API privada (instagrapi)
+
+- Contexto: desde el 24/10 el operador sube a mano la historia de cada post
+  (publicación compartida + sticker de link) porque la API Graph no admite
+  stickers en historias y además esas historias consumían el tope de 100
+  publicaciones por 24 h.
+- Decisión: etapa propia `meta/run_native_stories.py` con `instagrapi==3.1.0`
+  (la versión con las correcciones de stickers múltiples, incidencia #2320),
+  dentro del mismo proceso Python (no hace falta un servicio aparte: el
+  pipeline ya es Python y la dependencia se importa sólo si la etapa corre).
+  Estado propio `data/ig_native_stories.json`; no comparte cupos ni dedup.
+- Alternativas descartadas: dibujar los stickers sobre el JPG (no son
+  interactivos); `media_share_to_story()` (sólo arma el post compartido).
+- Riesgo aceptado con resguardos: es la API privada de la app. Flag apagado,
+  dry-run por defecto, cupos bajos, sesión persistente, sin flujo automático
+  de challenge y pausa de 24 h ante cualquier control de la plataforma.
+- Cambio de forma: `ig_posted.json` suma tres campos opcionales por registro
+  (`locality`, `ig_location_id`, `web_url`). Es aditivo: ningún lector existente
+  los necesita y los registros viejos siguen válidos, así que no requiere
+  migración.
+- Rollback: `IG_NATIVE_STORIES_ENABLED=false`.

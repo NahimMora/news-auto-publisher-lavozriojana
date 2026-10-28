@@ -47,6 +47,9 @@ CYCLE_STEPS = [
     # todo lo que publica en el feed para tomar las publicaciones del ciclo.
     ("meta/run_social_formats.py", "instagram"),
     ("meta/run_stories.py", "instagram"),
+    # Historias nativas con stickers reales (instagrapi): después de las de
+    # Graph para no duplicar las de último momento. Apagado por defecto.
+    ("meta/run_native_stories.py", "instagram"),
     ("meta/run_comment_replies.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
     # Datos para la web en R2 (lo más visto, servicios, actualizaciones,
@@ -70,6 +73,7 @@ _STEP_TIMEOUTS = {
     # carrusel de la mañana 7 láminas a 2×.
     "meta/run_social_formats.py": 1500,
     "meta/run_stories.py": 900,
+    "meta/run_native_stories.py": 900,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

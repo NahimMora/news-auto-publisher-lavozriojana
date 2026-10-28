@@ -808,6 +808,107 @@ def cmd_comment_replies(args) -> int:
     return 0 if outcome in {"replied", "rejected"} else 1
 
 
+def cmd_native_stories(args) -> int:
+    """Historias nativas de Instagram (stickers reales de publicación, enlace
+    y ubicación). Sólo ``login`` y ``live-test``/``delete`` tocan Instagram."""
+    from meta import instagrapi_client as igc
+    from meta import run_native_stories as rns
+    from utils import native_story as ns
+
+    if args.action == "status":
+        state = ns.load_state()
+        jobs = state.get("jobs") or {}
+        counts: dict[str, int] = {}
+        for entry in jobs.values():
+            counts[entry.get("status", "?")] = counts.get(entry.get("status", "?"), 0) + 1
+        print(json.dumps({
+            "enabled": ns.enabled(), "dry_run": ns.dry_run(), "include_reels": ns.include_reels(),
+            "today": ns.stories_today(state), "max_per_day": ns.max_per_day(), "by_status": counts,
+            "blocked_until": state.get("blocked_until"), "block_reason": state.get("block_reason"),
+            "session_file": os.path.exists(igc.session_path()),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.action == "preview":
+        # Nunca publica: payload + PNG de referencia en output/native_stories_preview/.
+        if not args.media_id:
+            result = rns.main(force_dry_run=True)
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            return 0 if result.acceptable else 1
+        candidate = ns.candidate_for(args.media_id)
+        if not candidate:
+            print(red("No está en ig_posted.json."))
+            return 1
+        payload, reason, image = rns.prepare(candidate)
+        if payload is None:
+            print(red(f"No se puede armar: {reason}"))
+            return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(green(f"Vista previa: {rns._write_preview(candidate, payload, image)}"))
+        return 0
+
+    if args.action == "login":
+        # Interactivo: si Instagram pide un código, lo pregunta en consola.
+        if not os.getenv("INSTAGRAPI_USERNAME"):
+            print(red("Falta INSTAGRAPI_USERNAME en el entorno."))
+            return 1
+        client = igc.NativeStoryClient(interactive=True)
+        if not client.password and not os.path.exists(client.path):
+            import getpass
+
+            client.password = getpass.getpass("Contraseña de Instagram (no se guarda): ")
+        try:
+            client.connect()
+        except igc.NativeStoryError as err:
+            print(red(f"No se pudo iniciar sesión: {err.kind}/{err.code}"))
+            return 1
+        ns.clear_blocked()
+        print(green(f"Sesión guardada en {client.path}"))
+        return 0
+
+    # live-test / delete: publicación externa real.
+    if not args.confirm_external_publication or not ns._flag("IG_NATIVE_STORY_LIVE_TEST"):
+        print(red("Prueba real: requiere IG_NATIVE_STORY_LIVE_TEST=true y --confirm-external-publication."))
+        return 1
+    client = igc.NativeStoryClient()
+    if args.action == "delete":
+        if not args.story_pk:
+            print(red("Indicá --story-pk."))
+            return 1
+        try:
+            print(green("Borrada.") if client.delete_story(args.story_pk) else red("Instagram no confirmó el borrado."))
+        except igc.NativeStoryError as err:
+            print(red(f"No se pudo borrar: {err.kind}/{err.code}"))
+            return 1
+        return 0
+    candidate = ns.candidate_for(args.media_id) if args.media_id else None
+    if not candidate:
+        print(red("Indicá --media-id de una publicación de ig_posted.json."))
+        return 1
+    if (ns.load_state().get("jobs") or {}).get(args.media_id, {}).get("status") == ns.STATUS_COMPLETED:
+        print(red("Esa publicación ya tiene historia nativa: no se duplica."))
+        return 1
+    payload, reason, _image = rns.prepare(candidate)
+    if payload is None:
+        print(red(f"No se puede armar: {reason}"))
+        return 1
+    try:
+        client.connect()
+        outcome = rns.publish_one(client, candidate, payload, attempts=1)
+    except igc.NativeStoryError as err:
+        print(red(f"No publicada: {err.kind}/{err.code}"))
+        return 1
+    print(json.dumps(outcome, ensure_ascii=False, indent=2))
+    if outcome.get("status") != ns.STATUS_COMPLETED:
+        return 1
+    entry = ns.load_state()["jobs"][args.media_id]
+    print(green(f"Historia: {entry.get('story_url')}"))
+    print("Verificar a mano en la app: tocar el post abre la publicación; el enlace abre "
+          f"{payload['link']['url']}; la ubicación abre {(payload.get('location') or {}).get('name', '(sin ubicación)')}.")
+    print(f"Para borrarla: python cli.py native-stories delete --story-pk {entry.get('story_pk')} --confirm-external-publication")
+    return 0 if not outcome.get("missing") else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python cli.py",
@@ -999,6 +1100,12 @@ def main(argv: list[str] | None = None) -> int:
     replies_parser.add_argument("action", choices=["list", "approve", "reject"])
     replies_parser.add_argument("key", nargs="?", default="")
 
+    native_parser = sub.add_parser("native-stories", help="Historias nativas de Instagram con stickers (instagrapi)")
+    native_parser.add_argument("action", choices=["status", "preview", "login", "live-test", "delete"])
+    native_parser.add_argument("--media-id", default="", dest="media_id", help="ID de Graph de la publicación")
+    native_parser.add_argument("--story-pk", default="", dest="story_pk")
+    native_parser.add_argument("--confirm-external-publication", action="store_true", dest="confirm_external_publication")
+
     args = parser.parse_args(argv)
     commands = {
         "start": cmd_start,
@@ -1024,6 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
         "report": cmd_report,
         "watchdog": cmd_watchdog,
         "comment-replies": cmd_comment_replies,
+        "native-stories": cmd_native_stories,
     }
     if args.cmd not in commands:
         parser.print_help()
