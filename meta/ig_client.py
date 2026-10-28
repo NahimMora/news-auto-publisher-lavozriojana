@@ -138,12 +138,6 @@ def _mark_posted(dedup_key: str, noticia: dict, external_id: str) -> None:
             "source",
             "media_type",
             "gov_tags",
-            # La localidad puede calcularse recién al renderizar la card y el
-            # location_id aplicado sólo existe en memoria: se guardan para que
-            # la historia nativa (utils/native_story.py) los reutilice.
-            "locality",
-            "ig_location_id",
-            "web_url",
         ):
             if noticia.get(field):
                 record[field] = noticia[field]
@@ -635,7 +629,7 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
     if not published.ok:
         return published
     try:
-        _mark_posted(dedup_key, {**noticia, "ig_location_id": applied.get("location_id", "")}, published.external_id)
+        _mark_posted(dedup_key, noticia, published.external_id)
     except JsonStateError as exc:
         logger.error("Instagram publicó pero no se persistió la evidencia: %s", exc)
         return OperationResult(

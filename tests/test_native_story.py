@@ -182,19 +182,6 @@ class LocationTests(_Env):
         self.assertEqual((None, "post_without_location"), ns.location_for({"locality": "Chilecito"}))
         self.assertEqual((None, "post_without_location"), ns.location_for({"web_editorial": {"locality": "Chamical"}}))
 
-    def test_post_publisher_persists_locality_and_applied_location(self):
-        from meta import ig_client
-
-        path = str(self.data / "ig_posted.json")
-        with mock.patch.object(ig_client, "IG_STATE_PATH", path):
-            ig_client._mark_posted("k1", {"titulo": "t", "locality": "Chilecito", "ig_location_id": "347961018633223",
-                                          "web_url": WEB_URL}, "1790")
-            ig_client._mark_posted("k2", {"titulo": "t", "ig_location_id": ""}, "1791")
-        posted = json.loads(Path(path).read_text(encoding="utf-8"))["posted"]
-        self.assertEqual(("Chilecito", "347961018633223", WEB_URL),
-                         (posted["k1"]["locality"], posted["k1"]["ig_location_id"], posted["k1"]["web_url"]))
-        self.assertNotIn("ig_location_id", posted["k2"])
-
     def test_missing_cases_give_reason(self):
         self.assertEqual((None, "post_without_location"), ns.location_for({}))
         self.assertEqual((None, "invalid_post_location_id"), ns.location_for({"ig_location_id": "abc"}))

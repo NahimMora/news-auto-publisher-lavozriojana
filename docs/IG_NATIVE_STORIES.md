@@ -8,7 +8,7 @@ pueden tocar):
 |---|---|---|
 | Publicación del feed (`feed_media`) | abre el post original | ID de Graph en `ig_posted.json` → `permalink` (Graph, lectura) → shortcode → media pk (decodificación local, sin pedidos extra) |
 | Enlace (`story_link`) | abre la nota en lavozriojana.com | `web_url` del registro o de la nota en `noticias_meta.json`; sólo `https` y hosts de `IG_NATIVE_STORY_LINK_HOSTS` |
-| Ubicación (`location`) | abre el lugar | la que tiene **la publicación en Instagram**, leída con un pedido a la app (`media_info_v1`) antes de armar la historia; si el post no tiene ubicación, la historia tampoco. La vista previa (sin sesión) usa `ig_location_id` de `ig_posted.json`. Sin IA: ni Gemini ni OpenAI intervienen en la historia |
+| Ubicación (`location`) | abre el lugar | la que tiene **la publicación en Instagram**, leída con un pedido a la app (`media_info_v1`) antes de armar la historia; si el post no tiene ubicación, la historia tampoco. La vista previa (sin sesión) sale sin ubicación. Sin IA: ni Gemini ni OpenAI intervienen en la historia |
 
 ## Reglas editoriales (2026-10-28, pedido del operador)
 
@@ -169,14 +169,12 @@ la vez. `live-test` también compara con `story_info` lo que Instagram devolvió
   siempre. Compartir un Reel así no está verificado; por eso
   `IG_NATIVE_STORY_INCLUDE_REELS=false` hasta probarlo con `live-test` sobre
   un Reel.
-- **Texto del enlace**: como el dibujo lo pone la imagen, la pastilla dice
-  "NOTICIA COMPLETA AQUÍ"; la zona tocable es el sticker de enlace real.
+- **Texto del enlace**: como el dibujo lo pone la imagen, el botón dice
+  "LEÉ LA NOTA COMPLETA"; la zona tocable es el sticker de enlace real.
 - **Posiciones**: son pedidos a Instagram; la app dibuja la tarjeta del post a
   su manera y puede ajustar tamaños.
-- **Ubicación en registros viejos**: los posts publicados antes de este cambio
-  no guardaron el `location_id` aplicado, así que sus historias salen sin
-  ubicación. Desde este cambio `ig_posted.json` guarda `locality`,
-  `ig_location_id` y `web_url`.
+- **Ubicación en la vista previa**: el dry-run no abre sesión en la app, así
+  que no puede leer la ubicación del post y la vista previa sale sin ella.
 - **Doble historia**: con `POST_STORIES_MANUAL=true` el operador sube a mano
   la historia del post; si se habilita esta etapa, dejar de subirla a mano
   para no duplicar.

@@ -2641,13 +2641,16 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
 - Riesgo aceptado con resguardos: es la API privada de la app. Flag apagado,
   dry-run por defecto, cupos bajos, sesión persistente, sin flujo automático
   de challenge y pausa de 24 h ante cualquier control de la plataforma.
-- Cambio de forma: `ig_posted.json` suma tres campos opcionales por registro
-  (`locality`, `ig_location_id`, `web_url`). Es aditivo: ningún lector existente
-  los necesita y los registros viejos siguen válidos, así que no requiere
-  migración.
+- Sin cambios de forma en JSON existentes: estado propio en
+  `data/ig_native_stories.json`.
 - Rollback: `IG_NATIVE_STORIES_ENABLED=false`.
 
 - Ajuste del mismo día: las historias nativas sólo salen para notas policiales o
   con vínculo riojano (`detect_riojan_link`), reutilizan el post sin contenido
   nuevo y llevan ubicación sólo si el post original la tenía (sin recurrir a la
   tabla de localidades); nunca agregan menciones.
+- Prueba real y ajustes (2026-10-28): los stickers de la API son invisibles, así
+  que la imagen dibuja post, ubicación y botón bajo cada zona (diseño editorial
+  V2, aprobado por el operador). Policiales de cualquier provincia. La ubicación
+  se lee del post publicado (un pedido a la app; sin IA), no de un registro
+  propio. La imagen se sube sin recodificar (instagrapi la bajaba a calidad 75).

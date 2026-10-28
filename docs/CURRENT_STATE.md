@@ -11,10 +11,11 @@ resto del documento describe el estado previo y sigue vigente).
   privada, `instagrapi==3.1.0`). Detalle, variables y limitaciones en
   `docs/IG_NATIVE_STORIES.md`.
 - `IG_NATIVE_STORIES_ENABLED=false` y `IG_NATIVE_STORIES_DRY_RUN=true` por
-  defecto; no está activado en `scripts/start_24x7_production.ps1`. Sin prueba
-  real hecha: la interactividad de los stickers no está verificada todavía.
-- `ig_posted.json` guarda además `locality`, `ig_location_id` y `web_url` de cada
-  post nuevo (campos opcionales; los registros viejos no los tienen).
+  defecto. Prueba real 2026-10-28 sobre @lavozriojana.ok verificada a mano por el
+  operador: los tres stickers abren lo correcto. Los stickers de la API son
+  invisibles; la imagen dibuja post, ubicación y botón (diseño editorial V2).
+- Sólo notas policiales (cualquier provincia) o riojanas; ubicación leída del
+  post publicado; sin IA; imagen subida sin recodificar (JPEG 97, 4:4:4).
 
 ## Cupo de Instagram, etiquetas del Gobierno y ubicación (2026-10-24/25)
 
