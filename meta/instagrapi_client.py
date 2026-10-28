@@ -206,15 +206,20 @@ class NativeStoryClient:
         }
 
     def inspect(self, story_pk: str) -> dict:
-        """Stickers que Instagram devuelve para una historia ya publicada."""
+        """Stickers que Instagram devuelve para una historia ya publicada.
+
+        Se leen del feed de historias de la cuenta: ``media/<pk>/info/`` (lo
+        que usa ``story_info``) no trae ``story_link_stickers``.
+        """
         client = self.connect()
         try:
-            story = client.story_info(story_pk, use_cache=False)
+            found = [s for s in client.user_stories(client.user_id) if str(s.pk) == str(story_pk)]
+            story = found[0] if found else client.story_info(story_pk, use_cache=False)
         except Exception as exc:  # noqa: BLE001
             err = _classify(exc, published_phase=False)
             raise err from None
         return {
-            "links": [str(link.webUri) for link in (story.links or [])],
+            "links": [unwrap_link(str(link.webUri)) for link in (story.links or [])],
             "locations": [str(getattr(sl.location, "external_id", "") or getattr(sl.location, "pk", "") or "") for sl in (story.locations or [])],
             "medias": [int(m.media_pk) for m in (story.medias or [])],
         }
@@ -237,6 +242,20 @@ class NativeStoryClient:
             return bool(client.story_delete(story_pk))
         except Exception as exc:  # noqa: BLE001
             raise _classify(exc, published_phase=False) from None
+
+
+def unwrap_link(url: str) -> str:
+    """Destino real de un enlace de historia: Instagram lo devuelve envuelto en
+    ``l.instagram.com/?u=<destino>`` y le agrega ``fbclid``."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.hostname == "l.instagram.com":
+        inner = dict(parse_qsl(parts.query)).get("u")
+        if inner:
+            parts = urlsplit(inner)
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query) if k != "fbclid"])
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 def verify(expected: dict, found: dict) -> list[str]:

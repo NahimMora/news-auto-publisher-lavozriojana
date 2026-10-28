@@ -248,6 +248,16 @@ class StickerLayoutTests(_Env):
         self.assertEqual([], igc.verify(payload, {"links": [WEB_URL + "/"], "medias": [PK], "locations": ["347961018633223"]}))
         self.assertEqual(["link", "location"], igc.verify(payload, {"links": [], "medias": [PK], "locations": []}))
 
+    def test_link_sticker_is_read_through_instagram_redirect(self):
+        # Forma real devuelta por Instagram en la prueba del 2026-10-28.
+        from urllib.parse import quote
+
+        from meta import instagrapi_client as igc
+
+        wrapped = f"https://l.instagram.com/?u={quote(WEB_URL + '?fbclid=PAZX', safe='')}&e=AUCS"
+        self.assertEqual(WEB_URL, igc.unwrap_link(wrapped))
+        self.assertEqual(WEB_URL + "?a=1", igc.unwrap_link(WEB_URL + "?a=1&fbclid=x"))
+
 
 # 6. Etapa: idempotencia y recuperación ──────────────────────────────────
 class FakeClient:
