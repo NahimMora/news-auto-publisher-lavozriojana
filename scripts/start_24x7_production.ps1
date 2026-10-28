@@ -48,6 +48,10 @@ $env:IG_STORIES_ENABLED = "true"
 $env:FB_STORIES_ENABLED = "true"
 # Historias "Nueva publicación" y de Reel en Instagram: las sube el operador (tope de 100 por día de Meta).
 $env:POST_STORIES_MANUAL = "true"
+# Historias nativas con stickers post + enlace + ubicación (2026-10-28, docs/IG_NATIVE_STORIES.md):
+# reemplazan la historia manual del post. Sólo policiales y notas riojanas. Rollback: ENABLED="false".
+$env:IG_NATIVE_STORIES_ENABLED = "true"
+$env:IG_NATIVE_STORIES_DRY_RUN = "false"
 # Etiquetas del Gobierno (config/gov_directory.json) y ubicación (config/ig_locations.json) en Instagram.
 $env:GOV_TAGS_ENABLED = "true"
 $env:IG_LOCATION_ENABLED = "true"
