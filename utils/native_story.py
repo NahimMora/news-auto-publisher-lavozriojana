@@ -198,24 +198,36 @@ def web_url_of(item: dict) -> str:
 def location_for(item: dict) -> tuple[dict | None, str]:
     """``({"external_id", "name"}, "")`` o ``(None, motivo)``.
 
-    Primero el ``location_id`` que efectivamente llevó el post
-    (``ig_location_id`` en ``ig_posted.json``); si el registro es anterior a
-    ese campo, la misma tabla con la misma localidad.
+    Sólo el ``location_id`` que efectivamente llevó el post original
+    (``ig_location_id`` en ``ig_posted.json``). Nunca se agrega una ubicación
+    que la publicación no tenía: ni por la tabla ni por la localidad de la
+    nota. Registros anteriores a ese campo salen sin ubicación.
     """
     from utils.visual_v2_props import locality_for
 
     if not ig_location.enabled():
         return None, "location_disabled"
-    locality = locality_for(item).split("·", 1)[0].strip()
     applied = str(item.get("ig_location_id") or "").strip()
-    if applied and re.fullmatch(r"\d{5,20}", applied):
-        return {"external_id": applied, "name": locality or "La Rioja"}, ""
-    if not locality:
-        return None, "no_locality"
-    place_id = ig_location.location_id_for({"locality": locality})
-    if not place_id:
-        return None, "locality_without_place_id"
-    return {"external_id": place_id, "name": locality}, ""
+    if not applied:
+        return None, "post_without_location"
+    if not re.fullmatch(r"\d{5,20}", applied):
+        return None, "invalid_post_location_id"
+    locality = locality_for(item).split("·", 1)[0].strip()
+    return {"external_id": applied, "name": locality or "La Rioja"}, ""
+
+
+# ── Alcance temático ─────────────────────────────────────────────────────
+def scope_of(item: dict) -> tuple[bool, str]:
+    """Sólo notas policiales o con vínculo riojano determinístico (el mismo
+    criterio del router editorial, más el caption publicado)."""
+    from utils.editorial_priority import normalize_category
+    from utils.editorial_router import detect_riojan_link
+
+    if normalize_category(item.get("seccion") or item.get("categoria")) == "policiales":
+        return True, "category:policiales"
+    excerpt = f"{item.get('excerpt') or ''} {item.get('texto_instagram') or ''}"
+    riojan, reason = detect_riojan_link({**item, "excerpt": excerpt})
+    return riojan, reason if riojan else "out_of_scope"
 
 
 # ── Candidatos ───────────────────────────────────────────────────────────
@@ -278,7 +290,8 @@ def candidates(state: dict, *, now: float | None = None) -> list[dict]:
         if str(record.get("media_type") or "") == "reel" and not include_reels():
             continue
         recent.append(record)
-    return _enrich(recent, now)
+    # Fuera de alcance no consume cupo ni se registra: simplemente no aplica.
+    return [c for c in _enrich(recent, now) if c["in_scope"]]
 
 
 def _posted_records() -> list[dict]:
@@ -314,7 +327,10 @@ def _enrich(recent: list[dict], now: float) -> list[dict]:
         # Lo que guardó el publicador del post (localidad, ubicación aplicada,
         # URL web) gana sobre la cola.
         merged = {**item, **{k: v for k, v in record.items() if v}}
+        in_scope, scope_reason = scope_of(merged)
         out.append({
+            "in_scope": in_scope,
+            "scope_reason": scope_reason,
             "media_id": media_id,
             "posted_at": _posted_at(record),
             "ready": now - _posted_at(record) >= min_age_seconds(),

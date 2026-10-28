@@ -8,7 +8,19 @@ pueden tocar):
 |---|---|---|
 | Publicación del feed (`feed_media`) | abre el post original | ID de Graph en `ig_posted.json` → `permalink` (Graph, lectura) → shortcode → media pk (decodificación local, sin pedidos extra) |
 | Enlace (`story_link`) | abre la nota en lavozriojana.com | `web_url` del registro o de la nota en `noticias_meta.json`; sólo `https` y hosts de `IG_NATIVE_STORY_LINK_HOSTS` |
-| Ubicación (`location`) | abre el lugar | el `location_id` que llevó el post (`ig_location_id` en `ig_posted.json`) o, para registros viejos, la misma tabla `config/ig_locations.json` con la localidad de la nota |
+| Ubicación (`location`) | abre el lugar | **sólo** el `location_id` que llevó el post original (`ig_location_id` en `ig_posted.json`); si el post salió sin ubicación, la historia tampoco la lleva |
+
+## Reglas editoriales (2026-10-28, pedido del operador)
+
+- **Alcance**: sólo notas policiales (`seccion` policiales) o con vínculo
+  riojano determinístico (`utils/editorial_router.detect_riojan_link`:
+  hashtag de localidad, fuente local, categoría interior o localidad riojana
+  en título/bajada/caption). El resto no entra como candidato: no consume
+  cupo ni deja estado (`utils/native_story.scope_of`).
+- **Ubicación y personas**: sólo lo que ya tenía la publicación original. No
+  se agregan menciones de cuentas ni de personas, ni hashtags.
+- **Sólo reutilización**: la historia comparte el post tal cual (más el
+  enlace a la nota); no se genera texto, imagen ni diseño nuevo.
 
 Fondo liso #111318 de 1080×1920, sin textos ni marcas. Posiciones relativas:
 enlace (0,50; 0,17), ubicación (0,50; 0,25), post centrado en y≈0,57 con hasta
@@ -146,10 +158,9 @@ la vez. `live-test` también compara con `story_info` lo que Instagram devolvió
 - **Posiciones**: son pedidos a Instagram; la app dibuja la tarjeta del post a
   su manera y puede ajustar tamaños.
 - **Ubicación en registros viejos**: los posts publicados antes de este cambio
-  no guardaron la localidad calculada al renderizar la card
-  (`LOCALITY_DECK_LAZY_ENABLED`), así que sus historias salen sin ubicación.
-  Desde este cambio `ig_posted.json` guarda `locality`, `ig_location_id` y
-  `web_url`.
+  no guardaron el `location_id` aplicado, así que sus historias salen sin
+  ubicación. Desde este cambio `ig_posted.json` guarda `locality`,
+  `ig_location_id` y `web_url`.
 - **Doble historia**: con `POST_STORIES_MANUAL=true` el operador sube a mano
   la historia del post; si se habilita esta etapa, dejar de subirla a mano
   para no duplicar.

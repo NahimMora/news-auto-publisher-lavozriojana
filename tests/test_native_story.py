@@ -52,11 +52,14 @@ class _Env(unittest.TestCase):
     def write(self, name, payload):
         (self.data / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-    def seed(self, *, age=600, media_id="17900000000000001", web_url=WEB_URL, locality="Chilecito", media_type=None):
+    def seed(self, *, age=600, media_id="17900000000000001", web_url=WEB_URL, locality="Chilecito", media_type=None,
+             location_id="347961018633223", titulo="Corte de agua en Chilecito", seccion="Interior"):
         record = {"external_id": media_id, "posted_at": str(int(time.time() - age)), "meta_queue_key": f"k{media_id}",
-                  "titulo": "Corte de agua en Chilecito", "seccion": "Interior"}
+                  "titulo": titulo, "seccion": seccion}
         if media_type:
             record["media_type"] = media_type
+        if location_id:
+            record["ig_location_id"] = location_id
         self.write("ig_posted.json", {"posted": {f"k{media_id}": record}})
         self.write("noticias_meta.json", [{"meta_queue_key": f"k{media_id}", "web_url": web_url, "locality": locality}])
         return media_id
@@ -130,17 +133,16 @@ class WebUrlTests(_Env):
 
 # 4. Ubicación ───────────────────────────────────────────────────────────
 class LocationTests(_Env):
-    def test_reuses_post_location_table(self):
-        location, reason = ns.location_for({"locality": "Chilecito · Capital"})
+    def test_reuses_only_location_of_the_original_post(self):
+        location, reason = ns.location_for({"locality": "Chilecito · Capital", "ig_location_id": "347961018633223"})
         self.assertEqual("", reason)
         self.assertEqual({"external_id": "347961018633223", "name": "Chilecito"}, location)
 
-    def test_prefers_location_applied_to_the_post(self):
-        location, reason = ns.location_for({"locality": "Chilecito", "ig_location_id": "112819225399234"})
-        self.assertEqual(("", "112819225399234"), (reason, location["external_id"]))
-        # Localidad de la bajada web cuando la nota no la trae arriba.
-        location, _ = ns.location_for({"web_editorial": {"locality": "Chamical"}})
-        self.assertEqual("112785662074577", location["external_id"])
+    def test_never_adds_location_the_post_did_not_have(self):
+        # La nota nombra una localidad con ID cargado, pero el post salió sin
+        # ubicación: la historia tampoco la lleva.
+        self.assertEqual((None, "post_without_location"), ns.location_for({"locality": "Chilecito"}))
+        self.assertEqual((None, "post_without_location"), ns.location_for({"web_editorial": {"locality": "Chamical"}}))
 
     def test_post_publisher_persists_locality_and_applied_location(self):
         from meta import ig_client
@@ -156,8 +158,8 @@ class LocationTests(_Env):
         self.assertNotIn("ig_location_id", posted["k2"])
 
     def test_missing_cases_give_reason(self):
-        self.assertEqual((None, "no_locality"), ns.location_for({}))
-        self.assertEqual((None, "locality_without_place_id"), ns.location_for({"locality": "Buenos Aires"}))
+        self.assertEqual((None, "post_without_location"), ns.location_for({}))
+        self.assertEqual((None, "invalid_post_location_id"), ns.location_for({"ig_location_id": "abc"}))
         with mock.patch.dict(os.environ, {"IG_LOCATION_ENABLED": "false"}):
             self.assertEqual((None, "location_disabled"), ns.location_for({"locality": "Chilecito"}))
 
@@ -232,6 +234,10 @@ class StickerLayoutTests(_Env):
         self.assertEqual(str(PK), data["reshared_media_id"])
         self.assertIn("location_sticker", data["story_sticker_ids"])
         self.assertIn("link_sticker_default", data["story_sticker_ids"])
+        # Sólo reutilización: ninguna mención, hashtag ni texto agregado.
+        self.assertEqual({"feed_media", "story_link", "location"}, set(by_type))
+        for key in ("reel_mentions", "story_hashtags", "caption"):
+            self.assertFalse(data.get(key), key)
         self.assertEqual(("media/validate_reel_url/", WEB_URL), (sent[0][0], sent[0][1]["url"]))
 
     def test_verify_reports_missing_stickers(self):
@@ -329,11 +335,27 @@ class StageTests(_Env):
         self.assertEqual("skipped", self.entry(media_id)["status"])
 
     def test_missing_location_still_publishes_with_reason(self):
-        media_id = self.seed(locality="")
+        media_id = self.seed(location_id="")
         client = FakeClient()
         self.run_stage(client)
         self.assertEqual("completed", self.entry(media_id)["status"])
-        self.assertEqual("no_locality", self.entry(media_id)["location_skipped_reason"])
+        self.assertEqual("post_without_location", self.entry(media_id)["location_skipped_reason"])
+        self.assertEqual("", self.entry(media_id)["location_id"])
+
+    def test_only_riojan_or_policiales_get_a_story(self):
+        media_id = self.seed(titulo="Inflación de septiembre en todo el país", seccion="Economia", location_id="")
+        client = FakeClient()
+        result, media_info, _ = self.run_stage(client)
+        self.assertEqual(StageStatus.NO_WORK, result.status)
+        self.assertEqual(0, client.publish_calls)
+        media_info.assert_not_called()
+        self.assertNotIn(media_id, ns.load_state().get("jobs") or {})  # no consume cupo ni deja estado
+
+    def test_policiales_in_scope_without_riojan_term(self):
+        self.seed(titulo="Detuvieron a un hombre tras una persecución", seccion="Policiales", location_id="")
+        client = FakeClient()
+        self.run_stage(client)
+        self.assertEqual(1, client.publish_calls)
 
     def test_graph_story_is_not_duplicated(self):
         media_id = self.seed()

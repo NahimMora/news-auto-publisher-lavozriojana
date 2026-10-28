@@ -2646,3 +2646,8 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   los necesita y los registros viejos siguen válidos, así que no requiere
   migración.
 - Rollback: `IG_NATIVE_STORIES_ENABLED=false`.
+
+- Ajuste del mismo día: las historias nativas sólo salen para notas policiales o
+  con vínculo riojano (`detect_riojan_link`), reutilizan el post sin contenido
+  nuevo y llevan ubicación sólo si el post original la tenía (sin recurrir a la
+  tabla de localidades); nunca agregan menciones.

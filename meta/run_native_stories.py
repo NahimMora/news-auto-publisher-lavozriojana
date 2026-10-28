@@ -49,6 +49,8 @@ def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
     """
     from meta import ig_client
 
+    if not candidate.get("in_scope", True):
+        return None, f"out_of_scope: {candidate.get('scope_reason')}", b""
     try:
         web_url = ns.validate_web_url(candidate["web_url"])
     except ValueError as exc:
@@ -214,7 +216,7 @@ def _run(dry: bool, started: float) -> StageResult:
                 continue
             payload, reason, image = prepare(candidate)
             if payload is None:
-                permanent = reason.startswith(("invalid_web_url", "permalink_without_shortcode", "invalid_payload"))
+                permanent = reason.startswith(("out_of_scope", "invalid_web_url","permalink_without_shortcode", "invalid_payload"))
                 logger.warning("Historia nativa %s no se arma: %s", media_id, reason)
                 if not dry:
                     entry = jobs.get(media_id) or {}
