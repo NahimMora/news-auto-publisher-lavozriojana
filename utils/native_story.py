@@ -621,6 +621,7 @@ def compose_story(payload: dict, post_image: bytes) -> Image.Image:
     accent = section_accent(payload.get("section"))
     fitted = post.copy()
     fitted.thumbnail((media[2] - media[0], media[3] - media[1]), Image.LANCZOS)
+    fitted = fitted.filter(ImageFilter.UnsharpMask(radius=1.2, percent=45, threshold=2))  # compensa la reducción
     at = (media[0] + (media[2] - media[0] - fitted.width) // 2, media[1] + (media[3] - media[1] - fitted.height) // 2)
     _shadow(image, (at[0], at[1], at[0] + fitted.width, at[1] + fitted.height), 18)
     mask = Image.new("L", fitted.size, 0)
@@ -638,7 +639,8 @@ def write_story_image(payload: dict, post_image: bytes, path: str | None = None)
     if not path:
         handle, path = tempfile.mkstemp(suffix=".jpg", prefix="lvr_native_story_")
         os.close(handle)
-    image.save(path, "JPEG", quality=95)
+    # Máxima calidad de origen: croma completo (4:4:4); Instagram recomprime igual.
+    image.save(path, "JPEG", quality=97, subsampling=0, optimize=True)
     return path
 
 

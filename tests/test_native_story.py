@@ -299,6 +299,24 @@ class StickerLayoutTests(_Env):
         self.assertEqual([], igc.verify(payload, {"links": [WEB_URL + "/"], "medias": [PK], "locations": ["347961018633223"]}))
         self.assertEqual(["link", "location"], igc.verify(payload, {"links": [], "medias": [PK], "locations": []}))
 
+    @unittest.skipUnless(HAS_INSTAGRAPI, "instagrapi no instalado")
+    def test_story_jpeg_is_uploaded_without_reencoding(self):
+        from instagrapi.mixins import photo as photo_mixin
+
+        from meta import instagrapi_client as igc
+
+        payload = ns.build_payload(media_id="1", media_pk=PK, web_url=WEB_URL, aspect=0.8, location=None, reel=False)
+        path = ns.write_story_image(payload, _post_jpeg(), str(self.data / "s.jpg"))
+        original = photo_mixin.prepare_story_image_fit
+        with igc._upload_as_is():
+            data, size = photo_mixin.prepare_story_image_fit(path)
+        self.assertEqual((Path(path).read_bytes(), (1080, 1920)), (data, size))
+        self.assertIs(original, photo_mixin.prepare_story_image_fit)  # se restaura
+        with Image.open(path) as image:  # croma completo, sin submuestreo
+            from PIL import JpegImagePlugin
+
+            self.assertEqual(0, JpegImagePlugin.get_sampling(image))
+
     def test_link_sticker_is_read_through_instagram_redirect(self):
         # Forma real devuelta por Instagram en la prueba del 2026-10-28.
         from urllib.parse import quote
@@ -311,9 +329,14 @@ class StickerLayoutTests(_Env):
 
 
 # 6. Etapa: idempotencia y recuperación ──────────────────────────────────
+_POST_LOCATION = {"external_id": "347961018633223", "name": "Chilecito, La Rioja, Argentina"}
+
+
 class FakeClient:
-    def __init__(self, *, publish=None, found=""):
+    def __init__(self, *, publish=None, found="", location=_POST_LOCATION, location_error=None):
         self.publish_calls = 0
+        self.location = location
+        self.location_error = location_error
         self._publish = publish
         self.found = found
         self.connected = 0
@@ -334,6 +357,11 @@ class FakeClient:
 
     def find_story_for_media(self, media_pk):
         return self.found
+
+    def media_location(self, media_pk):
+        if self.location_error:
+            raise self.location_error
+        return self.location
 
 
 class StageTests(_Env):
@@ -396,12 +424,36 @@ class StageTests(_Env):
         self.assertEqual("skipped", self.entry(media_id)["status"])
 
     def test_missing_location_still_publishes_with_reason(self):
-        media_id = self.seed(location_id="")
-        client = FakeClient()
+        media_id = self.seed(location_id="347961018633223")
+        client = FakeClient(location=None)  # el post publicado no tiene ubicación
         self.run_stage(client)
         self.assertEqual("completed", self.entry(media_id)["status"])
         self.assertEqual("post_without_location", self.entry(media_id)["location_skipped_reason"])
         self.assertEqual("", self.entry(media_id)["location_id"])
+
+    def test_location_is_read_from_the_published_post(self):
+        # El registro no guardó ubicación, pero el post en Instagram la tiene.
+        media_id = self.seed(location_id="")
+        self.run_stage(FakeClient(location={"external_id": "112785662074577", "name": "Chamical, La Rioja"}))
+        self.assertEqual("112785662074577", self.entry(media_id)["location_id"])
+
+    def test_unreadable_post_location_publishes_without_it(self):
+        from meta import instagrapi_client as igc
+
+        media_id = self.seed()
+        client = FakeClient(location_error=igc.NativeStoryError(igc.REJECTED, "ClientError"))
+        self.run_stage(client)
+        self.assertEqual(1, client.publish_calls)
+        self.assertEqual("post_location_unreadable:ClientError", self.entry(media_id)["location_skipped_reason"])
+
+    def test_block_while_reading_location_stops_everything(self):
+        from meta import instagrapi_client as igc
+
+        self.seed()
+        client = FakeClient(location_error=igc.NativeStoryError(igc.BLOCKED, "FeedbackRequired"))
+        result, _, _ = self.run_stage(client)
+        self.assertEqual(0, client.publish_calls)
+        self.assertEqual("instagram_blocked", result.error_type)
 
     def test_without_post_image_retries_later_and_never_publishes_blank(self):
         media_id = self.seed()

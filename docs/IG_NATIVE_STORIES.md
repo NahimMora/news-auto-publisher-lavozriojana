@@ -8,11 +8,11 @@ pueden tocar):
 |---|---|---|
 | Publicación del feed (`feed_media`) | abre el post original | ID de Graph en `ig_posted.json` → `permalink` (Graph, lectura) → shortcode → media pk (decodificación local, sin pedidos extra) |
 | Enlace (`story_link`) | abre la nota en lavozriojana.com | `web_url` del registro o de la nota en `noticias_meta.json`; sólo `https` y hosts de `IG_NATIVE_STORY_LINK_HOSTS` |
-| Ubicación (`location`) | abre el lugar | **sólo** el `location_id` que llevó el post original (`ig_location_id` en `ig_posted.json`); si el post salió sin ubicación, la historia tampoco la lleva |
+| Ubicación (`location`) | abre el lugar | la que tiene **la publicación en Instagram**, leída con un pedido a la app (`media_info_v1`) antes de armar la historia; si el post no tiene ubicación, la historia tampoco. La vista previa (sin sesión) usa `ig_location_id` de `ig_posted.json`. Sin IA: ni Gemini ni OpenAI intervienen en la historia |
 
 ## Reglas editoriales (2026-10-28, pedido del operador)
 
-- **Alcance**: sólo notas policiales (`seccion` policiales) o con vínculo
+- **Alcance**: notas policiales de cualquier provincia (`seccion` policiales) o con vínculo
   riojano determinístico (`utils/editorial_router.detect_riojan_link`:
   hashtag de localidad, fuente local, categoría interior o localidad riojana
   en título/bajada/caption). El resto no entra como candidato: no consume
@@ -38,6 +38,10 @@ historia completa, con la paleta y tipografía del Visual System V2:
 Cada zona tocable coincide con lo dibujado. Sin la imagen del post la historia no
 sale (`post_image_unavailable`, se reintenta). La vista previa usa la misma
 función.
+
+Calidad: JPEG 1080×1920 calidad 97 con croma completo (4:4:4). instagrapi
+volvía a codificar la imagen con calidad 75 y croma 4:2:0 antes de subirla;
+`instagrapi_client._upload_as_is` envía nuestros bytes sin tocar.
 
 ## Por qué instagrapi
 

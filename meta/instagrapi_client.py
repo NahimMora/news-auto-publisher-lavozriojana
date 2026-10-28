@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from utils.logging_setup import setup_logger
@@ -91,6 +92,34 @@ def _client_class():
             return super().location_complete(location)
 
     return _LVRClient
+
+
+@contextmanager
+def _upload_as_is():
+    """Sube el JPEG de la historia tal cual lo generamos.
+
+    ``photo_rupload`` (modo "fit") vuelve a codificar la imagen con el JPEG
+    por defecto de Pillow (calidad 75, croma 4:2:0) antes de subirla: el texto
+    y la foto pierden nitidez dos veces (ahí y en Instagram). Nuestra imagen ya
+    es 1080×1920 en RGB, así que se envían sus bytes sin tocar. El reemplazo
+    dura sólo esta subida (la etapa es secuencial).
+    """
+    from PIL import Image
+    from instagrapi.mixins import photo as photo_mixin
+
+    original = photo_mixin.prepare_story_image_fit
+
+    def as_is(path, *args, **kwargs):
+        with Image.open(path) as image:
+            if image.size != (1080, 1920) or image.format != "JPEG" or image.mode != "RGB":
+                return original(path, *args, **kwargs)
+        return Path(path).read_bytes(), (1080, 1920)
+
+    photo_mixin.prepare_story_image_fit = as_is
+    try:
+        yield
+    finally:
+        photo_mixin.prepare_story_image_fit = original
 
 
 class NativeStoryClient:
@@ -189,9 +218,10 @@ class NativeStoryClient:
                 x=loc["x"], y=loc["y"], width=loc["width"], height=loc["height"],
             )]
         try:
-            story = client.photo_upload_to_story(
-                Path(background_path), medias=medias, links=links, locations=locations, resize_mode="fit",
-            )
+            with _upload_as_is():
+                story = client.photo_upload_to_story(
+                    Path(background_path), medias=medias, links=links, locations=locations, resize_mode="fit",
+                )
         except Exception as exc:  # noqa: BLE001 — se clasifica sin propagar datos crudos
             err = _classify(exc, published_phase=True)
             logger.error("Historia nativa no confirmada (%s): %s/%s", payload.get("graph_media_id"), err.kind, err.code)
@@ -204,6 +234,20 @@ class NativeStoryClient:
             "story_id": str(getattr(story, "id", "") or ""),
             "story_url": f"https://www.instagram.com/stories/{client.username or self.username}/{pk}/",
         }
+
+    def media_location(self, media_pk: int) -> dict | None:
+        """Ubicación que tiene la publicación en Instagram (``{"external_id",
+        "name"}``) o ``None``. Un pedido a la app por historia; nada de IA."""
+        client = self.connect()
+        try:
+            media = client.media_info_v1(int(media_pk))
+        except Exception as exc:  # noqa: BLE001
+            raise _classify(exc, published_phase=False) from None
+        location = getattr(media, "location", None)
+        place = str(getattr(location, "external_id", "") or getattr(location, "pk", "") or "") if location else ""
+        if not place:
+            return None
+        return {"external_id": place, "name": str(getattr(location, "name", "") or "")}
 
     def inspect(self, story_pk: str) -> dict:
         """Stickers que Instagram devuelve para una historia ya publicada.

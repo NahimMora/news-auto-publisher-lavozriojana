@@ -17,6 +17,7 @@ de la cuenta antes de reintentar: nunca se publica dos veces a ciegas.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 
@@ -41,11 +42,13 @@ STAGE = "native_stories"
 RECONCILE_AFTER_SECONDS = 600
 
 
-def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
+def prepare(candidate: dict, client=None) -> tuple[dict | None, str, bytes]:
     """Payload validado para una publicación, o ``(None, motivo, b"")``.
 
     Lee el permalink de Graph (lectura: no consume el tope de publicaciones)
-    y mide la imagen real del post para respetar su proporción.
+    y mide la imagen real del post para respetar su proporción. Con sesión de
+    la app (``client``), la ubicación se lee de la publicación misma; sin
+    sesión (vista previa), de la que registró el publicador del post.
     """
     from meta import ig_client
 
@@ -68,7 +71,7 @@ def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
     if not aspect or not image:
         # La imagen del post va dibujada en la historia: sin ella no sale.
         return None, "post_image_unavailable", b""
-    location, reason = ns.location_for(candidate["item"])
+    location, reason = _post_location(client, media_pk) if client is not None else ns.location_for(candidate["item"])
     if reason:
         logger.info("Historia nativa %s sin ubicación: %s", candidate["media_id"], reason)
     try:
@@ -81,6 +84,22 @@ def prepare(candidate: dict) -> tuple[dict | None, str, bytes]:
     payload["location_skipped_reason"] = reason or None
     payload["permalink"] = info["permalink"]
     return payload, "", image
+
+
+def _post_location(client, media_pk: int) -> tuple[dict | None, str]:
+    """Ubicación que la publicación tiene en Instagram: nunca se agrega una
+    que el post no tenga. Bloqueos y sesión inválida frenan la etapa."""
+    from meta import instagrapi_client as igc
+
+    try:
+        location = client.media_location(media_pk)
+    except igc.NativeStoryError as err:
+        if err.kind in {igc.BLOCKED, igc.CREDENTIAL}:
+            raise
+        return None, f"post_location_unreadable:{err.code}"
+    if not location or not re.fullmatch(r"\d{5,20}", str(location.get("external_id") or "")):
+        return None, "post_without_location"
+    return location, ""
 
 
 def _write_preview(candidate: dict, payload: dict, image: bytes) -> str:
@@ -220,7 +239,7 @@ def _run(dry: bool, started: float) -> StageResult:
                 outcomes[media_id] = {"status": ns.STATUS_SKIPPED, "error": "graph_story_exists"}
                 skipped += 1
                 continue
-            payload, reason, image = prepare(candidate)
+            payload, reason, image = prepare(candidate, client)
             if payload is None:
                 permanent = reason.startswith(("out_of_scope", "invalid_web_url","permalink_without_shortcode", "invalid_payload"))
                 logger.warning("Historia nativa %s no se arma: %s", media_id, reason)
