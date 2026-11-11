@@ -13,3 +13,9 @@ __pycache__/
 venv/
 .venv/
 .DS_Store
+
+# Sesión de Facebook para grupos (secreto)
+fb_groups/
+
+# Alineador local del noticiero (scripts/install_newscast_aligner.py)
+tools/whisper/

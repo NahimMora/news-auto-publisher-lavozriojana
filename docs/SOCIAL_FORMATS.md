@@ -15,6 +15,7 @@ cupos ni dedup con el feed. El backoff de rate limit de Meta sí se comparte.
 | Historias de servicio: clima SMN, alertas, dólar, feriados, cortes de luz/agua, rutas | IG + FB | clima 7–11 h; dólar 11–13 y 16–18 h hábiles si cambió; feriado 7 y 1 día antes; alertas y avisos cuando aparecen | `utils/social_formats.py`, `utils/service_data.py` | ídem |
 | "Lo que tenés que saber hoy" | carrusel IG (7 láminas) + álbum FB | desde las 8 (`MORNING_BRIEF_HOUR`), una vez por día | `utils/social_formats.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` |
 | "La semana en cinco" | Reel IG + video FB | domingos desde las 20 (`WEEKLY_RECAP_HOUR`) | ídem | ídem |
+| Noticiero de la Noche (`docs/NIGHTLY_NEWSCAST.md`, usa Gemini para guion y voz) | Reel IG + FB (en prueba: sólo genera) | todos los días, 21 h; tarea `LaVozRiojana-Noticiero` | `utils/nightly_newscast.py`, `meta/run_nightly_newscast.py` | `data/nightly_newscast_state.json` |
 | Seguimiento de noticias en desarrollo | historia IG + FB, comentario en el post de IG, texto editado en FB | cada ciclo | `utils/story_updates.py` | ídem (`updates`) |
 | Respuestas a preguntas | IG + FB | cada ciclo, 7–24 h | `utils/comment_replies.py`, `meta/run_comment_replies.py` | `data/comment_replies.json` |
 | Placas de servicio: cronograma de pagos de Hacienda y sismos con epicentro en La Rioja (INPRES) | pagos: historia cada día de pago, post IG sólo el primer día del cronograma, post FB todos los días; sismos: post IG + FB y historia (más historia ACTUALIZADO si INPRES lo corrige) | pagos: día de pago, 7–22 h; sismos: magnitud ≥ 4,0 (`QUAKE_MIN_MAGNITUDE`) de las últimas 12 h, a cualquier hora | `utils/service_posts.py`, `meta/run_social_formats.py` | `data/social_formats_state.json` (`service_posts`) |
@@ -45,6 +46,8 @@ imagen OG del sitio ya trae el titular escrito.
 - Carrusel de la mañana: últimas 24 h, locales primero, sin temas repetidos,
   sin notas sensibles (abuso, femicidio, suicidio, contenido íntimo) ni notas
   de clima (el clima ya va en la tapa). Sin 3 notas con foto, no sale.
+  En Instagram cada lámina y el carrusel esperan `FINISHED` antes de
+  publicarse; un rechazo de Graph queda logueado con paso, código y motivo.
 - Resumen semanal: alcance real de Instagram (`ig_media_insights.json`), una
   nota por tema (mismo `story_key`/`topic_key` o nombres propios en común).
 - Seguimiento: mismo hecho = al menos dos palabras distintivas en común que

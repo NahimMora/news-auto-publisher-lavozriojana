@@ -26,6 +26,9 @@ export const FacebookOgCardV2Schema = z.object({
   publicationStyle: z.string().default("automatic"),
   locality: z.string().default(""),
   breaking: z.boolean().default(false),
+  // Reglas de crecimiento (T02, GROWTH_IMAGE_RULES_ENABLED): etiquetas y
+  // titular más legibles en el celular. Apagado = render idéntico al anterior.
+  growth: z.boolean().default(false),
 });
 
 export type FacebookOgCardV2Props = z.infer<typeof FacebookOgCardV2Schema>;
@@ -34,7 +37,13 @@ const M = OG.margin;
 const TEXT_W = 600;
 const SEAM = 8;
 
-export const FacebookOgCardV2: React.FC<FacebookOgCardV2Props> = ({ titulo, seccion, assetFile, highlightTerms, locality, breaking }) => {
+// Con ``growth``: cuerpo mínimo mayor y etiquetas legibles a 360 px (el OG se
+// ve a ~0,3×). El titular ya se agranda al máximo que entra; si no entra con
+// el mínimo nuevo, vuelve a la escala anterior y, por último, ajusta por alto:
+// nunca se corta.
+const GROWTH_OG = { min: 46, maxLines: 5, label: 26, wordmark: 28, seal: 52 } as const;
+
+export const FacebookOgCardV2: React.FC<FacebookOgCardV2Props> = ({ titulo, seccion, assetFile, highlightTerms, locality, breaking, growth }) => {
   const ready = useV2FontsReady();
   const style = sectionStyle(seccion);
   const hasImage = Boolean(assetFile);
@@ -52,18 +61,23 @@ export const FacebookOgCardV2: React.FC<FacebookOgCardV2Props> = ({ titulo, secc
   const innerW = colW - M * 2;
   const top = 92;
   const bottom = OG.h - 92;
-  const headline = fit({
-    text: titulo,
-    maxWidth: innerW,
-    maxHeight: bottom - top,
-    min: TYPE.ogHeadline.min,
-    max: hasImage ? TYPE.ogHeadline.max : 88,
-    weight: TYPE.ogHeadline.weight,
-    lh: TYPE.ogHeadline.lh,
-    stretch: TYPE.ogHeadline.stretch,
-    tracking: TYPE.ogHeadline.tracking,
-    maxLines: 5,
-  });
+  const fitOg = (min: number, maxLines: number) =>
+    fit({
+      text: titulo,
+      maxWidth: innerW,
+      maxHeight: bottom - top,
+      min,
+      max: hasImage ? TYPE.ogHeadline.max : 88,
+      weight: TYPE.ogHeadline.weight,
+      lh: TYPE.ogHeadline.lh,
+      stretch: TYPE.ogHeadline.stretch,
+      tracking: TYPE.ogHeadline.tracking,
+      maxLines,
+    });
+  const legacy = () => fitOg(TYPE.ogHeadline.min, 5);
+  const grown = growth ? fitOg(GROWTH_OG.min, GROWTH_OG.maxLines) : null;
+  // Último recurso con ``growth``: líneas según el alto disponible (sin cortar).
+  const headline = grown && !grown.overflow ? grown : growth ? [legacy(), fitOg(TYPE.ogHeadline.min, 9)].find((f) => !f.overflow) ?? legacy() : legacy();
   const tokens = tokenize(titulo, highlightTerms, 1);
 
   return (
@@ -75,7 +89,7 @@ export const FacebookOgCardV2: React.FC<FacebookOgCardV2Props> = ({ titulo, secc
         </div>
       ) : null}
       <div style={{ position: "absolute", left: M, top: 40, width: innerW }}>
-        <SectionLabel label={style.label} detail={locality} accent={fieldTone ? C.white : style.accent} color={mute} size={18} progress={1} />
+        <SectionLabel label={style.label} detail={locality} accent={fieldTone ? C.white : style.accent} color={mute} size={growth ? GROWTH_OG.label : 18} progress={1} />
       </div>
       <div style={{ position: "absolute", left: M, top, width: innerW, height: bottom - top, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Headline
@@ -92,7 +106,7 @@ export const FacebookOgCardV2: React.FC<FacebookOgCardV2Props> = ({ titulo, secc
         />
       </div>
       <div style={{ position: "absolute", left: M, bottom: 30, width: innerW, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Wordmark size={22} sealSize={42} color={fg} accent={fieldTone ? C.white : style.accent} />
+        <Wordmark size={growth ? GROWTH_OG.wordmark : 22} sealSize={growth ? GROWTH_OG.seal : 42} color={fg} accent={fieldTone ? C.white : style.accent} />
         {hasImage ? null : (
           <span style={{ fontFamily: `"${V2_FONT_SANS}"`, fontWeight: 700, fontStretch: "semi-condensed", fontSize: 18, letterSpacing: "0.14em", color: mute }}>LAVOZRIOJANA.COM</span>
         )}

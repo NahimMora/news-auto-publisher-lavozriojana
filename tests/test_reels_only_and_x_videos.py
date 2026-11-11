@@ -290,6 +290,52 @@ class XVideoStageTests(unittest.TestCase):
         self.assertEqual(StageStatus.DEGRADED, result.status)
         self.assertEqual("pending", self._job()["status"])
 
+    def test_salta_video_is_skipped_before_caption_and_render(self):
+        with mock.patch.object(self.xv, "fetch_x_metadata", return_value={"text": "Accidente en Tartagal"}), mock.patch.object(
+            self.xv, "build_news_item"
+        ) as build, mock.patch.object(self.stage, "render_reel_item") as render:
+            self.stage.main()
+        build.assert_not_called()
+        render.assert_not_called()
+        job = self._job()
+        self.assertEqual(("skipped", "region_salta"), (job["status"], job["reason"]))
+
+    def test_filter_can_be_turned_off(self):
+        with mock.patch.dict(os.environ, {"X_VIDEO_EXCLUDE_SALTA": "false"}), mock.patch.object(
+            self.xv, "fetch_x_metadata", return_value={"text": "Accidente en Tartagal"}
+        ), mock.patch.object(self.stage, "render_reel_item", return_value=None):
+            self.stage.main()
+        self.assertNotEqual("region_salta", self._job().get("reason"))
+
+    def test_salta_skip_blocks_the_url_from_coming_back(self):
+        save_json(str(self.state), {"jobs": {"j1": {"status": "skipped", "reason": "region_salta", "url": "https://x.com/a/status/1",
+                                                    "url_key": self.xv._url_key("https://x.com/a/status/1")}}})
+        from datetime import datetime, timezone
+
+        counts = self.xv.ingest([{"job_id": "j2", "url": "https://x.com/a/status/1", "created_at": datetime.now(timezone.utc).isoformat()}])
+        self.assertEqual(1, counts["skipped_duplicate_url"])
+
+
+class XVideoSaltaFilterTests(unittest.TestCase):
+    """Pedido del 2026-10-31: no se publican videos de X que digan ser de Salta."""
+
+    def setUp(self):
+        from utils import x_video_reels
+
+        self.xv = x_video_reels
+
+    def test_salta_text_or_account_is_detected(self):
+        job = {"url": "https://x.com/a/status/1"}
+        self.assertIn("Salta", self.xv.salta_reason(job, {"text": "Un robot bailó folclore en la plaza 9 de Julio de Salta"}))
+        self.assertIn("Orán", self.xv.salta_reason(job, {"text": "Vecinos de Orán denuncian ruidos"}))
+        self.assertIn("salteño", self.xv.salta_reason(job, {"text": "El intendente salteño habló"}))
+        self.assertIn("quepasasalta", self.xv.salta_reason({"url": "https://x.com/QuePasaSalta/status/9"}, {"text": "Borracho en la Ruta 34"}))
+
+    def test_verb_salta_and_other_provinces_are_kept(self):
+        job = {"url": "https://x.com/a/status/1"}
+        self.assertEqual("", self.xv.salta_reason(job, {"text": "El precio salta otra vez y la diferencia salta a la vista"}))
+        self.assertEqual("", self.xv.salta_reason(job, {"text": "Choque en la ruta 38 en La Rioja"}))
+        self.assertEqual("", self.xv.salta_reason(job, {"text": ""}))
 
 if __name__ == "__main__":
     unittest.main()

@@ -1486,3 +1486,142 @@
   automáticas del CMS (`PATCH storyKey=null`) y del archivo local, con respaldo
   en `output/story_keys_backup_*.json` (`--restore` las vuelve a poner).
 - Sin historia, la nota vuelve a mostrar "En contexto" cuando hay antecedentes.
+
+## 102. Carrusel de la mañana rechazado en Instagram sin motivo — CORREGIDO 2026-10-28
+
+- Síntoma: el 28/10 (08:28 y 09:55) el carrusel de la mañana dio
+  `instagram=request_rejected` (Facebook salió). El log no decía en qué paso
+  ni por qué: `post_image_carousel` devolvía el error de Graph sin registrarlo.
+  No fue el tope diario (74/100 en `content_publishing_limit`, y ese caso se
+  clasifica `rate_limit`) ni un cambio de código (sin commits desde el 26/10).
+- Causa probable: el padre `CAROUSEL` se armaba tras una espera fija de 5 s,
+  sin confirmar que las 7 láminas estuvieran `FINISHED`.
+- Corrección: cada lámina y el padre esperan `FINISHED` (misma espera que el
+  carrusel premium, `PREMIUM_IG_CONTAINER_PROCESSING_*`); `ERROR`/`EXPIRED`
+  falla y el timeout queda `degraded`, ambos `not_published`. Todo rechazo
+  loguea `stage`, lámina, `code`/`subcode`, `message` y `fbtrace_id`
+  ("Carrusel de la mañana de Instagram rechazado ..."). Si vuelve a fallar,
+  ese renglón da el motivo.
+
+## 103. OG con fotos compuestas recortadas por la costura — CORREGIDO detrás de flag 2026-10-30
+
+- Síntoma: el OG V2 recorta al centro un hueco de 600×630; en montajes de dos
+  paneles (Lali/Tini, carnet de conducir) la costura queda en el medio y corta
+  caras o deja media persona; en grillas 2×2 muestra cuatro cuartos de foto.
+  En una muestra de 400 fotos, el 22 % de las horizontales son montajes.
+- Corrección (`GROWTH_IMAGE_RULES_ENABLED`): díptico con paneles enteros,
+  primera columna de la grilla o foto sin barras laterales
+  (`utils/growth_image_rules.py`).
+- Límite: sin visión no se elige "el panel pertinente"; en montajes de tres
+  paneles quedan los dos primeros.
+
+## 104. Sin mediciones a 72 h ni 7 días — CORREGIDO detrás de flag 2026-10-30
+
+- Síntoma: `ig_insights` lee sólo las 30 publicaciones más recientes y
+  `ig_media_insights.json` guarda el último valor; en 14 días había 524
+  lecturas < 24 h, 48 a 24 h y ninguna a 72 h ni 7 d. Los Reels de Paparazzi,
+  premium y formatos sociales no se medían fuera de esa ventana.
+- Corrección (`GROWTH_METRICS_ENABLED`): cohortes por edad real y hasta 6
+  lecturas extra por ciclo para las piezas que cruzan 24 h / 72 h / 7 d.
+
+## 105. Titulares largos del OG exceden el límite de 5 líneas — ABIERTO 2026-10-30
+
+- Con un título de ~160 caracteres `fit` no encuentra tamaño ≥ 40 px en 5
+  líneas y renderiza 7 líneas a 40 px (no se corta: hay alto). Con las reglas
+  T02 el último recurso ajusta explícitamente por alto (46→40 px). Las reglas
+  no acortan títulos: eso exige una versión editorial corta (P01, fuera de
+  alcance).
+
+## 106. Instagram repetía el mismo hecho y dejaba afuera locales — CORREGIDO 2026-10-30
+
+- Síntoma: la licencia de conducir salió 4 veces en el feed (28–30/10), unas 105
+  locales en 72 h salieron en Facebook y no en Instagram, de noche sólo salían
+  Reels y 34 de 59 posts quedaron sin historia nativa en 48 h.
+- Causa: `valid_anchor` rechaza el "mismo hecho" cuando el ancla es un sustantivo
+  común; `IG_LOCAL_CATEGORIES` dejaba afuera política/economía/educación/salud;
+  el tope de 30 se llenaba a media tarde; 2 historias nativas por ciclo.
+- Corrección: `event_related` + `SAME_EVENT_SOCIAL_SKIP`, categorías ampliadas y
+  relleno riojano, tope 40 repartido, freno de imágenes con el tope de Meta en
+  88/100 e historias de a 4 (ver DECISIONS 2026-10-30).
+- Pendiente: los Reels de Infobae, paparazzi y X no pasan por el control del
+  mismo hecho (Nancy Godoy: 6 Reels y 5 posts en 3 días).
+
+## 107. Un test de Instagram depende del `.env` real — ABIERTO 2026-10-30
+
+- `test_node_webapp_publisher...test_instagram_skips_similar_without_fabricating_publication_record`
+  falla en la suite completa dentro de `C:\LVR`: otro módulo importado antes
+  llama a `load_dotenv()` y carga `IG_POSTED_DEDUP_WINDOW_HOURS=72`, con lo que
+  la publicación anterior del test (posted_at=123) queda fuera de la ventana.
+  En una copia sin `.env` la suite pasa completa. Corrección pendiente: fijar la
+  variable en el test.
+
+
+## 108. Noticiero de la Noche: voz sintética y control factual por coincidencia — ABIERTO 2026-10-30
+
+- La locución es Gemini TTS: la tonada riojana sale por indicación de estilo y
+  puede variar de una noche a otra; no hay voz es-AR nativa en Google.
+- El control factual compara cifras, nombres propios y días contra el texto de
+  nuestras notas: detecta datos agregados, no una paráfrasis que cambie el
+  sentido. Por eso las primeras 3 noches el operador revisa antes de publicar.
+- El modelo TTS es "preview": si Google lo retira, cambiar
+  `NIGHTLY_NEWSCAST_TTS_MODEL`.
+
+## 109. Noticiero V3: límites que no se automatizan — ABIERTO 2026-10-31
+
+- Pertinencia imagen–hecho: la decide un control visual de Gemini con el
+  título de la nota (en la edición del 30/10 atrapó el video de "allanamientos
+  en zona norte" embebido en la nota del penal, el fichaje y dos paneles de
+  estudio). Puede equivocarse en ambos sentidos: el operador revisa
+  `visual_plan.json` → `rejected` y las hojas de inspección.
+- Subtítulos: alineados sobre el audio real, pero sin anotación humana no hay
+  medición de error en ms (mediana/p95). Cobertura medida en los fixtures:
+  96–100 % con todas las cifras ancladas; las palabras `interpolated` quedan
+  marcadas.
+- Escucha: no hubo escucha humana de la mezcla V3 (voz, música −20 dB medido,
+  limitador). Pendiente del operador antes de publicar.
+- `freezedetect` marca como congeladas las placas tipográficas (`limited`,
+  `data`, `service`) y el cierre: son quietas a propósito y cambian los
+  subtítulos. No es error por sí solo.
+- El timeout del navegador headless al arrancar el render (contención con el
+  render server del supervisor) se reintenta una vez.
+
+## 110. Noticiero V4: pendientes de revisión humana — ABIERTO 2026-10-31
+
+- Escucha de la mezcla (voz con la dirección nueva, música a −13 dB, efectos):
+  medida, no escuchada.
+- El control visual de video puede devolver una lista por cuadro: se combina
+  (`merge_frame_checks`). Si devuelve otra cosa, el video queda fuera
+  ("sin control visual") y la historia usa foto.
+- Los videos de Fénix traen zócalo y un *ticker* abajo: a pantalla completa caen
+  en la zona de interfaz de Reels, debajo de los subtítulos.
+- La biblioteca guarda notas por 72 h en `data/` y medios en `output/`; si no se
+  programa `meta/run_newscast_library.py`, se actualiza recién al correr el
+  noticiero (alcanza: el historial web cubre la ventana).
+
+
+## 111. Noticiero V5: límites conocidos — ABIERTO 2026-11-01
+
+- **Retención sin medir.** La V5 se validó con el material del 31/10, no con
+  una edición publicada: no hay datos de que retenga más. Comparar con las
+  métricas de `docs/NIGHTLY_NEWSCAST.md` § V5 → Métricas antes de concluir.
+- **Voz no escuchada por una persona.** El ajuste de ritmo (≤ 1,08× con Rubber
+  Band) y el acorte de pausas se midieron (154–168 ppm), no se escucharon.
+- **Guion V5 sin corrida real del modelo.** El prompt nuevo no se probó contra
+  Gemini (sin gasto en esta etapa): la demo usó la locución y los textos del
+  31/10 con títulos reescritos a mano bajo las reglas nuevas. Si el modelo
+  devuelve bloques de más de 36 palabras, el validador pide recortar (hasta 4
+  intentos) y los bloques que sigan largos salen; con menos de 3 bloques
+  limpios no hay noticiero ese día (`script_rejected`).
+- **Video real sólo con prueba corta.** Las notas del 31/10 no tenían video:
+  la rama de video (`full` vertical, `band` apaisado) se probó con un render
+  corto de dos videos locales, no con una edición completa.
+- **Portada y ubicación sólo en Instagram.** `post_reel_video_to_facebook` no
+  manda miniatura ni lugar: Facebook elige el cuadro.
+- **Tiempo de render.** Con el host ocupado (otros renders del supervisor) el
+  video tarda 6–10 min y la portada 1–6 min (cada `npx remotion` bundlea). La
+  tarea arranca 20:15 y espera a las 21: hay margen, pero no infinito.
+- **Fotos chicas.** Con fotos de 700 px la tarjeta amplía 1,34× y el detalle
+  hasta 2,35×: se ven blandas en pantallas grandes. Mejor material en origen
+  es la única solución real.
+- **Mapa.** Sólo localidades exactas del nomenclador (90). Barrios, parajes y
+  calles no se ubican (decisión: nunca adivinar un punto).

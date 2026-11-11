@@ -302,6 +302,8 @@ def validate_config(
     _positive_int(report, env, "PUBLISH_INTERNATIONAL_MIN_SCORE", 8, minimum=0, maximum=10)
     _positive_int(report, env, "PUBLISH_INTERNATIONAL_MAX_PER_RUN", 1, minimum=0, maximum=20)
     _positive_int(report, env, "IG_LOCAL_DAILY_MAX", 0, minimum=0, maximum=100)
+    _positive_int(report, env, "IG_LOCAL_PACING_SLACK", 0, minimum=0, maximum=50)
+    _positive_int(report, env, "IG_STATIC_QUOTA_CEILING", 0, minimum=0, maximum=100)
     _positive_int(report, env, "VIDEO_STAGE_TIME_BUDGET_SECONDS", 480, minimum=60, maximum=720)
     _positive_int(
         report,
@@ -682,6 +684,39 @@ def config_inventory() -> dict[str, list[str]]:
                 "JUDICIAL_MIN_SCORE",
                 "JUDICIAL_DEDUP_HOURS",
                 "IG_LOCAL_DAILY_MAX",
+                "IG_LOCAL_FILL_RIOJAN",
+                "IG_LOCAL_PACING_SLACK",
+                "IG_LOCAL_PACING_MAX_AGE_HOURS",
+                "IG_STATIC_QUOTA_CEILING",
+                "SAME_EVENT_SOCIAL_SKIP",
+                "WHATSAPP_ENABLED",
+                "WHATSAPP_DRY_RUN",
+                "WHATSAPP_GROUP_JID",
+                "WHATSAPP_CHANNEL_JID",
+                "WHATSAPP_JOIN_URL",
+                "WHATSAPP_MAX_AGE_HOURS",
+                "WHATSAPP_MAX_PER_CYCLE",
+                "WHATSAPP_MAX_ATTEMPTS",
+                "WHATSAPP_QUIET_HOURS",
+                "WHATSAPP_NODE",
+                "WHATSAPP_STAGE_TIMEOUT_SECONDS",
+                "WHATSAPP_GAP_SECONDS",
+                "WA_JOIN_STORY_ENABLED",
+                "WA_JOIN_STORY_DAYS",
+                "WA_JOIN_STORY_HOUR",
+                "WA_JOIN_STORY_UNTIL_HOUR",
+                "FB_GROUPS_ENABLED",
+                "FB_GROUPS_DRY_RUN",
+                "FB_GROUPS_HOURS",
+                "FB_GROUPS_MAX_AGE_HOURS",
+                "FB_GROUPS_MAX_PER_GROUP_DAY",
+                "FB_GROUPS_GROUP_GAP_MINUTES",
+                "FB_GROUPS_GAP_MINUTES",
+                "FB_GROUPS_WORKER_MAX_MINUTES",
+                "FB_GROUPS_BLOCK_HOURS",
+                "FB_GROUPS_PAGE_NAME",
+                "FB_GROUPS_PROFILE_DIR",
+                "FB_GROUPS_CHROME",
                 "REEL_REQUIRE_REMOTION",
                 "REEL_SOURCE_NORMALIZE_ENABLED",
                 "REMOTION_REEL_TIMEOUT_MS",

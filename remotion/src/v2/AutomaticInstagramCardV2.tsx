@@ -47,6 +47,11 @@ export const AutomaticInstagramCardV2Schema = z.object({
   // "papel"/"tinta" fuerzan el tono; "cintas" fuerza foto completa.
   layout: z.enum(["auto", "papel", "tinta", "cintas", "poster"]).default("auto"),
   dateLabel: z.string().default(""),
+  // Reglas de crecimiento (T02, GROWTH_IMAGE_RULES_ENABLED). Apagado = render
+  // idéntico al anterior.
+  growth: z.boolean().default(false),
+  // Foco vertical de la foto (0–100 %). 50 = centro, el comportamiento previo.
+  assetFocusY: z.number().min(0).max(100).default(50),
 });
 
 export type AutomaticInstagramCardV2Props = z.infer<typeof AutomaticInstagramCardV2Schema>;
@@ -121,9 +126,13 @@ const TAB_TEXT_W = IG.w - 420 - 24 - (M - 8) - 30;
 // Actualización de un hecho ya publicado: pestaña ámbar debajo de la sección.
 const UPDATE_FILL = "#E3A008";
 
-const SectionTab: React.FC<{ style: SectionStyle; locality: string; fill?: string; update?: boolean }> = ({ style, locality, fill, update }) => {
+// Con ``growth`` las piezas chicas suben de cuerpo: a 360 px de ancho (celular)
+// el post se ve a 1/3, y 15–19 px quedaban en 5–6 px reales.
+const GROWTH_UI = { tabMin: 18, tabMax: 24, footSmall: 28, footBrand: 30, deck: 36 } as const;
+
+const SectionTab: React.FC<{ style: SectionStyle; locality: string; fill?: string; update?: boolean; growth?: boolean }> = ({ style, locality, fill, update, growth }) => {
   const chars = style.label.length + locality.length;
-  const size = Math.max(15, Math.min(22, Math.floor(TAB_TEXT_W / (chars * 0.68))));
+  const size = Math.max(growth ? GROWTH_UI.tabMin : 15, Math.min(growth ? GROWTH_UI.tabMax : 22, Math.floor(TAB_TEXT_W / (chars * 0.68))));
   return (
     <>
       <div style={{ position: "absolute", right: 0, top: 54, height: 56, display: "flex", alignItems: "center", gap: 14, padding: `0 ${M - 8}px 0 24px`, backgroundColor: fill ?? style.field, ...caps, fontSize: size, color: C.white }}>
@@ -145,16 +154,22 @@ const SectionTab: React.FC<{ style: SectionStyle; locality: string; fill?: strin
 };
 
 // Banda de pie: llamado a la nota + fecha + cuenta.
-const FooterBand: React.FC<{ color: string; dateLabel: string }> = ({ color, dateLabel }) => (
-  <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: FOOT_H, backgroundColor: color, display: "flex", alignItems: "center", justifyContent: "space-between", padding: `0 ${M}px 0 ${M}px` }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <span style={{ ...caps, fontSize: 21, color: rgba(C.white, 0.78) }}>Nota completa en</span>
-      <span style={{ ...caps, fontSize: 23, color: C.white }}>lavozriojana.com</span>
-      <span style={{ ...caps, fontSize: 26, color: C.white, letterSpacing: 0 }}>→</span>
+const FooterBand: React.FC<{ color: string; dateLabel: string; growth?: boolean }> = ({ color, dateLabel, growth }) => {
+  const small: React.CSSProperties = growth ? { letterSpacing: "0.1em" } : {};
+  const mute = rgba(C.white, growth ? 0.86 : 0.78);
+  return (
+    <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: FOOT_H, backgroundColor: color, display: "flex", alignItems: "center", justifyContent: "space-between", padding: `0 ${M}px 0 ${M}px` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ ...caps, ...small, fontSize: growth ? GROWTH_UI.footSmall : 21, color: mute }}>Nota completa en</span>
+        <span style={{ ...caps, ...small, fontSize: growth ? GROWTH_UI.footBrand : 23, color: C.white }}>lavozriojana.com</span>
+        <span style={{ ...caps, fontSize: 26, color: C.white, letterSpacing: 0 }}>→</span>
+      </div>
+      {/* Con ``growth`` el llamado a la nota sube a 28–30 px y la fecha se omite:
+          Instagram ya muestra la fecha del post y las dos no entran legibles. */}
+      {growth ? null : <span style={{ ...caps, fontSize: 19, color: mute }}>{dateLabel || "@lavozriojana"}</span>}
     </div>
-    <span style={{ ...caps, fontSize: 19, color: rgba(C.white, 0.78) }}>{dateLabel || "@lavozriojana"}</span>
-  </div>
-);
+  );
+};
 
 const LeftStripe: React.FC<{ color: string; top?: number }> = ({ color, top = 0 }) => (
   <div style={{ position: "absolute", left: 0, top, bottom: FOOT_H, width: STRIPE, backgroundColor: color }} />
@@ -239,9 +254,30 @@ interface TextPlan {
 
 const DECK_GAP = 26;
 
+// Con ``growth`` se intenta primero un plan más legible en el celular:
+// titular de 4 líneas como máximo y ≥ 64 px, bajada de 36 px. Si no entra,
+// se usa el plan anterior completo (nunca se corta ni se achica de más).
+function planGrowth(title: string, deckText: string, room: number, width: number, maxSize: number): TextPlan | null {
+  const deck3 = fitDeck(deckText, width - 28, GROWTH_UI.deck, 3);
+  const deck2 = fitDeck(deckText, width - 28, GROWTH_UI.deck, 2);
+  const attempts: [Fitted | null, number][] = [
+    [deck3, 72],
+    [deck2, 64],
+    [null, 64],
+  ];
+  for (const [deck, min] of attempts) {
+    const deckH = deck ? deck.height + DECK_GAP : 0;
+    const headline = fitHeadline(title, width, room - deckH, min, maxSize, 4);
+    if (!headline.overflow) return { headline, deck, height: headline.height + deckH };
+  }
+  return null;
+}
+
 // Titular protagonista: primero con bajada y tamaño grande; si no entra,
 // se achica; recién al final se omite la bajada (nunca se corta el titular).
-function planText(title: string, deckText: string, room: number, width: number, maxSize = 96): TextPlan {
+function planText(title: string, deckText: string, room: number, width: number, maxSize = 96, growth = false): TextPlan {
+  const grown = growth ? planGrowth(title, deckText, room, width, maxSize) : null;
+  if (grown) return grown;
   const deck3 = fitDeck(deckText, width - 28, TYPE.deck.size, 3);
   const deck2 = fitDeck(deckText, width - 28, TYPE.deck.size, 2);
   const attempts: [Fitted | null, number][] = [
@@ -273,13 +309,13 @@ const PhotoTop: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionS
   // El titular manda: se busca la foto más alta que deja un titular ≥ 70 px.
   let plan: TextPlan | null = null;
   for (let h = Math.min(maxPhoto, 820); h >= 520; h -= 20) {
-    const candidate = planText(props.titulo, props.deck, textBottom - (h - overlap), textW);
+    const candidate = planText(props.titulo, props.deck, textBottom - (h - overlap), textW, 96, props.growth);
     if (candidate.headline.fontSize >= 70 || h === 520) {
       plan = candidate;
       break;
     }
   }
-  if (!plan) plan = planText(props.titulo, props.deck, textBottom - (520 - overlap), textW);
+  if (!plan) plan = planText(props.titulo, props.deck, textBottom - (520 - overlap), textW, 96, props.growth);
   // El texto queda anclado abajo y la foto crece hasta alcanzarlo: sin
   // huecos con titulares cortos.
   const textTop = textBottom - plan.height;
@@ -289,12 +325,12 @@ const PhotoTop: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionS
     <AbsoluteFill style={{ backgroundColor: bg }}>
       <Halftone color={ink ? rgba(C.white, 0.09) : rgba(C.paperInk, 0.1)} top={photoH} height={Math.max(0, IG.h - photoH - FOOT_H)} />
       <div style={{ position: "absolute", left: 0, top: 0, width: IG.w, height: photoH, overflow: "hidden", backgroundColor: C.ink2 }}>
-        <Img src={staticFile(props.assetFile)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <Img src={staticFile(props.assetFile)} style={{ width: "100%", height: "100%", objectFit: "cover", ...(props.growth ? { objectPosition: `50% ${props.assetFocusY}%` } : {}) }} />
       </div>
       {/* Fundido de la foto hacia el fondo, para que el titular la monte */}
       <div style={{ position: "absolute", left: 0, top: fadeFrom, width: IG.w, height: photoH - fadeFrom + 2, background: `linear-gradient(180deg, ${rgba(bg, 0)} 0%, ${rgba(bg, 0.72)} 52%, ${rgba(bg, 0.97)} 86%, ${bg} 100%)` }} />
       <BrandTab accent={style.accent} />
-      <SectionTab style={style} locality={props.locality} update={props.update} />
+      <SectionTab style={style} locality={props.locality} update={props.update} growth={props.growth} />
       <LeftStripe color={style.accent} top={photoH - overlap - 10} />
       <div style={{ position: "absolute", left: M, top: textTop, width: textW }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={textColor} accent={style.accent} />
@@ -304,7 +340,7 @@ const PhotoTop: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionS
           </div>
         ) : null}
       </div>
-      <FooterBand color={ink ? style.field : C.ink} dateLabel={props.dateLabel} />
+      <FooterBand color={ink ? style.field : C.ink} dateLabel={props.dateLabel} growth={props.growth} />
       <Grain opacity={ink ? 0.04 : 0.05} />
     </AbsoluteFill>
   );
@@ -313,16 +349,16 @@ const PhotoTop: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionS
 // ── Foto vertical a pantalla completa ───────────────────────────────────
 const FullPhoto: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionStyle; tokens: Token[] }> = ({ props, style, tokens }) => {
   const textBottom = IG.h - FOOT_H - 44;
-  const plan = planText(props.titulo, props.deck, 560, INNER_W, 88);
+  const plan = planText(props.titulo, props.deck, 560, INNER_W, 88, props.growth);
   const textTop = textBottom - plan.height;
   const veilTop = textTop - 300;
   return (
     <AbsoluteFill style={{ backgroundColor: C.ink }}>
-      <Img src={staticFile(props.assetFile)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+      <Img src={staticFile(props.assetFile)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", ...(props.growth ? { objectPosition: `50% ${props.assetFocusY}%` } : {}) }} />
       <div style={{ position: "absolute", left: 0, top: 0, width: IG.w, height: 260, background: `linear-gradient(180deg, ${rgba(C.ink, 0.55)} 0%, ${rgba(C.ink, 0)} 100%)` }} />
       <div style={{ position: "absolute", left: 0, top: veilTop, width: IG.w, bottom: 0, background: `linear-gradient(180deg, ${rgba(C.ink, 0)} 0%, ${rgba(C.ink, 0.78)} 32%, ${rgba(C.ink, 0.94)} 62%, ${C.ink} 100%)` }} />
       <BrandTab accent={style.accent} />
-      <SectionTab style={style} locality={props.locality} update={props.update} />
+      <SectionTab style={style} locality={props.locality} update={props.update} growth={props.growth} />
       <LeftStripe color={style.accent} top={textTop - 24} />
       <div style={{ position: "absolute", left: M, top: textTop, width: INNER_W }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={C.white} accent={style.accent} />
@@ -332,7 +368,7 @@ const FullPhoto: React.FC<{ props: AutomaticInstagramCardV2Props; style: Section
           </div>
         ) : null}
       </div>
-      <FooterBand color={style.field} dateLabel={props.dateLabel} />
+      <FooterBand color={style.field} dateLabel={props.dateLabel} growth={props.growth} />
       <Grain opacity={0.04} />
     </AbsoluteFill>
   );
@@ -342,7 +378,7 @@ const FullPhoto: React.FC<{ props: AutomaticInstagramCardV2Props; style: Section
 const Poster: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionStyle; tokens: Token[] }> = ({ props, style, tokens }) => {
   const top = 200;
   const textBottom = IG.h - FOOT_H - 60;
-  const plan = planText(props.titulo, props.deck, textBottom - top, INNER_W, 132);
+  const plan = planText(props.titulo, props.deck, textBottom - top, INNER_W, 132, props.growth);
   const textTop = Math.max(top, textBottom - plan.height);
   const boxAccent = style.field === C.red ? C.ink : C.red;
   return (
@@ -351,7 +387,7 @@ const Poster: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionSty
       <Halftone color={rgba(C.white, 0.16)} top={150} height={520} />
       <Watermark label={style.label} bottom={IG.h - 150 - 200} color={rgba(C.white, 0.12)} />
       <BrandTab accent={style.field === C.red ? C.white : C.red} />
-      <SectionTab style={style} locality={props.locality} fill={C.ink} update={props.update} />
+      <SectionTab style={style} locality={props.locality} fill={C.ink} update={props.update} growth={props.growth} />
       <div style={{ position: "absolute", left: M, top: textTop - 44, width: 120, height: 10, backgroundColor: C.white }} />
       <div style={{ position: "absolute", left: M, top: textTop, width: INNER_W }}>
         <StaticHeadline fitted={plan.headline} tokens={tokens} color={C.white} accent={boxAccent} />
@@ -361,7 +397,7 @@ const Poster: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionSty
           </div>
         ) : null}
       </div>
-      <FooterBand color={C.ink} dateLabel={props.dateLabel} />
+      <FooterBand color={C.ink} dateLabel={props.dateLabel} growth={props.growth} />
       <Grain opacity={0.05} />
     </AbsoluteFill>
   );

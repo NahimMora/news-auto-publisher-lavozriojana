@@ -205,4 +205,8 @@ def build_instagram_caption(noticia: dict) -> str:
     if noticia.get("show_update"):
         # Actualización de un hecho que ya salió en esta red (utils/same_event.py).
         cuerpo = f"🔄 ACTUALIZACIÓN\n\n{cuerpo}"
+    if noticia.get("caption_complete"):
+        # Texto ya cerrado con sus propios hashtags (Noticiero V5): no se
+        # agrega un segundo bloque de etiquetas.
+        return cuerpo[:2200]
     return f"{cuerpo}\n\n{_hashtags(noticia)}"[:2200]

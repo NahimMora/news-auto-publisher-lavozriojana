@@ -138,6 +138,8 @@ def _mark_posted(dedup_key: str, noticia: dict, external_id: str) -> None:
             "source",
             "media_type",
             "gov_tags",
+            # T01: motor/plantilla del render, sólo con GROWTH_METRICS_ENABLED.
+            "growth_render",
         ):
             if noticia.get(field):
                 record[field] = noticia[field]
@@ -741,6 +743,7 @@ def _premium_failure_context(
     *,
     stage: str,
     container_index: int | None = None,
+    label: str = "premium",
 ) -> OperationResult:
     """Agrega contexto seguro y logueable a un fallo del carrusel."""
     if result.ok:
@@ -748,11 +751,18 @@ def _premium_failure_context(
     result.details.setdefault("stage", stage)
     if container_index is not None:
         result.details.setdefault("container_index", container_index)
+    # message/fbtrace_id de Graph no traen secretos y son lo único que explica
+    # un rechazo (relación de aspecto, descarga fallida, etc.).
+    error = (result.response or {}).get("error") if isinstance(result.response, dict) else None
+    error = error if isinstance(error, dict) else {}
     logger.error(
-        "Carrusel premium de Instagram rechazado stage=%s item=%s metadata=%s",
+        "Carrusel %s de Instagram rechazado stage=%s item=%s metadata=%s message=%r fbtrace_id=%s",
+        label,
         stage,
         container_index if container_index is not None else "-",
         result.failure_metadata(),
+        str(error.get("error_user_msg") or error.get("message") or "")[:200],
+        str(error.get("fbtrace_id") or "-")[:40],
     )
     return result
 
@@ -762,6 +772,7 @@ def _wait_premium_container(
     *,
     stage: str,
     container_index: int | None = None,
+    label: str = "premium",
 ) -> OperationResult:
     """Espera que Meta termine de procesar un contenedor del carrusel."""
     timeout_seconds = max(1, PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS)
@@ -790,6 +801,7 @@ def _wait_premium_container(
                 _error_result(response, outcome="not_published"),
                 stage=stage,
                 container_index=container_index,
+                label=label,
             )
         status = str(data.get("status_code") or "").upper()
         if status in {"FINISHED", "PUBLISHED"}:
@@ -812,6 +824,7 @@ def _wait_premium_container(
                 ),
                 stage=stage,
                 container_index=container_index,
+                label=label,
             )
         time.sleep(poll_seconds)
 
@@ -825,6 +838,7 @@ def _wait_premium_container(
         ),
         stage=stage,
         container_index=container_index,
+        label=label,
     )
 
 
@@ -1239,15 +1253,19 @@ def post_image_carousel(image_urls: list[str], caption: str) -> OperationResult:
         return blocked
     if not 2 <= len(image_urls) <= 10 or not all(_is_http_url(u) for u in image_urls):
         return OperationResult(StageStatus.FAILED, error_type="invalid_slide_count")
+    # Cada lámina tiene que quedar FINISHED antes de armar el padre: con una
+    # espera fija, Meta rechaza el carrusel si todavía procesa alguna imagen.
     children: list[str] = []
-    for url in image_urls:
+    for index, url in enumerate(image_urls, start=1):
         child = _create_container({"image_url": url, "is_carousel_item": "true", "access_token": IG_ACCESS_TOKEN})
         if not child.ok:
-            return child
+            return _premium_failure_context(child, stage="carousel_child_create", container_index=index, label="de la mañana")
+        ready = _wait_premium_container(
+            child.external_id, stage="carousel_child_processing", container_index=index, label="de la mañana"
+        )
+        if not ready.ok:
+            return ready
         children.append(child.external_id)
-    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
-    if delay > 0:
-        time.sleep(delay)
     parent = _create_container({
         "media_type": "CAROUSEL",
         "children": ",".join(children),
@@ -1255,12 +1273,14 @@ def post_image_carousel(image_urls: list[str], caption: str) -> OperationResult:
         "access_token": IG_ACCESS_TOKEN,
     })
     if not parent.ok:
-        return parent
-    if delay > 0:
-        time.sleep(delay)
+        return _premium_failure_context(parent, stage="carousel_parent_create", label="de la mañana")
+    ready = _wait_premium_container(parent.external_id, stage="carousel_parent_processing", label="de la mañana")
+    if not ready.ok:
+        return ready
     published = _publish_container(parent.external_id)
-    if published.ok:
-        logger.info("Carrusel publicado en Instagram: %s (%s láminas)", published.external_id, len(children))
+    if not published.ok:
+        return _premium_failure_context(published, stage="carousel_publish", label="de la mañana")
+    logger.info("Carrusel publicado en Instagram: %s (%s láminas)", published.external_id, len(children))
     return published
 
 

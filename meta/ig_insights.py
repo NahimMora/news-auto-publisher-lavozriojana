@@ -24,7 +24,8 @@ from utils.editorial_priority import normalize_category
 from utils.file_manager import JsonStateError, load_json, save_json
 from utils.logging_setup import setup_logger
 from utils.paths import data_dir
-from utils.kpis import record_followers_snapshot, record_media_insights
+from utils.growth_measurement import growth_metrics_enabled
+from utils.kpis import MEDIA_INSIGHTS_PATH, record_followers_snapshot, record_media_insights
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 
 logger = setup_logger("ig_insights", "ig_insights.log")
@@ -33,6 +34,8 @@ IG_STATE_PATH = str(data_dir() / "ig_posted.json")
 PERFORMANCE_PATH = str(data_dir() / "ig_category_performance.json")
 MAX_POSTS_PER_RUN = int(os.getenv("IG_STATS_MAX_POSTS_PER_RUN", "30"))
 REQUEST_TIMEOUT = int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30"))
+# Tope de lecturas extra por ciclo para cohortes (sólo con GROWTH_METRICS_ENABLED).
+COHORT_MAX_PER_RUN = int(os.getenv("GROWTH_COHORT_MAX_PER_RUN", "6"))
 
 
 def _enabled() -> bool:
@@ -217,6 +220,8 @@ def main() -> StageResult:
             duration_seconds=time.monotonic() - started,
         )
 
+    cohort_stats = _cohort_entries({str(item.get("external_id")) for item in items}) if growth_metrics_enabled() else {}
+    kpi_entries.extend(cohort_stats.pop("entries", []))
     _record_kpis(kpi_entries)
     logger.info(
         "Insights actualizados: %s posts consultados, %s ok, %s fallidos, %s categorías",
@@ -230,8 +235,38 @@ def main() -> StageResult:
         succeeded=succeeded,
         failed=failed,
         duration_seconds=time.monotonic() - started,
-        details={"categories": len(categories_out)},
+        details={"categories": len(categories_out), **({"cohorts": cohort_stats} if cohort_stats else {})},
     )
+
+
+def _cohort_entries(already_fetched: set[str]) -> dict:
+    """T01: lecturas extra a 24 h / 72 h / 7 d de TODOS los workflows (Reels,
+    premium, formatos sociales), deduplicadas por media_id y acotadas por
+    ciclo. No entran al rendimiento por categoría del router (su universo no
+    cambia) ni al resultado de la etapa: medir nunca la rompe."""
+    from utils.growth_measurement import due_for_cohort, load_inventory
+
+    try:
+        media = load_json(MEDIA_INSIGHTS_PATH, {"media": {}}, expected_type=dict).get("media") or {}
+        due = due_for_cohort(load_inventory(), media, now=time.time(), exclude=already_fetched, limit=COHORT_MAX_PER_RUN)
+    except JsonStateError as exc:
+        logger.warning("Cohortes: no se pudo leer el inventario: %s", exc)
+        return {"due": 0, "measured": 0, "missing": 0}
+    entries = []
+    for item in due:
+        values = _fetch_insights(item["media_id"])
+        reach = values.get("reach") if values else None
+        interactions = values.get("total_interactions") if values else None
+        if reach is None or interactions is None:
+            continue
+        entries.append({
+            "media_id": item["media_id"],
+            "posted_at": item["posted_at"],
+            "seccion": item.get("category") or "",
+            "reach": reach,
+            "interactions": interactions,
+        })
+    return {"due": len(due), "measured": len(entries), "missing": len(due) - len(entries), "entries": entries}
 
 
 if __name__ == "__main__":

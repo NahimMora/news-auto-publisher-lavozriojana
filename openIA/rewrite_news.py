@@ -126,6 +126,8 @@ META_FIELDS = (
     "social_skip_reason",
     # Actualización de un hecho ya publicado (utils/same_event.py).
     "event_update",
+    # Mismo hecho sin ancla comprobable: no se repite en una red donde ya salió.
+    "event_related",
 )
 
 WEB_EXCLUDE_FIELDS = {
@@ -769,6 +771,8 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
                 continue
             if check.relation == "update":
                 noticia["event_update"] = check.update_payload()
+            elif check.related:
+                noticia["event_related"] = check.related_payload()
 
         original = copy.deepcopy(noticia)
         try:

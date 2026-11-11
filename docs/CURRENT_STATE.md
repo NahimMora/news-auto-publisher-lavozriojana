@@ -1,7 +1,50 @@
 # Estado actual
 
-Última actualización: 2026-10-28 (historias nativas con stickers, apagadas; el
-resto del documento describe el estado previo y sigue vigente).
+Última actualización: 2026-11-01 (Noticiero V5; el resto del documento
+describe el estado previo y sigue vigente).
+
+## Noticiero V5 (2026-11-01, publicación diaria activa)
+
+`NIGHTLY_NEWSCAST_VISUAL=v5` en `scripts/run_nightly_newscast.ps1`: apertura en
+frío (la noticia principal desde el frame 0, marca integrada que se contrae en
+el HUD), guion directo de 140–210 palabras, voz con pausas acortadas y ritmo
+≤ 1,08× sin volver a sintetizar, tomas de ~2,6 s cortadas en pausas reales,
+mapa de La Rioja con el nomenclador oficial, subtítulos cinéticos, portada
+1080×1920 como `cover_url`, caption sin fuentes con 4 hashtags y ubicación La
+Rioja en Instagram. Misma selección, barreras factuales y publicación que V4.
+Detalle, métricas y flags en `docs/NIGHTLY_NEWSCAST.md` § V5; QA en la skill
+`.claude/skills/lvr-video-qa`. Rollback: `NIGHTLY_NEWSCAST_VISUAL = "v3"`.
+
+## Noticiero policial V4 (2026-10-31, publicación diaria activa)
+
+Misma bandera `NIGHTLY_NEWSCAST_VISUAL=v3`: policiales de 24 h desde la
+biblioteca de notas propias (`data/newscast_library.json`), 8–12 hechos en
+≈1:45, apertura de 5–7 s, titulares animados, datos sincronizados con la voz,
+transiciones propias, música y efectos, cierre con `@lavozriojana.ok`. Detalle
+en `docs/NIGHTLY_NEWSCAST.md` § V4. Publicación diaria en IG y FB a las 21
+(tarea `LaVozRiojana-Noticiero`, arranca 20:15; `NIGHTLY_NEWSCAST_PUBLISH=true`
+en `scripts/run_nightly_newscast.ps1`), activada por el responsable el 2026-10-31.
+Ningún hecho sale sin foto o video propio: prefiltro de imágenes antes del
+guion (`NIGHTLY_NEWSCAST_REQUIRE_MEDIA=true`).
+
+## Noticiero de la Noche V3 (2026-10-31, sin publicar)
+
+`NIGHTLY_NEWSCAST_VISUAL=v3` en el script de la tarea: guion por tramos (un
+hecho por tramo, control factual por tramo), control visual de pertinencia de
+cada foto/video, ocho familias visuales en `NightlyNewscastV3`, subtítulos
+alineados con whisper.cpp local, apertura informativa desde el frame 0 y
+cierre de ~2,5 s. Temas sensibles incluidos con reglas reforzadas. Sigue sin
+publicar (`NIGHTLY_NEWSCAST_PUBLISH=false`) y la tarea no está registrada.
+Detalle en `docs/NIGHTLY_NEWSCAST.md` § V3.
+
+## Noticiero de la Noche (2026-10-30, prueba sin publicar)
+
+Reel locutado de las 21 con lo más importante del día en La Rioja
+(`docs/NIGHTLY_NEWSCAST.md`): guion de Gemini con control factual, voz Orus con
+tonada riojana, `NightlyNewscastV2` en Remotion con sirena, música y video
+silenciado. Tarea `LaVozRiojana-Noticiero` (20:30) en modo prueba: genera en
+`output/noticiero/<fecha>/` sin publicar (`NIGHTLY_NEWSCAST_PUBLISH=false`)
+durante 3 noches; después se decide activar la publicación.
 
 ## Historias nativas de Instagram con stickers (2026-10-28, apagadas)
 
@@ -64,9 +107,20 @@ resto del documento describe el estado previo y sigue vigente).
   Web; en redes, paparazzi con video sólo como Reel (etapa
   `meta/run_paparazzi_videos.py`) y sin video con relevancia ≥ 6; internacionales
   sólo de alto impacto (≥ 8, 1 por ciclo); Instagram con locales sólo de último
-  momento/policiales/sociedad, interior como relleno con el cupo libre del ciclo
-  (`IG_LOCAL_FILL_CATEGORIES`) y máximo 30 por día (desde 2026-10-22); Facebook sin cambios. Deportes
+  momento/policiales/sociedad/salud/educación, interior y toda nota con vínculo
+  riojano como relleno con el cupo libre del ciclo (`IG_LOCAL_FILL_CATEGORIES`,
+  `IG_LOCAL_FILL_RIOJAN`) y máximo 40 por día repartido en el día, con las
+  imágenes en espera si el tope de Meta llega a 88/100 (desde 2026-10-30; ver
+  DECISIONS); el mismo hecho sin ancla no se repite en Instagram
+  (`SAME_EVENT_SOCIAL_SKIP`). Facebook sin cambios. Deportes
   sigue excluido.
+- WhatsApp (2026-10-30, `docs/WHATSAPP.md`): el grupo recibe lo que sale en
+  Facebook (Reels como link "VIDEO") y el canal sólo último momento, vía Baileys
+  sin navegador (`meta/run_whatsapp.py`); historia "Sumate al canal" lunes,
+  miércoles y viernes a las 20 (`meta/run_wa_join_story.py`).
+- Grupos de Facebook (2026-10-30, `docs/FB_GROUPS.md`): la página comparte cada
+  nota riojana en 1–2 grupos de su localidad, de a una cada 8–20 min, con freno de
+  48 h ante cualquier aviso (`meta/run_fb_groups.py`).
 - Fénix 95.1 (2026-10-22): `main_fenix.py` lee la sección Locales de
   fenix951.com.ar (`SCRAPER_FENIX_ENABLED`, apagado por defecto, activo en
   producción). Sólo entran notas con vínculo riojano en título/copete/cuerpo; las
@@ -853,3 +907,7 @@ reboot/rollback antes de mergear o crear el tag oficial.
   (`IG_POSTED_DEDUP_WINDOW_HOURS`, KNOWN_ISSUES #99, `LVR-BUG-0006`).
 - Re-scrape de Facebook sigue rechazado por la configuración de la app de Meta
   (KNOWN_ISSUES #88, `LVR-BUG-0007`).
+- Plan maestro T01/T02 (2026-10-30, rama `feature/growth-t01-t02`, sin
+  desplegar): medición por cohortes (`GROWTH_METRICS_ENABLED`) y reglas
+  visuales del V2 (`GROWTH_IMAGE_RULES_ENABLED`), ambos apagados. Ver
+  `docs/GROWTH_T01_T02.md`.

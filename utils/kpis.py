@@ -23,10 +23,22 @@ def _today() -> str:
     return date.today().isoformat()
 
 
-def record_media_insights(entries: list[dict], *, now: float | None = None) -> int:
-    """Guarda alcance/interacciones por publicación de IG (último valor visto)."""
+def record_media_insights(
+    entries: list[dict], *, now: float | None = None, cohorts: bool | None = None,
+) -> int:
+    """Guarda alcance/interacciones por publicación de IG (último valor visto).
+
+    Los campos de siempre (``posted_at``, ``seccion``, ``reach``,
+    ``interactions``, ``updated_at``) mantienen su forma. El registro se
+    fusiona en vez de reemplazarse, así no se pierden campos agregados (T01).
+    Con ``cohorts`` (default: ``GROWTH_METRICS_ENABLED``) además guarda la
+    lectura por edad real en ``cohorts`` (ver ``utils/growth_measurement.py``).
+    """
+    from utils.growth_measurement import growth_metrics_enabled, update_cohorts
+
     current = int(time.time() if now is None else now)
     cutoff = current - MEDIA_RETENTION_DAYS * 86400
+    with_cohorts = growth_metrics_enabled() if cohorts is None else cohorts
 
     def mutate(state):
         media = state.setdefault("media", {})
@@ -34,13 +46,18 @@ def record_media_insights(entries: list[dict], *, now: float | None = None) -> i
             media_id = str(entry.get("media_id") or "")
             if not media_id:
                 continue
-            media[media_id] = {
+            previous = media.get(media_id) if isinstance(media.get(media_id), dict) else {}
+            record = {
+                **previous,
                 "posted_at": int(entry.get("posted_at") or 0),
                 "seccion": str(entry.get("seccion") or ""),
                 "reach": float(entry.get("reach") or 0),
                 "interactions": float(entry.get("interactions") or 0),
                 "updated_at": current,
             }
+            if with_cohorts:
+                update_cohorts(record, at=current, reach=entry.get("reach"), interactions=entry.get("interactions"))
+            media[media_id] = record
         state["media"] = {
             key: value
             for key, value in media.items()

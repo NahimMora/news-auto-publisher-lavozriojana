@@ -99,6 +99,16 @@ class AssessTests(unittest.TestCase):
             answer = {"mismo_hecho": 1, "ancla": anchor, "dato_nuevo": True, "novedad": "Murió"}
             self.assertEqual(self._assess(answer).relation, "new", anchor)
 
+    def test_same_event_without_anchor_is_marked_related(self):
+        # Sale como nota nueva, pero queda marcada para no repetirse en una red.
+        check = self._assess({"mismo_hecho": 1, "ancla": "joven", "dato_nuevo": False, "novedad": ""})
+        self.assertEqual((check.relation, check.related), ("new", True))
+        self.assertEqual(check.related_payload(), {
+            "of_title": "Confirmaron muerte cerebral para el joven accidentado en Sanagasta", "of_meta_key": "k1",
+            "of_canonical_url": "https://nr/1",
+        })
+        self.assertFalse(self._assess({"mismo_hecho": None}).related)
+
     def test_non_local_sources_are_not_assessed(self):
         from utils import same_event
 
@@ -157,6 +167,51 @@ class SupersededTests(_TempData):
         self.assertFalse(original_published({}, "instagram"))
 
 
+class AlreadyPostedTests(_TempData):
+    RELATED = {"titulo": "Aclaran que no hace falta otra licencia", "meta_queue_key": "k9", "canonical_url": "https://nr/9",
+               "event_related": {"of_meta_key": "k1", "of_canonical_url": "https://nr/1"}}
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ, {"SAME_EVENT_SOCIAL_SKIP": "instagram"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.write("noticias_meta.json", [QUEUE[0], QUEUE[1], self.RELATED])
+        self.write("fb_posted.json", {"posted": {}})
+
+    def test_related_note_is_not_repeated_where_the_first_one_went_out(self):
+        from utils import same_event
+
+        self.write("ig_posted.json", {"posted": {"a": {"canonical_url": "https://nr/1", "external_id": "179"}}})
+        with mock.patch("utils.social_queue.mark_policy_excluded") as excluded:
+            kept, dropped = same_event.drop_already_posted([self.RELATED, QUEUE[1]], "instagram")
+            self.assertEqual(same_event.drop_already_posted([self.RELATED], "facebook"), ([self.RELATED], 0))
+        self.assertEqual(([n["meta_queue_key"] for n in kept], dropped), (["k2"], 1))
+        excluded.assert_called_once_with(self.RELATED, "instagram", "policy_same_event_already_posted")
+
+    def test_related_note_goes_out_if_the_first_one_did_not(self):
+        from utils import same_event
+
+        self.write("ig_posted.json", {"posted": {"a": {"canonical_url": "https://nr/1"}}})  # sin ID: no salió
+        self.assertEqual(same_event.drop_already_posted([self.RELATED], "instagram"), ([self.RELATED], 0))
+
+    def test_chain_reaches_the_note_that_went_out(self):
+        from utils import same_event
+
+        third = {"titulo": "Tercera", "canonical_url": "https://nr/10",
+                 "event_related": {"of_meta_key": "k9", "of_canonical_url": "https://nr/9"}}
+        self.write("ig_posted.json", {"posted": {"a": {"canonical_url": "https://nr/1", "external_id": "179"}}})
+        with mock.patch("utils.social_queue.mark_policy_excluded"):
+            self.assertEqual(same_event.drop_already_posted([third], "instagram"), ([], 1))
+
+    def test_off_by_default(self):
+        from utils import same_event
+
+        self.write("ig_posted.json", {"posted": {"a": {"canonical_url": "https://nr/1", "external_id": "179"}}})
+        with mock.patch.dict(os.environ, {"SAME_EVENT_SOCIAL_SKIP": ""}):
+            self.assertEqual(same_event.drop_already_posted([self.RELATED], "instagram"), ([self.RELATED], 0))
+
+
 class UpdatePresentationTests(_TempData):
     def test_caption_says_update(self):
         from utils.social_caption import build_instagram_caption
@@ -195,6 +250,12 @@ class RewriteGateTests(unittest.TestCase):
 
         item = build_meta_item({"titulo": "x", "url": "https://tp/9", "event_update": {"of_meta_key": "k1"}})
         self.assertEqual(item["event_update"], {"of_meta_key": "k1"})
+
+    def test_event_related_survives_meta_queue(self):
+        from openIA.rewrite_news import build_meta_item
+
+        item = build_meta_item({"titulo": "x", "url": "https://tp/9", "event_related": {"of_meta_key": "k1"}})
+        self.assertEqual(item["event_related"], {"of_meta_key": "k1"})
 
     def test_update_rule_reaches_title_prompt(self):
         from openIA import rewrite_news

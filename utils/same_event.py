@@ -81,6 +81,18 @@ class EventCheck:
     match: dict = field(default_factory=dict)
     novelty: str = ""
     error_type: str = ""
+    # Gemini dijo "mismo hecho" pero el ancla no se pudo comprobar: la nota
+    # sale igual (Web y redes), pero en una red donde la anterior ya salió no
+    # se repite (ver ``drop_already_posted``).
+    related: bool = False
+
+    def related_payload(self) -> dict:
+        """Lo que se guarda en la nota como ``event_related``."""
+        return {
+            "of_title": self.match.get("title", ""),
+            "of_meta_key": self.match.get("meta_queue_key", ""),
+            "of_canonical_url": self.match.get("canonical_url", ""),
+        }
 
     def update_payload(self) -> dict:
         """Lo que se guarda en la nota como ``event_update``."""
@@ -229,7 +241,7 @@ def _parse(raw: str, candidates: list[dict], titulo: str, *, probe_text: str = "
     found = candidates[index - 1]
     if not valid_anchor(str(data.get("ancla") or ""), probe_text or titulo, found):
         logger.info("Mismo hecho sin ancla comprobable (%r), sigue como nota nueva: %s", data.get("ancla"), titulo[:70])
-        return EventCheck()
+        return EventCheck(match=found, related=True)
     novelty = re.sub(r"\s+", " ", str(data.get("novedad") or "")).strip(" .")
     if data.get("dato_nuevo") is True and novelty:
         logger.info("Actualización de \"%s\" (%s): %s", found["title"][:60], novelty[:80], titulo[:70])
@@ -286,6 +298,85 @@ def drop_superseded(selected: list[dict], platform: str) -> tuple[list[dict], in
         if is_superseded(noticia, keys):
             mark_policy_excluded(noticia, platform, "policy_superseded_by_update")
             logger.info("%s: sale sólo la actualización, no esta versión anterior: %s", platform, str(noticia.get("titulo") or "")[:70])
+            dropped += 1
+            continue
+        keep.append(noticia)
+    return keep, dropped
+
+
+def _skip_platforms() -> set[str]:
+    """``SAME_EVENT_SOCIAL_SKIP``: redes donde una nota ``event_related`` no se
+    repite si la anterior ya salió ahí (vacío = ninguna)."""
+    raw = os.getenv("SAME_EVENT_SOCIAL_SKIP", "")
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _published_urls(platform: str) -> set[str]:
+    name = {"instagram": "ig_posted.json", "facebook": "fb_posted.json"}.get(platform)
+    if not name:
+        return set()
+    posted = load_json(str(data_dir() / name), {"posted": {}}, expected_type=dict).get("posted") or {}
+    return {
+        str(r.get(k))
+        for r in posted.values()
+        if isinstance(r, dict) and r.get("external_id")
+        for k in ("canonical_url", "url")
+        if r.get(k)
+    }
+
+
+def _related_chain(noticia: dict, index: dict[str, dict], hops: int = 3) -> list[str]:
+    """URLs de las notas anteriores del mismo hecho: la ``event_related`` y,
+    si esa tampoco salió, la que a su vez tenía como relacionada o como
+    original de una actualización (hasta ``hops`` saltos)."""
+    urls: list[str] = []
+    current = noticia
+    for _ in range(hops):
+        link = current.get("event_related")
+        if current is not noticia and not isinstance(link, dict):
+            link = current.get("event_update")
+        if not isinstance(link, dict):
+            break
+        url = str(link.get("of_canonical_url") or "")
+        if not url or url in urls:
+            break
+        urls.append(url)
+        current = index.get(url) or index.get(str(link.get("of_meta_key") or "")) or {}
+        if not current:
+            break
+    return urls
+
+
+def drop_already_posted(selected: list[dict], platform: str) -> tuple[list[dict], int]:
+    """Saca de la tanda de ``platform`` las notas del mismo hecho que otra que
+    ya salió en esa red, cuando el modelo las reconoció como el mismo hecho
+    sin un ancla comprobable (``event_related``). La nota ya está en la Web y
+    en las demás redes; acá sólo se evita repetir el tema (p. ej. cuatro posts
+    sobre las licencias de conducir desde cuatro medios)."""
+    if not enabled() or not selected or platform not in _skip_platforms():
+        return selected, 0
+    if not any(isinstance(n.get("event_related"), dict) for n in selected):
+        return selected, 0
+    try:
+        published = _published_urls(platform)
+        items = load_json(str(data_dir() / "noticias_meta.json"), [], expected_type=list)
+    except JsonStateError as exc:
+        logger.warning("Estado ilegible; no se filtran notas del mismo hecho para %s: %s", platform, exc)
+        return selected, 0
+    index: dict[str, dict] = {}
+    for item in items:
+        if isinstance(item, dict):
+            for key in ("canonical_url", "url", "meta_queue_key"):
+                if item.get(key):
+                    index.setdefault(str(item[key]), item)
+    from utils.social_queue import mark_policy_excluded
+
+    keep: list[dict] = []
+    dropped = 0
+    for noticia in selected:
+        if any(url in published for url in _related_chain(noticia, index)):
+            mark_policy_excluded(noticia, platform, "policy_same_event_already_posted")
+            logger.info("%s: el mismo hecho ya salió en esta red, no se repite: %s", platform, str(noticia.get("titulo") or "")[:70])
             dropped += 1
             continue
         keep.append(noticia)

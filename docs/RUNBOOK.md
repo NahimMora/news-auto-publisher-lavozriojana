@@ -131,6 +131,36 @@ Un log inexistente es “sin evidencia”, no “sano”.
 - Respuestas sugeridas a comentarios: `python cli.py comment-replies list`,
   `approve <clave>` o `reject <clave>`.
 
+## Noticiero de la Noche (2026-10-30)
+
+- Tarea `LaVozRiojana-Noticiero` (diaria 20:30): `scripts/run_nightly_newscast.ps1`;
+  `-Register` la crea o actualiza. Log: `logs/nightly_newscast.log`.
+- Generar a mano sin publicar: `venv\Scripts\python.exe meta\run_nightly_newscast.py --dry-run`
+  (`--force` regenera la edición del día). Resultado en `output\noticiero\<fecha>\`.
+- `script_rejected`: el guion no pasó el control factual en 3 intentos (detalle en
+  `warnings` de `data/nightly_newscast_state.json`). No se relaja: ese día no hay noticiero.
+- Resultado `ambiguous` en Instagram: no se reintenta; revisar el perfil a mano.
+- Cambiar un sonido: reemplazar el archivo en `remotion/public/newscast/` con el mismo nombre.
+- V3 (`NIGHTLY_NEWSCAST_VISUAL=v3`): instalar una vez el alineador con
+  `venv\Scripts\python.exe scripts\install_newscast_aligner.py` (verifica con
+  `--check`). Sin alineador, la edición sale sin subtítulos (lo informa
+  `visual_plan.json` → `alignment`). `visual_plan.json` → `stories[].rejected`
+  muestra qué fotos/videos se descartaron y por qué.
+- QA visual: `venv\Scripts\python.exe scripts\newscast_inspect.py output\noticiero\<fecha>\noticiero-<fecha>.mp4`.
+- El noticiero renderiza con `npx remotion render` (bundle propio por corrida);
+  el render server del supervisor cachea su bundle: matarlo si otra composición
+  depende de un cambio en `remotion/src/`.
+- Rollback a V2: `NIGHTLY_NEWSCAST_VISUAL = "v2"` en `scripts\run_nightly_newscast.ps1`.
+- V5 (`NIGHTLY_NEWSCAST_VISUAL=v5`, activa desde 2026-11-01): además del MP4 deja
+  `portada.jpg` (se publica como `cover_url`); `visual_plan.json` → `voice` muestra
+  el ritmo de cada locución. Rollback a V4: `NIGHTLY_NEWSCAST_VISUAL = "v3"`.
+- Métricas de las ediciones publicadas (sólo lectura):
+  `venv\Scripts\python.exe scripts\newscast_metrics.py`.
+- QA antes de tocar el noticiero: skill `.claude/skills/lvr-video-qa` (render con
+  material congelado, sin TTS ni publicación; `scripts\newscast_inspect.py`).
+- Regenerar el mapa (sólo si cambia la fuente oficial):
+  `venv\Scripts\python.exe scripts\build_newscast_geo.py provincias.geojson localidades.json`.
+
 ## Supervisor stale o detenido
 
 1. Ejecute `status`; el comando es de sólo lectura y no elimina PIDs.
@@ -983,3 +1013,36 @@ un mecanismo de acceso confirmado), editar su entrada en el JSON
 (`enabled: true`, `discovery_strategy`/`fetch_strategy` correctos) y validar
 primero con `source-probe --force` (vía `probe_source`, que ya ignora
 `enabled` para diagnosticar) antes de habilitarla en el ciclo real.
+
+## Plan maestro T01/T02 (medición por cohortes y reglas visuales)
+
+Apagado por defecto. Activación, QA y rollback en `docs/GROWTH_T01_T02.md`.
+
+```powershell
+python cli.py kpis --growth --days 14          # sólo lectura
+python cli.py kpis --growth --days 14 --json
+```
+
+Tras activar `GROWTH_IMAGE_RULES_ENABLED` no hace falta tocar Remotion, pero
+el merge que trae los `.tsx` sí exige matar el render server y borrar
+`remotion/.render-cache` (sección "Servidor de render persistente").
+
+## WhatsApp (canal, grupo e historia "Sumate")
+
+- Estado: `data/whatsapp_state.json`; log: `logs/whatsapp.log`; historia:
+  `data/wa_join_story.json`.
+- `whatsapp` en `failed/invalid_credential`: la sesión se cerró. Volver a
+  vincular con `node whatsapp/wa.mjs login ...` (ver `docs/WHATSAPP.md`); no
+  hace falta detener el supervisor.
+- Un mensaje `unverified` no se reenvía solo: revisar el grupo o el canal y,
+  si no salió, borrar esa clave del estado con el supervisor detenido.
+- Rollback: `WHATSAPP_ENABLED=false` / `WA_JOIN_STORY_ENABLED=false` y reinicio.
+
+## Grupos de Facebook
+
+- Estado: `data/fb_groups_state.json` (`blocked_until`, `block_reason`);
+  log: `logs/fb_groups.log`; capturas: `output/fb_groups/`.
+- Frenado por un aviso de Facebook: revisar la captura y, si ya pasó, borrar
+  `blocked_until` con el supervisor detenido. No insistir antes de 48 h.
+- Sesión vencida (pide login): reimportarla con
+  `python scripts/fb_groups_cookies.py --paste` (ver `docs/FB_GROUPS.md`).

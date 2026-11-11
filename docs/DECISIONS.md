@@ -2654,3 +2654,264 @@ en el script de arranque; volver al commit `948065d` restaura las placas v1.
   V2, aprobado por el operador). Policiales de cualquier provincia. La ubicación
   se lee del post publicado (un pedido a la app; sin IA), no de un registro
   propio. La imagen se sube sin recodificar (instagrapi la bajaba a calidad 75).
+
+## 2026-10-30 — Plan maestro T01/T02: medición por cohortes y reglas visuales (apagado)
+
+- Contexto: el plan maestro de crecimiento pide comparar piezas a edades
+  comparables y corregir encuadre, destacados y legibilidad del V2 sin otro
+  motor. `ig_media_insights.json` sólo guardaba el último valor de las 30
+  publicaciones más recientes (ninguna medición a 72 h ni 7 d) y el 22 % de las
+  fotos horizontales son montajes que el OG recortaba por la costura.
+- Decisión: sin base ni cola nuevas. T01 agrega `cohorts` y `growth_render`
+  como campos opcionales a los JSON existentes, un inventario de lectura que
+  deduplica por `media_id` y `cli.py kpis --growth`. T02 son reglas
+  determinísticas (Pillow `ImageChops`, sin dependencias nuevas ni IA) y una
+  prop `growth` en las composiciones V2. Detalle: `docs/GROWTH_T01_T02.md`.
+- Flags apagados: `GROWTH_METRICS_ENABLED`, `GROWTH_IMAGE_RULES_ENABLED`
+  (+ `GROWTH_IMAGE_RULES_WORKFLOWS`, `GROWTH_COHORT_MAX_PER_RUN`).
+- Alternativas descartadas: visión con IA para elegir panel (costo por pieza y
+  el adaptador no es multimodal); detección de caras (dependencia pesada);
+  dashboard nuevo.
+- Compatibilidad: `record_media_insights` ahora fusiona el registro (antes lo
+  reemplazaba) para no perder campos; los cinco campos de siempre conservan su
+  forma. Con el flag apagado el OG es idéntico píxel a píxel y el IG difiere
+  ≤ 5/255 por ruido del propio render (lo mismo entre dos corridas del código
+  anterior).
+- Rollback: los flags en `false`.
+
+## 2026-10-30 — Instagram: el mismo hecho no se repite, más locales riojanas y tope repartido
+
+- Contexto (datos del 23 al 30/10, Graph y `ig_posted.json`): la licencia de
+  conducir salió 4 veces en el feed desde 4 medios. Gemini la reconoció como el
+  mismo hecho, pero el ancla ("licencias de conducir") no es un nombre ni un
+  número y `valid_anchor` la rechazó (53 rechazos así desde el 20/10). En 72 h,
+  unas 105 notas locales salieron en Facebook y no en Instagram (política,
+  economía, educación, salud, cultura: fuera de `IG_LOCAL_CATEGORIES`). El 29/10
+  el tope de 30 se llenó a las 19:37 y el resto de la noche sólo salieron Reels.
+  Las historias nativas, de a 2 por ciclo, dejaron 34 de 59 posts sin historia en
+  48 h. El tope de Meta iba en 81/100 publicaciones cada 24 h.
+- Decisión del operador: ampliar sociedad y sumar las notas de La Rioja.
+  - `IG_LOCAL_CATEGORIES=policiales,sociedad,salud,educacion`;
+    `IG_LOCAL_FILL_RIOJAN=true`: cualquier nota local con vínculo riojano
+    (`detect_riojan_link`) entra como relleno.
+  - `IG_LOCAL_DAILY_MAX=40` repartido: a cada hora sólo puede llevar publicada
+    la parte proporcional del día activo (7–24 h) + `IG_LOCAL_PACING_SLACK` (4).
+    Lo que excede el reparto queda pendiente sin `claim`; con más de
+    `IG_LOCAL_PACING_MAX_AGE_HOURS` (6) se descarta para Instagram.
+  - `IG_STATIC_QUOTA_CEILING=88`: con `content_publishing_limit` (lectura, no
+    consume el tope) en 88 o más, las imágenes esperan y los Reels siguen. Si no
+    se puede leer, no frena nada.
+  - Mismo hecho sin ancla: `assess_same_event` lo marca `event_related` (la nota
+    sigue saliendo en Web y Facebook, nunca se descarta la reescritura). Con
+    `SAME_EVENT_SOCIAL_SKIP=instagram`, no se repite en Instagram si la anterior
+    (o la anterior de esa, hasta 3 saltos) ya salió ahí
+    (`policy_same_event_already_posted`).
+  - `IG_NATIVE_STORY_MAX_PER_CYCLE=4` (antes 2; el tope diario sigue en 40).
+- Alternativas descartadas: aflojar `valid_anchor` (un falso "mismo hecho"
+  descarta la nota también de la Web); carrusel local (más desarrollo, el
+  operador eligió posts individuales).
+- Fuera de alcance: los Reels de Infobae, paparazzi y X no pasan por el control
+  del mismo hecho (Nancy Godoy: 6 Reels y 5 posts en 3 días).
+- Rollback: en `scripts/start_24x7_production.ps1`,
+  `IG_LOCAL_CATEGORIES=policiales,sociedad`, `IG_LOCAL_FILL_RIOJAN=false`,
+  `IG_LOCAL_DAILY_MAX=30`, `IG_LOCAL_PACING_SLACK=0`,
+  `IG_STATIC_QUOTA_CEILING=0`, `SAME_EVENT_SOCIAL_SKIP=""`,
+  `IG_NATIVE_STORY_MAX_PER_CYCLE=2`; reiniciar el supervisor.
+
+## 2026-10-30 — WhatsApp (canal y grupo) con Baileys e historia "Sumate"
+
+- Pedido del operador: publicar en un canal y un grupo propios, lo más liviano
+  posible y sin abrir navegador; el grupo recibe lo mismo que Facebook (los
+  Reels como link a la nota con "VIDEO") y el canal las alertas apenas salen;
+  una historia para sumarse, 3 veces por semana a las 20.
+- Decisión: Baileys 6.7.24 en un proceso Node de una sola corrida
+  (`whatsapp/wa.mjs`), invocado por la etapa `meta/run_whatsapp.py`. Sin
+  servicio residente, sin Chromium, sin IA. Vinculación por QR publicado como
+  artefacto privado (el operador trabaja por SSH). Detalle: `docs/WHATSAPP.md`.
+- Alternativas descartadas: API oficial de WhatsApp Business (no publica en
+  grupos ni canales); `whatsapp-web.js` (abre Chromium); servicio HTTP
+  residente como el de HolaSalta (más piezas para un envío por ciclo).
+- Grupos de Facebook: ver la entrada siguiente.
+- Rollback: `WHATSAPP_ENABLED=false`, `WA_JOIN_STORY_ENABLED=false`.
+
+## 2026-10-30 — Grupos de Facebook por localidad (navegador con la sesión del operador)
+
+- Pedido del operador, sabiendo el riesgo: compartir automáticamente las notas
+  locales en los grupos de su localidad (lo de Chilecito en Chilecito), 1–2
+  grupos por ciudad, sin semana de ensayo.
+- Decisión: Chrome sin ventana (Playwright 1.58.0) con la sesión importada del
+  navegador del operador, publicando como la página; 1 publicación cada 12–25 min
+  en un proceso aparte, 1 por grupo por ciclo (pedido del operador; techo de
+  seguridad 12 por día), de 9 a 21 h, freno de 48 h ante cualquier aviso. Detalle: `docs/FB_GROUPS.md`.
+- Contexto de riesgo: Facebook pidió captcha al iniciar sesión desde esta PC y
+  la página tiene un video eliminado el 28/10 (seguridad de menores). Por eso el
+  ritmo es bajo y la mayoría de los grupos de Capital no se usan.
+- Alternativas descartadas: resolver el captcha (es el control anti-bots);
+  publicar como perfil personal; grupos de compra-venta de Capital (las
+  noticias se borran o se denuncian).
+- Rollback: `FB_GROUPS_ENABLED=false`.
+
+### 2026-10-30 — Noticiero de la Noche: Reel locutado con IA, prueba de 3 noches
+
+**Decisión**: formato fijo diario a las 21 (`docs/NIGHTLY_NEWSCAST.md`):
+notas propias del día, policiales primero, hechos del mismo tema agrupados,
+guion de Gemini con control factual de cifras/nombres/días contra cada nota,
+voz Gemini Pro TTS Orus con ritmo 0.97 y dirección de tonada riojana (elegida por el operador tras escuchar la edición del 30/10), render
+`NightlyNewscastV2` con sirena, música y cortinas de Pixabay (licencia libre,
+`remotion/public/newscast/CREDITS.md`). Tarea programada propia
+(`LaVozRiojana-Noticiero`, 20:30) en vez de una etapa del supervisor, porque
+los ciclos no caen a hora fija. Tres noches sólo genera; el operador revisa y
+sube a mano; luego `NIGHTLY_NEWSCAST_PUBLISH=true`.
+**Motivo**: pedido del responsable del medio; los Reels tienen ~20 veces la
+mediana de interacción de los posts de imagen.
+**Alternativas rechazadas**: Chirp 3 HD (sin voz es-AR y sin control de
+estilo); Gemini Flash TTS (sonó más plano en la edición completa; su cupo es de 100 pedidos por día);
+Azure es-AR (no hay clave); ElevenLabs (pago, queda como mejora si la voz no
+convence); sonidos sintetizados (menos reales).
+**Consecuencias**: una llamada de guion (hasta 3 reintentos), ~10 de control
+visual y ~6 de TTS por edición, unos US$0,06; 2 publicaciones de la cuota diaria de Meta cuando se
+active. Si el guion no pasa el control factual, no hay noticiero ese día.
+**Revisar nuevamente cuando**: termine la prueba de 3 noches o la voz genere
+quejas.
+
+### 2026-10-31 — Noticiero V3: plan audiovisual por hechos y subtítulos alineados
+
+**Decisión**: reconstruir el render del noticiero sin reescribir el sistema:
+mismo orquestador, selección, control factual, voz Orus, entregables y
+publicación por ID. Se agregan `utils/newscast_v3.py` (guion por tramos,
+puertas de recursos, cartera, plan determinista en ms→frames, validación,
+inspección), `utils/newscast_align.py` y `NightlyNewscastV3`, detrás de
+`NIGHTLY_NEWSCAST_VISUAL=v3`. Plan interno en `visual_plan.json` en vez de
+cambiar la forma de `guion.json` (sólo se agregan claves).
+**Motivo**: auditoría externa del Reel V2 (apertura de ~18 s con sirena y
+flash, cierre de 13 s, una sola plantilla, sin subtítulos, riesgo de imágenes
+de otro hecho). Verificado en el fixture del 30/10: el video de la nota del
+penal mostraba "allanamientos en zona norte"; el CTA decía `@lavozriojana`
+pero la cuenta es `@lavozriojana.ok`.
+**Alineador**: whisper.cpp CPU (9 MB + modelo de 190 MB, MIT, versión y
+SHA-256 fijos). El host no tiene torch ni GPU: WhisperX/CTC sumaría ~2 GB de
+dependencias. stable-ts descartado (archivado). Medido: ~26 s por edición en
+12 núcleos, US$0 de API.
+**Alternativas rechazadas**: TTS por tramo (más llamadas y cupo; se alinea el
+bloque), segundo orquestador, base de datos, generación de imágenes, APIs
+pagas nuevas, migración de Remotion, Barlow/Source Sans (Archivo variable ya
+cubre condensada + lectura y se carga localmente).
+**Editorial**: el tope policial rígido del guion se reemplaza por cartera de
+importancia + revisión trazable (>65 % del tiempo o 3 seguidas); temas
+sensibles incluidos por pedido del responsable con reglas reforzadas.
+**Revisar nuevamente cuando**: haya escucha humana de la mezcla y anotación
+de tiempos para medir error de subtítulos, o métricas reales de Meta.
+
+### 2026-10-31 — Noticiero V4: formato policial de 24 h y motor de animación
+
+**Decisión**: el noticiero pasa a ser policial de 24 h con 8–12 hechos y
+≈1:45, apertura de 5–7 s con gancho determinista (títulos cortos validados de
+los hechos con imagen), titulares con revelado por máscara que se contraen en
+regleta, datos que aparecen cuando la voz los dice, cuatro transiciones
+propias, música con presencia y efectos, cierre de 3–4 s. Biblioteca de notas
+propias (`data/newscast_library.json`) para reutilizar fotos ya procesadas,
+videos y controles visuales; incluye política para una próxima integración.
+**Motivo**: el responsable rechazó la V3 (estática, voz lenta, pocas
+policiales: eligió 2 de ~13 hechos locales del día).
+**Alternativas rechazadas**: gancho escrito por el modelo (frases de 8 palabras,
+apertura de 11,5 s y hechos sin imagen); acelerar toda la voz con ffmpeg (sólo
+se corrige la toma lenta, hasta 1,12×); cortina negra con logo (se leía como
+un corte vacío); términos clave sobre cualquier foto (el sello "ROBO" junto a la
+foto del juez sugería culpa).
+**Revisar nuevamente cuando**: haya escucha humana y métricas de retención.
+
+### 2026-10-31 — Noticiero: ningún hecho sin imagen propia
+
+**Contexto**: en la V4 dos hechos salieron sólo con tipografía (la foto del penal
+mostraba otro hecho y el retrato de Chilecito era de un juez). El responsable no
+quiere noticias sin imagen en el Reel.
+**Decisión**: prefiltro de imágenes antes del guion (`prescreen_media`) con las
+mismas puertas del armado; sólo las notas con foto o video propio elegible llegan
+al guion, y el armado descarta cualquier bloque sin imagen. Bandera
+`NIGHTLY_NEWSCAST_REQUIRE_MEDIA` (default `true`). Con pocos hechos con imagen la
+edición queda `no_work`, no se rellena.
+**Evidencia**: fixture real del 31/10: 13 de 16 notas pasan; el guion pasó de 10
+hechos (2 tipográficos) a 11 con imagen, e incluyó tres que antes quedaban afuera.
+**Costo**: 4 llamadas de control visual nuevas (el resto vino de la biblioteca).
+
+### 2026-10-31 — Noticiero: apertura con video y publicación diaria
+
+**Contexto**: en la edición con prefiltro la apertura arrancaba con una gráfica,
+duraba 7,6 s y decía "Juicio por tentativa femicidio".
+**Decisión**: el gancho abre con un hecho con video, tope de 10 palabras y de 7 s
+(si se pasa, sale la última frase); los títulos cortos recuperan preposiciones
+desde el título o la locución. El responsable activó la publicación diaria a las
+21 en Instagram y Facebook (tarea `LaVozRiojana-Noticiero` a las 20:15).
+**Rollback**: `NIGHTLY_NEWSCAST_PUBLISH = "false"` (sólo genera) o deshabilitar
+la tarea; `NIGHTLY_NEWSCAST_VISUAL = "v2"` vuelve al formato anterior.
+**Pendiente**: la corrección de la apertura no se renderizó antes de activar
+(decisión del responsable); se verifica con la primera edición real.
+
+### 2026-11-01 — Noticiero: situación procesal exacta y hechos del día
+
+**Contexto**: la primera edición publicada (31/10) abrió con "Detenido por
+intento de robo" para un menor que la nota daba como *demorado*, e incluyó dos
+notas republicadas el viernes que contaban hechos "de este miércoles".
+**Decisión**: `status_drift` descarta título corto o frase del gancho (y marca
+el título para reintento) si afirman una familia procesal o de desenlace que
+las notas no mencionan; `stale_weekday` saca de las candidatas las notas cuyo
+comienzo ubica el hecho dos o más días antes de la edición.
+**Evidencia**: sobre la biblioteca real, ventana de 24 h: salen exactamente las
+dos notas del miércoles (moto en el centro e incendio en Santa Rosa 2), ninguna
+del viernes o sábado.
+**Rollback**: revertir el cambio en `utils/newscast_v3.py`; no hay bandera.
+
+### 2026-11-01 — Noticiero V5: apertura en frío, edición por frases, portada y caption
+
+**Contexto**: el Reel del 31/10 (V4) midió, ~85 min después de publicado,
+186 reproducciones, 152 cuentas, 6,7 s de visualización promedio sobre 118,9 s
+(5,6 %), 1 me gusta y 0 comentarios/compartidos/guardados (Graph API, lectura).
+Instagram mostró 50 % de retención a 1 s y 18 % a 3 s. Auditoría cuadro a
+cuadro del MP4 publicado: frame 0 sin texto ni marca; titular genérico
+("Incendios en la provincia") legible recién a los 0,25 s; 45 % inferior de
+pantalla vacío; placa de marca a los 4,3–5,5 s que interrumpe; la primera
+noticia repite la foto del gancho; 9 de 10 historias con una sola foto durante
+8–13 s (8 tramos estáticos ≥ 2,5 s, ~24 s en total); "Detenido" para un menor
+*demorado*; dos notas del miércoles como "últimas 24 h"; una contravención sin
+interés público; caption con dos bloques de hashtags y la lista de fuentes;
+portada = cuadro de los 6 s. Hipótesis principal del abandono: en el primer
+segundo no se entiende qué pasó ni dónde (titular genérico, nada de La Rioja
+legible) y el primer cambio de imagen llega a los 2,4 s.
+**Decisión**: V5 detrás de `NIGHTLY_NEWSCAST_VISUAL=v5` reutilizando la cadena
+de V4: guion directo (140–210 palabras, primero qué pasó), apertura en frío con
+la noticia principal y la marca integrada (sin locución de gancho aparte),
+voz con pausas medidas acortadas y ritmo ≤ 1,08× (Rubber Band local), tomas de
+~2,6 s cortadas en pausas reales (general/detalle/contraplano; franja, tarjeta
+o pantalla completa según resolución), mapa con contorno y nomenclador
+oficiales sólo para localidades exactas, subtítulos cinéticos de 1–4 palabras,
+datos sincronizados que no se pisan con titular ni mapa, transiciones que
+dibujan la toma entrante, portada 1080×1920 como `cover_url`, caption
+informativo sin fuentes con 4 hashtags y `location_id` de La Rioja.
+Se compararon tres aperturas sobre el mismo material y audio (titular directo,
+resumen de tres titulares, mapa del día); ganó el titular directo por claridad
+en 1 s, legibilidad en teléfono y coincidencia voz/imagen; las otras quedan
+como `NIGHTLY_NEWSCAST_OPENING` para pruebas A/B.
+**Evidencia**: demo con el material real del 31/10 (misma locución de Orus,
+sin TTS; mismas fotos; títulos reescritos con las reglas nuevas y pasados por
+las barreras factuales): 74,7 s en vez de 118,9 s con los 7 hechos válidos;
+0 tramos estáticos (el original: 8); 4–5 tomas por historia (el original: 1);
+voz de 139–158 a 154–168 ppm con factor ≤ 1,08; −14,2 LUFS, pico −1,9 dBFS;
+caption de 942 caracteres. Revisión visual en 4 rondas (render → inspección →
+corrección): ver `docs/NIGHTLY_NEWSCAST.md` § V5 y la skill `lvr-video-qa`.
+**Pendiente**: la retención real sólo se sabrá con ediciones publicadas; las
+hipótesis medibles están en `docs/NIGHTLY_NEWSCAST.md` § V5 → Métricas.
+**Rollback**: `NIGHTLY_NEWSCAST_VISUAL = "v3"` en `scripts/run_nightly_newscast.ps1`.
+
+### 2026-10-31 — Videos de X: fuera los de Salta
+
+**Contexto**: el backend de HolaSalta comparte con LVR todos los videos de X que
+procesa; desde el 2/10 salieron 278 Reels, 7 de @QuePasaSalta (Orán, plaza 9 de
+Julio, Jujuy, etc.). El responsable pidió no publicar los que digan ser de Salta.
+**Decisión**: `salta_reason` descarta, antes de la IA y del render, el post de
+una cuenta salteña (`QuePasaSalta`) o cuyo texto menciona Salta (con mayúscula,
+para no tomar el verbo), salteño/a o localidades salteñas (Orán, Tartagal,
+Metán, Cafayate, etc.). Queda `skipped` con `reason=region_salta`, terminal, y
+bloquea la URL. `X_VIDEO_EXCLUDE_SALTA=false` lo desactiva (default activo, sin
+reiniciar el 24/7: cada ciclo lanza la etapa de nuevo).
+**Evidencia**: sobre los 278 publicados, el filtro habría sacado exactamente los
+7 de @QuePasaSalta y ninguno más.

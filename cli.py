@@ -534,8 +534,54 @@ def cmd_alert_check(args) -> int:
     return result.exit_code
 
 
+def _print_growth_report(report: dict) -> None:
+    def fmt(value):
+        return "ND" if value is None else f"{value:,.0f}".replace(",", ".")
+
+    cov = report["coverage"]
+    print(f"Medición de crecimiento — últimos {report['days']} días (Instagram)")
+    print(f"Publicaciones: {cov['publications']}  con alguna medición: {cov['with_any_measurement']}")
+    print("Mediciones por cohorte (edad real): " + ", ".join(f"{k}={v}" for k, v in cov["by_cohort"].items()))
+    print("Formatos: " + ", ".join(f"{k}={v}" for k, v in sorted(report["content_types"].items())))
+    for dim, title in (("content_type", "Formato"), ("source", "Fuente"), ("category", "Categoría"), ("workflow", "Flujo")):
+        print(f"\n{title:<22} cohorte   n   mediana     p75      total")
+        for key, cohorts in sorted(report["by"][dim].items()):
+            for label, st in cohorts.items():
+                print(f"{key[:22]:<22} {label:<7} {st['n']:>4} {fmt(st['median']):>9} {fmt(st['p75']):>7} {fmt(st['total']):>10}")
+    print("\nExtraordinarias (≥ 3× la mediana de su cohorte):")
+    for label, ex in report["extraordinary"].items():
+        if ex.get("threshold") is None:
+            print(f"  {label}: muestra insuficiente (n={ex['n']})")
+            continue
+        share = ex["share_of_total"]
+        print(f"  {label}: n={ex['n']} mediana={fmt(ex['median'])} umbral={fmt(ex['threshold'])} "
+              f"habitual mediana={fmt(ex['habitual']['median'])} aporte extraordinarias={'ND' if share is None else f'{share:.0%}'}")
+        for out in ex["outliers"][:5]:
+            print(f"     {fmt(out['reach']):>8}  {out['content_type']:<8} {str(out['source'] or 'ND')[:18]:<18} {out['title']}")
+    if report["evolution"]:
+        print("\nEvolución (piezas con dos o más mediciones):")
+        for ev in report["evolution"][:10]:
+            print(f"  {fmt(ev['reach_from'])} a {ev['from_age_h']:.0f} h → {fmt(ev['reach_to'])} a {ev['to_age_h']:.0f} h  {ev['title']}")
+    for note in report["notes"]:
+        print(f"* {note}")
+
+
 def cmd_kpis(args) -> int:
     from utils.kpis import weekly_report
+
+    if getattr(args, "growth", False):
+        from utils.growth_measurement import growth_report
+
+        try:
+            report = growth_report(days=args.days)
+        except JsonStateError as exc:
+            print(red(f"No se pudieron leer las mediciones: {exc}"))
+            return 1
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            _print_growth_report(report)
+        return 0
 
     try:
         report = weekly_report(args.weeks)
@@ -977,6 +1023,8 @@ def main(argv: list[str] | None = None) -> int:
     kpis_parser = sub.add_parser("kpis", help="KPIs semanales de redes (seguidores, posts, alcance)")
     kpis_parser.add_argument("--weeks", type=int, default=4)
     kpis_parser.add_argument("--json", action="store_true")
+    kpis_parser.add_argument("--growth", action="store_true", help="Comparación por edad, formato, fuente y categoría (T01)")
+    kpis_parser.add_argument("--days", type=int, default=30)
 
     cutover_parser = sub.add_parser(
         "queue-cutover",

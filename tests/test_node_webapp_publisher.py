@@ -1294,12 +1294,18 @@ class InstagramVideoClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "ig_posted.json"
             state_path.write_text(json.dumps(previous_state), encoding="utf-8")
+            # Sin ventana de dedup: si otro test cargó el .env real (72 h), el
+            # registro con posted_at=123 quedaba "vencido" y el test dependía
+            # del orden de ejecución.
             with patch("meta.ig_client.IG_ACCOUNT_ID", "ig123"), patch(
                 "meta.ig_client.IG_ACCESS_TOKEN",
                 "token",
             ), patch(
                 "meta.ig_client.IG_STATE_PATH",
                 str(state_path),
+            ), patch(
+                "meta.ig_client.IG_POSTED_DEDUP_WINDOW_HOURS",
+                0,
             ), patch(
                 "meta.ig_client.is_rate_limited",
                 return_value=False,

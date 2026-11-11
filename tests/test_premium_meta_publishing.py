@@ -140,6 +140,105 @@ class InstagramCarouselClientTests(unittest.TestCase):
             self.assertEqual(1, post.call_count)
 
 
+class InstagramMorningBriefCarouselTests(unittest.TestCase):
+    URLS = ["https://r2/1.jpg", "https://r2/2.jpg", "https://r2/3.jpg"]
+
+    def _run(self, fake_post, fake_get):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ig_client, "IG_ACCOUNT_ID", "acc"), patch.object(
+            ig_client, "IG_ACCESS_TOKEN", "token"
+        ), patch.object(ig_client, "IG_RATE_LIMIT_PATH", str(Path(tmp) / "rl.json")), patch.object(
+            ig_client, "PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS", 5
+        ), patch.object(ig_client.requests, "post", side_effect=fake_post) as post, patch.object(
+            ig_client.requests, "get", side_effect=fake_get
+        ) as get, patch.object(ig_client.time, "sleep"):
+            result = ig_client.post_image_carousel(self.URLS, "caption")
+        return result, post, get
+
+    @staticmethod
+    def _post_ok(url, data=None, timeout=None):
+        if url.endswith("/media") and data.get("is_carousel_item") == "true":
+            return FakeResponse(200, {"id": "child-" + data["image_url"][-5]})
+        if url.endswith("/media") and data.get("media_type") == "CAROUSEL":
+            return FakeResponse(200, {"id": "parent"})
+        if url.endswith("/media_publish"):
+            return FakeResponse(200, {"id": "ig-brief"})
+        return FakeResponse(400, {})
+
+    def test_waits_every_child_and_parent_before_publishing(self):
+        result, post, get = self._run(self._post_ok, lambda url, params=None, timeout=None: FakeResponse(200, {"status_code": "FINISHED"}))
+        self.assertTrue(result.ok)
+        self.assertEqual("ig-brief", result.external_id)
+        polled = [call.args[0].rsplit("/", 1)[-1] for call in get.call_args_list]
+        self.assertEqual(["child-1", "child-2", "child-3", "parent"], polled)
+        parent = [c for c in post.call_args_list if c.kwargs["data"].get("media_type") == "CAROUSEL"]
+        self.assertEqual("child-1,child-2,child-3", parent[0].kwargs["data"]["children"])
+
+    def test_slow_child_is_polled_until_finished(self):
+        statuses = iter(["IN_PROGRESS", "IN_PROGRESS", "FINISHED"])
+
+        def fake_get(url, params=None, timeout=None):
+            if url.endswith("child-1"):
+                return FakeResponse(200, {"status_code": next(statuses)})
+            return FakeResponse(200, {"status_code": "FINISHED"})
+
+        result, _, get = self._run(self._post_ok, fake_get)
+        self.assertTrue(result.ok)
+        self.assertEqual(3, sum(1 for c in get.call_args_list if c.args[0].endswith("child-1")))
+
+    def test_rejected_child_stops_and_logs_graph_reason(self):
+        def fake_post(url, data=None, timeout=None):
+            if data.get("image_url", "").endswith("2.jpg"):
+                return FakeResponse(400, {"error": {"message": "Invalid image aspect ratio", "code": 36003, "error_subcode": 2207009, "fbtrace_id": "AbC123"}})
+            return self._post_ok(url, data, timeout)
+
+        with self.assertLogs(ig_client.logger, "ERROR") as logs:
+            result, post, _ = self._run(fake_post, lambda url, params=None, timeout=None: FakeResponse(200, {"status_code": "FINISHED"}))
+        self.assertEqual("request_rejected", result.error_type)
+        self.assertEqual("carousel_child_create", result.details["stage"])
+        self.assertEqual(2, result.details["container_index"])
+        self.assertEqual("not_published", result.details["publication_outcome"])
+        self.assertFalse(any(c.kwargs["data"].get("media_type") == "CAROUSEL" for c in post.call_args_list))
+        line = logs.output[0]
+        self.assertIn("Carrusel de la mañana", line)
+        self.assertIn("Invalid image aspect ratio", line)
+        self.assertIn("AbC123", line)
+        self.assertNotIn("token", line)
+
+    def test_rejected_parent_is_not_ambiguous(self):
+        def fake_post(url, data=None, timeout=None):
+            if data.get("media_type") == "CAROUSEL":
+                return FakeResponse(400, {"error": {"message": "Media ID is not available", "code": 9007, "error_subcode": 2207027}})
+            return self._post_ok(url, data, timeout)
+
+        with self.assertLogs(ig_client.logger, "ERROR"):
+            result, post, _ = self._run(fake_post, lambda url, params=None, timeout=None: FakeResponse(200, {"status_code": "FINISHED"}))
+        self.assertEqual("carousel_parent_create", result.details["stage"])
+        self.assertEqual("not_published", result.details["publication_outcome"])
+        self.assertFalse(any(c.args[0].endswith("/media_publish") for c in post.call_args_list))
+
+    def test_child_processing_error_or_timeout_never_publishes(self):
+        for status, error_type in (("ERROR", "media_processing_error"), ("IN_PROGRESS", "media_processing_timeout")):
+            with self.subTest(status=status), self.assertLogs(ig_client.logger, "ERROR"):
+                clock = iter(range(0, 1000, 3))
+                with patch.object(ig_client.time, "time", side_effect=lambda: next(clock)):
+                    result, post, _ = self._run(self._post_ok, lambda url, params=None, timeout=None: FakeResponse(200, {"status_code": status}))
+                self.assertEqual(error_type, result.error_type)
+                self.assertEqual("carousel_child_processing", result.details["stage"])
+                self.assertEqual("not_published", result.details["publication_outcome"])
+                self.assertEqual(1, post.call_count)
+
+    def test_publish_failure_keeps_unknown_outcome(self):
+        def fake_post(url, data=None, timeout=None):
+            if url.endswith("/media_publish"):
+                return FakeResponse(400, {"error": {"message": "Fatal", "code": 1}})
+            return self._post_ok(url, data, timeout)
+
+        with self.assertLogs(ig_client.logger, "ERROR"):
+            result, _, _ = self._run(fake_post, lambda url, params=None, timeout=None: FakeResponse(200, {"status_code": "FINISHED"}))
+        self.assertEqual("carousel_publish", result.details["stage"])
+        self.assertEqual("unknown", result.details["publication_outcome"])
+
+
 class FacebookDirectMediaClientTests(unittest.TestCase):
     def _package(self, **overrides):
         pkg = {
