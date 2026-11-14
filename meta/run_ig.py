@@ -152,6 +152,9 @@ def _split_quiet_hours(selected: list[dict]) -> tuple[list[dict], int]:
 
 _LOCAL_EXCLUDED_SOURCE_MARKERS = ("paparazzi", "infobae", "internacional")
 
+# Ventana de candidatas por ciclo, en múltiplos de ``IG_MAX_PER_RUN``.
+SELECTION_WINDOW_FACTOR = 3
+
 
 def _is_local_news(noticia: dict) -> bool:
     """Nota local (Nueva Rioja, Tiempo Popular): ni farándula, ni Infobae, ni internacional."""
@@ -594,12 +597,18 @@ def main() -> StageResult:
         # que Web y Facebook); acá sólo se pacea cuánto de ese lote se
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
-        selected = _select_with_local_fill(limit)
+        # Se toma una ventana más amplia que el tope y se recorta al final: las
+        # notas que se descartan o postergan (actualización, mismo hecho,
+        # horario silencioso, reparto local, cuota) ya no ocupan lugares del
+        # ciclo. Antes, de 8 lugares podían salir 2 y el relleno local no
+        # entraba nunca (13/11/2026).
+        selected = _select_with_local_fill(limit * SELECTION_WINDOW_FACTOR)
         selected, superseded = drop_superseded(selected, "instagram")
         selected, same_event_skipped = drop_already_posted(selected, "instagram")
         selected, quiet_deferred = _split_quiet_hours(selected)
         selected, local_cap_excluded, local_paced = _apply_local_daily_cap(selected)
         selected, quota_deferred = _apply_static_quota_guard(selected)
+        selected = selected[:limit]
     except JsonStateError as exc:
         logger.error("Estado social de Instagram ilegible: %s", exc)
         return StageResult(

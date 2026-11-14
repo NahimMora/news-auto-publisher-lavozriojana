@@ -72,7 +72,8 @@ _STEP_TIMEOUTS = {
     # cada uno con video que puede tardar minutos en procesar en Meta, más el
     # reel best-effort y los posts automáticos generales, podían superarlo y
     # perder el ciclo completo (0 procesados) por timeout del subprocess.
-    "meta/run_ig.py": 1200,
+    # Con PIPELINE_IG_MAX_PER_CYCLE=12 y algún Reel, 20 min quedaba justo.
+    "meta/run_ig.py": 1800,
     # Hasta X_VIDEO_MAX_PER_CYCLE videos: descarga yt-dlp + render + proceso en Meta.
     "meta/run_x_videos.py": 1200,
     # Hasta PAPARAZZI_VIDEO_MAX_PER_CYCLE reels: descarga + render + proceso en Meta.

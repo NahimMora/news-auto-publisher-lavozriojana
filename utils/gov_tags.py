@@ -82,6 +82,16 @@ def _directory(path: str = DIRECTORY_PATH) -> tuple[dict, ...]:
     return tuple(valid)
 
 
+def person_aliases() -> tuple[str, ...]:
+    """Nombres de responsables del directorio (para detectar vínculo riojano)."""
+    return tuple(
+        str(alias)
+        for entry in _directory()
+        for alias in entry.get("person_aliases") or []
+        if str(alias).strip()
+    )
+
+
 def _is_local(noticia: dict) -> bool:
     source = str(noticia.get("source") or "")
     return source.startswith(_LOCAL_SOURCES) and not source.startswith(_NOT_LOCAL_SOURCES)

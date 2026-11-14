@@ -2915,3 +2915,60 @@ bloquea la URL. `X_VIDEO_EXCLUDE_SALTA=false` lo desactiva (default activo, sin
 reiniciar el 24/7: cada ciclo lanza la etapa de nuevo).
 **Evidencia**: sobre los 278 publicados, el filtro habría sacado exactamente los
 7 de @QuePasaSalta y ninguno más.
+
+### 2026-11-13 — Render server sin arranques en frío e Instagram hasta 12 por ciclo
+
+**Contexto**: el render server de Remotion tarda ~95-100 s en bundlear y Python
+lo esperaba 90 s; además se apagaba a los 20 min de inactividad, y los ciclos
+están separados ~90-100 min. Casi todos los ciclos arrancaban en frío y caían al
+`npx remotion still` viejo (~5-7 min por imagen). Con el host cargado, cada
+intento lanzaba otro servidor más (13/11 14:04-15:00: 8 intentos seguidos sin
+servidor y la etapa de Instagram cortada por timeout con 2 publicadas). Aparte,
+`IG_MAX_PER_RUN` se aplicaba antes de sacar actualizaciones y mismo hecho: en 107
+ciclos (8-13/11) nunca salieron 8, había 46 ciclos con 0, y el relleno local
+casi no entraba (31 pendientes, muchas con 20-45 h).
+**Decisión**:
+- `REMOTION_RENDER_SERVER_STARTUP_TIMEOUT` pasa de 90 a 240 s por defecto.
+- El servidor recibe `RENDER_SERVER_IDLE_MS` desde
+  `REMOTION_RENDER_SERVER_IDLE_SECONDS` (default 4 h) y queda tibio entre ciclos.
+- `remotion/.render-server.starting` (pid + hora): mientras el proceso lanzado
+  siga vivo y arrancando, otro proceso espera en vez de lanzar un segundo bundle.
+- `meta/run_ig.py` toma una ventana de candidatas de 3× el tope, aplica los
+  filtros (actualización, mismo hecho, horario silencioso, reparto local,
+  cuota) y recorta al tope al final.
+- El tope por ciclo de Instagram es configurable con `PIPELINE_IG_MAX_PER_CYCLE`
+  (default 8, acotado a 1-20). Producción usa 12. El timeout de la etapa
+  `meta/run_ig.py` pasa de 1200 a 1800 s.
+**Evidencia**: el render server levantado a mano bundleó en 97,4 s; los logs de
+`remotion_renderer` muestran 4/4/13/20 fallos de `/health` el 9, 11, 12 y 13/11.
+Uso de la API de Meta: 48-72 publicaciones por día, sin rate limits en el período.
+**Consecuencia**: las locales viejas (> `IG_LOCAL_PACING_MAX_AGE_HOURS`) que
+exceden el reparto de la hora se descartan para Instagram apenas entran en la
+ventana, tal como ya decía la política de 2026-10-30.
+**Rollback**: `PIPELINE_IG_MAX_PER_CYCLE = "8"` en
+`scripts/start_24x7_production.ps1` y reiniciar el supervisor;
+`REMOTION_RENDER_SERVER_STARTUP_TIMEOUT=90` y
+`REMOTION_RENDER_SERVER_IDLE_SECONDS=1200` para el comportamiento anterior del
+render server.
+
+### 2026-11-13 — Vínculo riojano por referentes e instituciones
+
+**Contexto**: `detect_riojan_link` sólo miraba localidades, la fuente y la
+categoría. Las notas de Quintela, Braida, Luna Corzo o del MPF que no dicen "La
+Rioja" en el título quedaban "sin vínculo": no entraban a Instagram como
+relleno riojano (`IG_LOCAL_FILL_RIOJAN`) y, por lo tanto, tampoco recibían las
+etiquetas del Gobierno. El usuario pidió poder etiquetarlos para que compartan
+las publicaciones.
+**Decisión**: además del criterio de localidad (`_locality_link`, sin cambios),
+cuentan como vínculo las fuentes `judicial_mpf` y `judicial_justicia`, y los
+referentes de `RIOJAN_ENTITY_TERMS` (Quintela, Luna Corzo, Teresita Madera,
+Braida, Martín Menem, Vera Barros, Función Judicial, UNLaR, EDELaR) como palabra
+completa. Los nombres de `config/gov_directory.json` también cuentan, si tienen
+dos palabras o más y el texto nombra un cargo. `compute_topic_key` sigue usando
+sólo la localidad. No se agregó ningún bloqueo de notas ajenas: el usuario
+pidió sólo esta parte.
+**Evidencia**: sobre las 625 notas "sin vínculo" de los últimos 14 días, 13
+pasan a riojanas y las 13 lo son (11 por referente y 2 del MPF); ningún falso
+positivo. Tests en `tests/test_riojan_entities.py`.
+**Rollback**: vaciar `RIOJAN_ENTITY_TERMS` y `RIOJAN_INSTITUTIONAL_SOURCES` en
+`utils/editorial_router.py`.

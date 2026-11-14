@@ -167,8 +167,22 @@ def stage_environment(channel: str, plan: DeploymentPlan) -> dict[str, str]:
     if channel == "facebook":
         return {"PUBLISH_MAX_PER_RUN": "8"}
     if channel == "instagram":
-        return {"IG_MAX_PER_RUN": "8"}
+        return {"IG_MAX_PER_RUN": str(instagram_max_per_cycle())}
     return {}
+
+
+def instagram_max_per_cycle() -> int:
+    """Tope de piezas de Instagram por ciclo (``PIPELINE_IG_MAX_PER_CYCLE``).
+
+    Default 8, el valor histórico. El tope real de Meta (100 por API cada
+    24 h) lo cuida ``IG_STATIC_QUOTA_CEILING`` en ``meta/run_ig.py``; acá sólo
+    se pacea cuánto se intenta por ciclo. Se acota a 1..20.
+    """
+    try:
+        value = int(os.getenv("PIPELINE_IG_MAX_PER_CYCLE", "8"))
+    except ValueError:
+        return 8
+    return min(20, max(1, value))
 
 
 def configuration_fingerprint(values: Mapping[str, str] | None = None) -> str:

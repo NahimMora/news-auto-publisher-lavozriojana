@@ -836,7 +836,8 @@ sensible, no una caída de CMS/Meta.
 - Supervisor: activo, PID registrado `52088` al iniciar el ciclo #8.
 - Modo: `all`.
 - Canales solicitados/habilitados: Web, Facebook e Instagram.
-- Límite efectivo: Web sin límite; Facebook 8 e Instagram 8 por ciclo.
+- Límite efectivo: Web sin límite; Facebook 8 por ciclo; Instagram `PIPELINE_IG_MAX_PER_CYCLE`
+  (default 8, producción 12 desde 2026-11-13), recortado después de los filtros.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
 - Último ciclo: #11 `success`, 4/4 etapas aceptables.

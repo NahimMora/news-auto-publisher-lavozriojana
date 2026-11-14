@@ -1625,3 +1625,17 @@
   es la única solución real.
 - **Mapa.** Sólo localidades exactas del nomenclador (90). Barrios, parajes y
   calles no se ubican (decisión: nunca adivinar un punto).
+
+## 112. Render server en frío y tope de Instagram consumido por descartadas — CORREGIDO 2026-11-13
+
+- Síntoma: `render_server.mjs no respondió /health dentro de 90.0s` en casi todos
+  los ciclos (20 veces el 13/11) e imágenes por el subprocess viejo (~5-7 min cada
+  una); la etapa `meta/run_ig.py` terminó `failed` por timeout el 13/11 15:03.
+  Además, Instagram nunca llenaba los 8 lugares del ciclo y el relleno local
+  acumulaba pendientes de 20-45 h.
+- Causa: el bundle tarda ~100 s y el timeout era de 90 s; el servidor se apagaba
+  a los 20 min y los ciclos están a ~90 min; cada intento fallido lanzaba otro
+  servidor. En Instagram, el tope se aplicaba antes de los filtros que descartan
+  o postergan notas.
+- Corrección: ver `docs/DECISIONS.md` (2026-11-13). Tests en
+  `tests/test_ig_cycle_window.py`.

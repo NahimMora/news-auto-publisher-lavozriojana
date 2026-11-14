@@ -40,8 +40,18 @@ _availability_cache: dict[str, tuple[bool, float]] = {}
 # ── Servidor de render persistente ──────────────────────────────────────
 RENDER_SERVER_SCRIPT = os.path.join(REMOTION_DIR, "render_server.mjs")
 RENDER_SERVER_INFO_PATH = os.path.join(REMOTION_DIR, ".render-server.json")
+# Marca de arranque en curso (pid + hora). Evita que otro proceso lance un
+# segundo servidor mientras el primero todavía bundlea: con el host cargado,
+# cada intento fallido sumaba otro bundle y empeoraba la demora (13/11/2026).
+RENDER_SERVER_STARTING_PATH = os.path.join(REMOTION_DIR, ".render-server.starting")
 RENDER_SERVER_HEALTH_TIMEOUT = float(os.getenv("REMOTION_RENDER_SERVER_HEALTH_TIMEOUT", "1.5"))
-RENDER_SERVER_STARTUP_TIMEOUT = float(os.getenv("REMOTION_RENDER_SERVER_STARTUP_TIMEOUT", "90"))
+# El bundle inicial tarda ~95-100 s en este host; con 90 s el servidor nunca
+# llegaba a tiempo después de un apagado por inactividad.
+RENDER_SERVER_STARTUP_TIMEOUT = float(os.getenv("REMOTION_RENDER_SERVER_STARTUP_TIMEOUT", "240"))
+# Inactividad antes de que el servidor se apague solo. Los ciclos del 24/7
+# están separados ~90-100 min: con los 20 min por defecto de render_server.mjs
+# cada ciclo arrancaba en frío. Se pasa al proceso node como RENDER_SERVER_IDLE_MS.
+RENDER_SERVER_IDLE_SECONDS = int(os.getenv("REMOTION_RENDER_SERVER_IDLE_SECONDS", str(4 * 3600)))
 RENDER_SERVER_DISABLED = os.getenv("REMOTION_RENDER_SERVER_DISABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 _server_lock = threading.Lock()
@@ -63,9 +73,64 @@ def _server_health_check(port: int) -> bool:
         return False
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        import psutil
+
+        return psutil.pid_exists(int(pid))
+    except (ImportError, ValueError, TypeError):
+        return False
+
+
+def _read_starting_marker() -> dict | None:
+    try:
+        with open(RENDER_SERVER_STARTING_PATH, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _startup_in_progress() -> bool:
+    """True si otro proceso ya lanzó un servidor que sigue vivo y arrancando."""
+    marker = _read_starting_marker()
+    if not marker:
+        return False
+    age = time.time() - float(marker.get("started_at") or 0)
+    return age < RENDER_SERVER_STARTUP_TIMEOUT * 2 and _pid_alive(marker.get("pid") or -1)
+
+
+def _write_starting_marker(pid: int) -> None:
+    try:
+        with open(RENDER_SERVER_STARTING_PATH, "w", encoding="utf-8") as handle:
+            json.dump({"pid": pid, "started_at": time.time()}, handle)
+    except OSError as exc:
+        logger.warning("No se pudo escribir la marca de arranque del render server: %s", exc)
+
+
+def _clear_starting_marker() -> None:
+    try:
+        os.remove(RENDER_SERVER_STARTING_PATH)
+    except OSError:
+        pass
+
+
+def _wait_for_server(timeout: float) -> int | None:
+    started = time.monotonic()
+    while time.monotonic() - started < timeout:
+        info = _read_server_info()
+        if info and _server_health_check(info.get("port", -1)):
+            return info["port"]
+        time.sleep(0.4)
+    return None
+
+
 def _spawn_render_server() -> bool:
+    env = dict(os.environ)
+    env.setdefault("RENDER_SERVER_IDLE_MS", str(RENDER_SERVER_IDLE_SECONDS * 1000))
     popen_kwargs: dict = {
         "cwd": REMOTION_DIR,
+        "env": env,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "stdin": subprocess.DEVNULL,
@@ -78,7 +143,8 @@ def _spawn_render_server() -> bool:
         # 'node' es un ejecutable real en PATH (a diferencia de 'npx', que en
         # Windows es un .cmd y necesita el wrapper _npx_args) — no hace falta
         # invocarlo vía cmd /c.
-        subprocess.Popen(["node", RENDER_SERVER_SCRIPT, "--port=0"], **popen_kwargs)
+        process = subprocess.Popen(["node", RENDER_SERVER_SCRIPT, "--port=0"], **popen_kwargs)
+        _write_starting_marker(process.pid)
         return True
     except OSError as exc:
         logger.warning("No se pudo lanzar render_server.mjs: %s", exc)
@@ -101,18 +167,19 @@ def ensure_render_server() -> int | None:
     with _server_lock:
         info = _read_server_info()
         if info and _server_health_check(info.get("port", -1)):
+            _clear_starting_marker()
             return info["port"]
 
-        if not _spawn_render_server():
+        if _startup_in_progress():
+            logger.info("render_server.mjs ya está arrancando en otro proceso; se espera sin lanzar otro")
+        elif not _spawn_render_server():
             return None
 
-        started = time.monotonic()
-        while time.monotonic() - started < RENDER_SERVER_STARTUP_TIMEOUT:
-            info = _read_server_info()
-            if info and _server_health_check(info.get("port", -1)):
-                logger.info("servidor de render persistente listo en el puerto %s", info["port"])
-                return info["port"]
-            time.sleep(0.4)
+        port = _wait_for_server(RENDER_SERVER_STARTUP_TIMEOUT)
+        if port is not None:
+            _clear_starting_marker()
+            logger.info("servidor de render persistente listo en el puerto %s", port)
+            return port
 
         logger.warning(
             "render_server.mjs no respondió /health dentro de %ss, se usa el subprocess viejo",

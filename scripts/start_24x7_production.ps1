@@ -149,6 +149,10 @@ $env:IG_LOCAL_DAILY_MAX = "40"
 $env:IG_LOCAL_PACING_SLACK = "4"
 $env:IG_LOCAL_PACING_MAX_AGE_HOURS = "6"
 $env:IG_STATIC_QUOTA_CEILING = "88"
+# 2026-11-13: hasta 12 piezas de Instagram por ciclo (antes 8 fijo en
+# utils/deployment.py). Las descartadas ya no ocupan lugar del ciclo.
+# Rollback: "8". Ver docs/DECISIONS.md (2026-11-13).
+$env:PIPELINE_IG_MAX_PER_CYCLE = "12"
 # Fénix 95.1 (Locales): sólo notas con vínculo riojano. Ver docs/DECISIONS.md 2026-10-22.
 $env:SCRAPER_FENIX_ENABLED = "1"
 $env:SCRAPER_MEDIOSRIOJA_ENABLED = "1"

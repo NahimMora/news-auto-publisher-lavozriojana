@@ -18,3 +18,4 @@ public/tmp
 
 # Bundle de QA de la galería V1/V2 (scripts/render_compare.mjs)
 .render-cache-gallery
+.render-server.starting

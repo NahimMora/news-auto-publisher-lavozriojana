@@ -144,9 +144,81 @@ RIOJAN_LOCALITY_TERMS = {
 # localidad ("incendio en el barrio Las Talas").
 RIOJAN_BY_SOURCE = {"mediosrioja_locales", "mediosrioja_interior", "fenix_locales"}
 
+# Fuentes institucionales riojanas: Ministerio Público Fiscal y Función
+# Judicial de La Rioja (main_judiciales.py). Sus notas casi nunca dicen "La
+# Rioja" en el título. Cuentan como vínculo pero no como localidad (topic_key).
+RIOJAN_INSTITUTIONAL_SOURCES = {"judicial_mpf", "judicial_justicia"}
+
+# Referentes e instituciones riojanas que identifican la nota por sí solos
+# (2026-11-13: notas de Quintela, Braida, etc. quedaban como "sin vínculo" y no
+# llegaban a Instagram ni a las etiquetas del Gobierno). Se comparan como
+# palabra completa, sin tildes. Sólo nombres sin homónimos frecuentes: un
+# apellido común va con nombre o cargo ("teresita madera", no "madera").
+RIOJAN_ENTITY_TERMS = {
+    "quintela", "luna corzo", "teresita madera", "vicegobernadora madera",
+    "braida", "martin menem",
+    "vera barros", "funcion judicial", "unlar", "edelar",
+}
+
+# Un nombre del directorio de etiquetas (config/gov_directory.json) cuenta sólo
+# si el texto también nombra un cargo, igual que en utils/gov_tags.py.
+_ENTITY_ROLE_WORDS = (
+    "ministr", "secretari", "subsecretari", "gobernador", "vicegobernador",
+    "jefe de gabinete", "funcionari", "intendent", "diputad", "legislador",
+)
+
+
+def _has_term(text: str, term: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text) is not None
+
+
+def _riojan_entity(text: str) -> str:
+    """Referente riojano nombrado en ``text`` (ya en minúsculas sin tildes)."""
+    for term in sorted(RIOJAN_ENTITY_TERMS, key=len, reverse=True):
+        if _has_term(text, term):
+            return term
+    if any(word in text for word in _ENTITY_ROLE_WORDS):
+        from utils.gov_tags import person_aliases
+
+        for alias in person_aliases():
+            folded = _ascii_lower(alias)
+            if len(folded.split()) >= 2 and _has_term(text, folded):
+                return folded
+    return ""
+
+
+def _riojan_text(noticia: dict) -> str:
+    text_parts = [
+        noticia.get("titulo_original"),
+        noticia.get("titulo"),
+        noticia.get("excerpt"),
+    ]
+    parrafos = noticia.get("parrafos") or []
+    if isinstance(parrafos, list) and parrafos:
+        text_parts.append(parrafos[0])
+    return _ascii_lower(" ".join(str(part or "") for part in text_parts))
+
 
 def detect_riojan_link(noticia: dict) -> tuple[bool, str]:
-    """True si existe evidencia determinística de vínculo con La Rioja."""
+    """True si existe evidencia determinística de vínculo con La Rioja.
+
+    A la localidad (``_locality_link``) suma fuentes institucionales riojanas y
+    referentes riojanos (``RIOJAN_ENTITY_TERMS`` y el directorio de etiquetas).
+    """
+    linked, reason = _locality_link(noticia)
+    if linked:
+        return linked, reason
+    source = str(noticia.get("source") or "").strip().lower()
+    if source in RIOJAN_INSTITUTIONAL_SOURCES:
+        return True, f"institution:{source}"
+    entity = _riojan_entity(_riojan_text(noticia))
+    if entity:
+        return True, f"entity:{entity}"
+    return False, reason
+
+
+def _locality_link(noticia: dict) -> tuple[bool, str]:
+    """Vínculo por localidad, fuente local o categoría (criterio original)."""
     hashtag = str(noticia.get("hashtag_localidad") or "").strip()
     if hashtag:
         return True, f"hashtag_localidad:{hashtag}"
@@ -159,15 +231,7 @@ def detect_riojan_link(noticia: dict) -> tuple[bool, str]:
     if category == "interior":
         return True, "category:interior"
 
-    text_parts = [
-        noticia.get("titulo_original"),
-        noticia.get("titulo"),
-        noticia.get("excerpt"),
-    ]
-    parrafos = noticia.get("parrafos") or []
-    if isinstance(parrafos, list) and parrafos:
-        text_parts.append(parrafos[0])
-    text = _ascii_lower(" ".join(str(part or "") for part in text_parts))
+    text = _riojan_text(noticia)
 
     for term in sorted(RIOJAN_LOCALITY_TERMS, key=len, reverse=True):
         if _ascii_lower(term) in text:
@@ -243,7 +307,9 @@ def compute_topic_key(noticia: dict) -> str:
     if not entity_tokens:
         entity_tokens = _fallback_tokens(titulo)
 
-    _, locality_reason = detect_riojan_link(noticia)
+    # Sólo la localidad: un referente o una fuente institucional no cambia la
+    # agrupación por tema que ya tenían las notas.
+    _, locality_reason = _locality_link(noticia)
     locality = locality_reason.split(":", 1)[1] if ":" in locality_reason else ""
     category = normalize_category(noticia.get("seccion") or noticia.get("categoria"))
     bucket = _date_bucket(noticia)
