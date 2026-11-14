@@ -162,6 +162,12 @@ def scrap_noticia_result(url: str, section_name: str) -> ArticleScrapeResult:
         )
 
     parrafos = _extract_paragraphs(soup)
+    # La bajada suele traer cuándo y dónde pasó ("durante la mañana de este
+    # viernes en el barrio El Plumerillo"): sin ella la redacción no tiene el
+    # día del hecho (caso Anguinán, 13/11/2026). Va primero, como el copete de Fénix.
+    bajada = _extract_bajada(soup)
+    if parrafos and len(bajada) >= 40 and bajada.lower() != parrafos[0].lower():
+        parrafos = [bajada] + parrafos
     if not parrafos:
         logger.warning(f"Sin contenido en: {url}")
         return ArticleScrapeResult(
@@ -216,6 +222,14 @@ def _extract_title(soup: BeautifulSoup) -> str | None:
     if og and og.get("content"):
         return _clean_text(og["content"])
     return None
+
+
+def _extract_bajada(soup: BeautifulSoup) -> str:
+    """Bajada visible de la nota (``section.bajada`` dentro de ``.cont-bajada``).
+    Sólo ese elemento: nunca la meta description, que puede ser un texto
+    genérico del sitio."""
+    el = soup.select_one(".cont-bajada .bajada") or soup.select_one("section.bajada")
+    return _clean_text(el.get_text(" ", strip=True)) if el else ""
 
 
 def _extract_paragraphs(soup: BeautifulSoup) -> list[str]:

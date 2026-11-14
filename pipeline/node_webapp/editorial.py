@@ -8,6 +8,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
@@ -16,6 +17,7 @@ from bs4 import BeautifulSoup
 from utils.judicial_sources import JUDICIAL_RULES, is_judicial
 
 from utils.logging_setup import setup_logger
+from utils.social_time import DIAS, today_ar
 
 logger = setup_logger("node_webapp.editorial", "publish_web.log")
 
@@ -639,6 +641,91 @@ def _judicial_warnings(result: EditorialResult, noticia: dict) -> list[str]:
     ]
 
 
+# ── Referencias temporales (caso Anguinán, 13/11/2026: la fuente decía "este
+# viernes" y la nota publicó "este domingo") ────────────────────────────────
+# Distingue la fecha de publicación de la fuente (``fecha``) de la fecha de
+# redacción (hoy, hora argentina). Un día de la semana sólo se acepta si está
+# en la fuente o se deduce de su fecha; "hoy"/"ayer"/"anoche" sólo si la fuente
+# los usa y se redacta el mismo día en que se publicó la fuente.
+_WEEKDAY_KEYS = tuple(normalize(d) for d in DIAS)
+_WEEKDAY_RE = re.compile(r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b", re.IGNORECASE)
+_RELATIVE_DAY_RE = re.compile(
+    r"\b(hoy|ayer|anteayer|anoche|antenoche|esta\s+(?:ma[nñ]ana|tarde|noche|madrugada))\b", re.IGNORECASE
+)
+_ABS_DAY_MONTH_RE = re.compile(r"\b(\d{1,2})\s+de\s+(" + "|".join(_MONTHS) + r")\b", re.IGNORECASE)
+_MONTH_NUMBER = {name: i + 1 for i, name in enumerate(
+    ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+)}
+_MONTH_NUMBER["setiembre"] = 9
+_RELATIVE_OFFSET = {"hoy": 0, "esta manana": 0, "esta tarde": 0, "esta noche": 0, "esta madrugada": 0,
+                    "ayer": 1, "anoche": 1, "anteayer": 2, "antenoche": 2}
+
+
+def _source_date(noticia: dict) -> date | None:
+    """Fecha de publicación de la fuente (``YYYY-MM-DD``); ``None`` si no se sabe."""
+    raw = str(noticia.get("fecha") or "").strip()[:10]
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _relative_key(match_text: str) -> str:
+    return normalize(match_text)
+
+
+def _allowed_weekdays(original: str, source_day: date | None) -> set[str]:
+    allowed = {normalize(m.group(1)) for m in _WEEKDAY_RE.finditer(original)}
+    if source_day is None:
+        return allowed
+    for m in _RELATIVE_DAY_RE.finditer(original):
+        offset = _RELATIVE_OFFSET.get(_relative_key(m.group(1)))
+        if offset is not None:
+            allowed.add(_WEEKDAY_KEYS[(source_day - timedelta(days=offset)).weekday()])
+    for m in _ABS_DAY_MONTH_RE.finditer(original):
+        month = _MONTH_NUMBER[normalize(m.group(2))]
+        try:
+            day = date(source_day.year, month, int(m.group(1)))
+        except ValueError:
+            continue
+        if day - source_day > timedelta(days=200):  # "28 de diciembre" en una nota de enero
+            day = date(source_day.year - 1, month, day.day)
+        allowed.add(_WEEKDAY_KEYS[day.weekday()])
+    return allowed
+
+
+def temporal_context(noticia: dict, *, today: date | None = None) -> dict | None:
+    """Fechas explícitas para la redacción: publicación de la fuente y redacción."""
+    source_day = _source_date(noticia)
+    if source_day is None:
+        return None
+    today = today or today_ar()
+    return {
+        "fecha_publicacion_fuente": f"{DIAS[source_day.weekday()]} {source_day:%d/%m/%Y}",
+        "fecha_redaccion": f"{DIAS[today.weekday()]} {today:%d/%m/%Y}",
+        "zona_horaria": "America/Argentina/Buenos_Aires (UTC-3)",
+    }
+
+
+def _temporal_warnings(result: EditorialResult, noticia: dict, *, today: date | None = None) -> list[str]:
+    original = _original_text(noticia)
+    output = _result_factual_text(result)
+    source_day = _source_date(noticia)
+    today = today or today_ar()
+    warnings: list[str] = []
+    allowed = _allowed_weekdays(original, source_day)
+    for weekday in sorted({normalize(m.group(1)) for m in _WEEKDAY_RE.finditer(output)}):
+        if weekday not in allowed:
+            warnings.append(f"invented_weekday:{weekday}")
+    original_relative = {_relative_key(m.group(1)) for m in _RELATIVE_DAY_RE.finditer(original)}
+    for rel in sorted({_relative_key(m.group(1)) for m in _RELATIVE_DAY_RE.finditer(output)}):
+        if rel not in original_relative:
+            warnings.append(f"invented_relative_day:{rel}")
+        elif source_day is not None and source_day != today:
+            warnings.append(f"stale_relative_day:{rel}")
+    return warnings
+
+
 def validate_editorial_result(
     result: EditorialResult,
     noticia: dict,
@@ -705,6 +792,7 @@ def validate_editorial_result(
             seen_warnings.add(name)
             warnings.append(f"invented_proper_noun:{name}")
 
+    warnings.extend(_temporal_warnings(result, noticia))
     warnings.extend(_judicial_warnings(result, noticia))
     warnings.extend(_html_warnings(result.content_html))
     if check_similarity:
@@ -987,6 +1075,15 @@ estan si suman, nunca los reformules inventando numeros nuevos. No repitas
 subtitulos tecnicos como "CONTEXTO"/"IMPACTO"/"DATOS": si agregas una seccion
 de antecedente, dale un titulo editorial normal (por ejemplo "Antecedentes").
 
+Fechas: "contexto_temporal" trae la fecha de publicacion de la fuente y la de
+hoy (hora argentina). No son la fecha del hecho. Usa solo las referencias
+temporales de la fuente ("este viernes", "el martes 10"). No agregues dias de
+la semana, "hoy", "ayer" ni "anoche" que no esten en la fuente. Si la fuente
+dice "hoy" o "ayer" y hoy es otro dia, cambialo por el dia de la semana que
+corresponde a la fecha de publicacion de la fuente. Si la fuente no dice cuando
+paso, no lo inventes. Un "official_context" rotulado como antecedente nunca
+confirma el hecho actual.
+
 Si el mensaje incluye "source_rules", son reglas de la fuente y tienen prioridad
 sobre el estilo general.
 """.strip()
@@ -1010,6 +1107,15 @@ def _feedback_for_warnings(warnings: list[str], *, min_score: float) -> str:
         directives.append(
             "Reorganiza el contenido por ejes, cambia el orden y la estructura de las oraciones, "
             "y condensa repeticiones sin alterar los hechos."
+        )
+    temporal_prefixes = ("invented_weekday", "invented_relative_day", "stale_relative_day")
+    if any(w.startswith(temporal_prefixes) for w in warnings):
+        directives.append(
+            "Corregi las referencias temporales senaladas: usa solo dias que figuren en la fuente o que "
+            "se deduzcan de contexto_temporal.fecha_publicacion_fuente (si la fuente dice 'ayer' y se "
+            "publico el viernes, el hecho fue el jueves). Si la fecha de redaccion es distinta a la de "
+            "la fuente, no uses 'hoy', 'ayer' ni 'anoche': escribi el dia de la semana. Si no se sabe "
+            "cuando ocurrio, no lo indiques."
         )
     if any(w.startswith("quality_score_below_threshold") for w in warnings):
         directives.append(
@@ -1095,6 +1201,9 @@ def _hard_editorial_warnings(warnings: list[str]) -> list[str]:
         "invented_number:",
         "invented_date:",
         "invented_proper_noun:",
+        "invented_weekday:",
+        "invented_relative_day:",
+        "stale_relative_day:",
         "unsafe_judicial_claim:",
         "disallowed_html_",
     )
@@ -1125,6 +1234,9 @@ def _call_ai_enricher(
         "url": noticia.get("canonical_url") or noticia.get("url") or "",
         "parrafos": get_original_paragraphs(noticia)[:12],
     }
+    temporal = temporal_context(noticia)
+    if temporal:
+        user_payload["contexto_temporal"] = temporal
     if is_judicial(noticia):
         user_payload["source_rules"] = JUDICIAL_RULES
     if feedback:

@@ -152,7 +152,7 @@ class BuildContextBundleTests(unittest.TestCase):
         # Sin localidad en el texto, la señal riojana viene de la sección local de origen.
         result = eb.build_context_bundle(
             article_id="new1",
-            title="Se realizo un nuevo allanamiento en la causa de contrabando de autopartes",
+            title="Se realizo un nuevo allanamiento en Chilecito por la causa de contrabando de autopartes",
             category="policiales",
             riojan_source=True,
             path=self.db_path,
@@ -243,8 +243,6 @@ class ArchiveContextEntriesTests(unittest.TestCase):
         self.assertEqual(bundle.archive_context_entries(), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class OfficialRelevanceTests(unittest.TestCase):
@@ -292,3 +290,75 @@ class OfficialRelevanceTests(unittest.TestCase):
 
     def test_shared_province_name_alone_is_not_a_match(self):
         self.assertEqual([], self._gather("La Rioja recibio a un equipo de futbol juvenil", category="sociedad"))
+
+
+class OfficialSameEventTests(unittest.TestCase):
+    """Caso real 13/11/2026: un choque fatal en Anguinán citó un juicio del MPF
+    por otro homicidio sólo por compartir palabras genéricas."""
+
+    MPF_TITLE = "Se desarrolló la primera audiencia del juicio por el homicidio de un joven tras una disputa en la vía pública"
+    MPF_EXCERPT = ("El Ministerio Público Fiscal de La Rioja, representado por el fiscal de cámara José Oliveros Icazatti, "
+                   "llevó adelante la primera audiencia de juicio contra Arturo Ernesto Farías por el delito de "
+                   "Homicidio Preterintencional, cuando le propinó un golpe a la víctima")
+    CRASH_TITLE = "Un joven murió tras impactar su moto contra un poste"
+    CRASH_EXCERPT = ("Un siniestro vial fatal se registró durante la mañana de este viernes en el barrio El Plumerillo, "
+                     "perteneciente al distrito Anguinán, donde un motociclista de 22 años perdió la vida tras colisionar "
+                     "contra un poste. Cuando circulaba por la calle 4 de Junio perdió el dominio en primera instancia.")
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmpdir.name) / "same_event.sqlite3"
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def _add(self, n, title, excerpt, published_at):
+        source_cache.upsert_cache_item(
+            OfficialSourceItem(source_id="mpf_larioja", title=title, url=f"https://www.mpflarioja.gob.ar/n/{n}",
+                               excerpt=excerpt, published_at=published_at),
+            path=self.db_path,
+        )
+
+    def _gather(self, title, excerpt, category="policiales"):
+        from editorial_context import entities as E
+        snips, _ = eb._gather_official_snippets(
+            category=category, entities=E.extract_entities(title, excerpt), localities=E.extract_localities(title, excerpt),
+            title=title, excerpt=excerpt, riojan_source=True, path=self.db_path,
+            reference_time=eb._parse_item_time("2026-11-14T02:50:00Z"),
+        )
+        return snips
+
+    def test_rejects_official_item_about_another_case(self):
+        self._add(1, self.MPF_TITLE, self.MPF_EXCERPT, "Fri, 06 Nov 2026 12:30:26 +0000")
+        self.assertEqual(self._gather(self.CRASH_TITLE, self.CRASH_EXCERPT), [])
+
+    def test_accepts_official_item_about_the_same_crash_with_date_label(self):
+        self._add(2, "Intervino la fiscalía por el siniestro vial fatal en Anguinán",
+                  "El fiscal Walter Alanís ordenó pericias sobre el poste de cemento y la motocicleta en El Plumerillo, Anguinán.",
+                  "2026-11-13T18:00:00-03:00")
+        snips = self._gather(self.CRASH_TITLE, self.CRASH_EXCERPT + " Intervino el fiscal Walter Alanís.")
+        self.assertEqual(len(snips), 1)
+        self.assertTrue(snips[0].text.startswith("[Comunicado oficial del 13/11/2026]"))
+        self.assertIn("anguinan", snips[0].evidence)
+
+    def test_same_locality_different_event_is_not_enough_in_policiales(self):
+        self._add(3, "Detuvieron a un hombre por un robo en Anguinán",
+                  "La Policía secuestró herramientas en un domicilio de Anguinán.", "2026-11-13T10:00:00-03:00")
+        self.assertEqual(self._gather(self.CRASH_TITLE, self.CRASH_EXCERPT), [])
+
+    def test_terms_only_crime_type_is_not_enough_in_policiales(self):
+        self._add(4, "El MPF confirmo la apertura de una causa de contrabando de autopartes",
+                  "La fiscalia detallo el operativo", "2026-11-13T10:00:00-03:00")
+        self.assertEqual(self._gather("Nuevo allanamiento en la causa de contrabando de autopartes", ""), [])
+
+    def test_old_related_item_is_labelled_as_antecedent(self):
+        self._add(5, "Comenzó el juicio por el crimen de José Guayama en Chepes",
+                  "El fiscal expuso la acusación por el crimen de José Guayama ocurrido en Chepes.", "2026-11-02T10:00:00-03:00")
+        snips = self._gather("Declararon testigos en el juicio por el crimen de José Guayama en Chepes",
+                             "Continuó el juicio por el crimen de José Guayama en Chepes.")
+        self.assertEqual(len(snips), 1)
+        self.assertIn("Antecedente oficial del 02/11/2026", snips[0].text)
+
+
+if __name__ == "__main__":
+    unittest.main()

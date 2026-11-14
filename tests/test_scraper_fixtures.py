@@ -169,6 +169,37 @@ class NuevaRiojaFixtureTests(unittest.TestCase):
         self.assertEqual("Presentaron un programa provincial", article.article["titulo"])
         self.assertEqual("nuevarioja_politica", article.article["source"])
 
+    def test_bajada_goes_first_and_keeps_the_event_weekday(self):
+        """Caso Anguinán (13/11/2026): "este viernes" sólo estaba en la bajada."""
+        from scraping import base_nuevarioja as scraper
+
+        html = fixture("nuevarioja_article_bajada.html")
+        with mock.patch.object(scraper.requests, "get", return_value=FakeResponse(html)), mock.patch.object(
+            scraper, "_download_image", return_value=("raw.jpg", "opt.jpg")
+        ):
+            article = scraper.scrap_noticia_result(
+                "https://nuevarioja.com.ar/policiales/un-joven-murio-tras-impactar-su-moto-contra-un-poste.htm", "policiales"
+            ).article
+
+        self.assertTrue(article["parrafos"][0].startswith("Un siniestro vial fatal"))
+        self.assertIn("este viernes", article["parrafos"][0])
+        self.assertEqual(3, len(article["parrafos"]))
+        self.assertNotIn("Texto genérico", " ".join(article["parrafos"]))
+        self.assertEqual("2026-11-13", article["fecha"])
+
+    def test_article_without_bajada_is_unchanged(self):
+        from scraping import base_nuevarioja as scraper
+
+        html = fixture("nuevarioja_article.html")
+        with mock.patch.object(scraper.requests, "get", return_value=FakeResponse(html)), mock.patch.object(
+            scraper, "_download_image", return_value=("raw.jpg", "opt.jpg")
+        ):
+            article = scraper.scrap_noticia_result(
+                "https://nuevarioja.com.ar/politica/el-gobierno-presento-el-nuevo-programa-provincial.htm", "politica"
+            ).article
+        self.assertEqual(2, len(article["parrafos"]))
+        self.assertTrue(article["parrafos"][0].startswith("El Gobierno provincial"))
+
     def test_http_error_is_failed(self):
         from scraping import base_nuevarioja as scraper
         from utils.stage_result import StageStatus

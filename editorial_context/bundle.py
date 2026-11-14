@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from editorial_context import archive_index as ai
@@ -57,6 +59,9 @@ class ContextSnippet:
     post_id: str = ""
     published_at: str = ""
     relation_score: float = 0.0
+    # Evidencia que justificó usar el fragmento (entidades, localidades y
+    # términos en común): queda en el log para auditar cada fuente citada.
+    evidence: str = ""
 
 
 @dataclass
@@ -187,8 +192,64 @@ _GENERIC_OFFICIAL_TERMS = {
     "nacional", "registro", "avanza", "avanzan", "mejoras", "trabajo", "conjunto",
     "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
     "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+    # Palabras de función o de relato que aparecen en cualquier nota: el caso
+    # de Anguinán (13/11/2026) se asoció a un juicio por otro homicidio sólo
+    # por compartir "cuando", "primera" y "joven".
+    "cuando", "donde", "mientras", "aunque", "porque", "segun", "despues",
+    "antes", "ahora", "todavia", "tambien", "primera", "primer", "primero",
+    "segunda", "segundo", "ultima", "ultimo", "joven", "jovenes", "hombre",
+    "hombres", "mujer", "mujeres", "persona", "personas", "vecino", "vecinos",
+    "vecina", "vecinas", "lugar", "hecho", "hechos", "caso", "casos", "parte",
+    "manera", "momento", "horas", "jornada", "semana", "tiempo", "situacion",
+    "llevo", "adelante", "realizo", "informo", "indico", "confirmo", "senalo",
+    # Tipo de hecho: dos choques o dos homicidios distintos comparten estas
+    # palabras sin ser el mismo acontecimiento.
+    "homicidio", "homicidios", "muerte", "murio", "fallecio", "fallecimiento",
+    "victima", "victimas", "herido", "heridos", "herida", "heridas",
+    "accidente", "siniestro", "choque", "choco", "colision", "impacto",
+    "motociclista", "motocicleta", "vehiculo", "rodado", "conductor",
+    "robo", "robos", "hurto", "estafa", "estafas", "agresion", "pelea",
+    "disputa", "audiencia", "audiencias", "sentencia", "proceso", "debate",
+    "operativo", "procedimiento", "secuestro", "allanamiento", "arresto",
 }
 OFFICIAL_MIN_SHARED_TERMS = 2
+# En policiales una persona, un lugar o el tipo de hecho por sí solos no
+# prueban que el comunicado hable del mismo acontecimiento (un fiscal o un
+# barrio aparecen en muchos casos): se exigen dos evidencias independientes
+# y que el comunicado no sea anterior al hecho.
+OFFICIAL_STRICT_CATEGORIES = {"policiales"}
+OFFICIAL_STRICT_MAX_AGE_DAYS = _env_int("OFFICIAL_STRICT_MAX_AGE_DAYS", 3)
+_AR_TZ = timezone(timedelta(hours=-3))  # Argentina no usa horario de verano.
+
+
+def _parse_item_time(value: str) -> datetime | None:
+    """Fecha de un ítem oficial: ISO 8601 o RFC 822 (feeds RSS). ``None`` si
+    no se entiende; nunca se supone una fecha."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+    if parsed is None:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _official_label(item_time: datetime | None, reference: datetime) -> str:
+    """Rótulo temporal del fragmento oficial para el prompt. Un comunicado
+    anterior a ``OFFICIAL_STRICT_MAX_AGE_DAYS`` días es antecedente: puede dar
+    contexto, nunca confirmar el hecho actual."""
+    if item_time is None:
+        return "[Fuente oficial sin fecha: usar sólo como antecedente] "
+    day = item_time.astimezone(_AR_TZ).strftime("%d/%m/%Y")
+    if reference - item_time > timedelta(days=OFFICIAL_STRICT_MAX_AGE_DAYS):
+        return f"[Antecedente oficial del {day}: no confirma el hecho actual] "
+    return f"[Comunicado oficial del {day}] "
 
 
 def _gather_official_snippets(
@@ -200,12 +261,24 @@ def _gather_official_snippets(
     excerpt: str,
     riojan_source: bool = False,
     path: Path | str | None = None,
+    reference_time: datetime | None = None,
 ) -> tuple[list[ContextSnippet], int]:
     """SourceSelector + caché local (Parte 24/57): nunca consulta la red acá
     (eso lo hace ``editorial_context/refresh_context.py`` una vez por ciclo,
     Parte 56); sólo filtra lo ya cacheado por relevancia real al hecho
     puntual (entidad/término/localidad compartidos), no por sola coincidencia
-    de fuente/categoría."""
+    de fuente/categoría.
+
+    En ``OFFICIAL_STRICT_CATEGORIES`` hacen falta dos evidencias distintas
+    (entidad, localidad, términos) y un comunicado contemporáneo: entre un día
+    después y ``OFFICIAL_STRICT_MAX_AGE_DAYS`` antes de ``reference_time``. Un
+    comunicado sin fecha legible no se usa. Ante la duda, no se atribuye nada
+    a una fuente oficial."""
+    reference = reference_time or datetime.now(timezone.utc)
+    strict = category in OFFICIAL_STRICT_CATEGORIES
+    # La fecha no prueba el mismo hecho: sólo rotula el fragmento (comunicado
+    # contemporáneo o antecedente) para que la redacción no use un comunicado
+    # viejo como confirmación de lo que pasó ahora.
     from sources import cache as source_cache
     from sources import selector as source_selector
 
@@ -244,20 +317,32 @@ def _gather_official_snippets(
             # Un solo término compartido ("gobierno", "obra") colaba contexto
             # oficial en la mayoría de las notas: se exige entidad específica,
             # localidad específica o al menos dos términos en común.
-            relevant = bool(
-                (probe_entities_norm & item_entities_norm)
-                or len(probe_terms & item_terms) >= OFFICIAL_MIN_SHARED_TERMS
-                or (probe_localities & item_localities)
+            shared_entities = probe_entities_norm & item_entities_norm
+            shared_localities = probe_localities & item_localities
+            shared_terms = probe_terms & item_terms
+            kinds = sum(
+                (
+                    bool(shared_entities),
+                    bool(shared_localities),
+                    len(shared_terms) >= OFFICIAL_MIN_SHARED_TERMS,
+                )
             )
-            if not relevant:
+            if kinds < (2 if strict else 1):
                 continue
+            evidence = (
+                f"entidades={sorted(shared_entities)} localidades={sorted(shared_localities)} "
+                f"terminos={sorted(shared_terms)}"
+            )
+            logger.info("Fuente oficial asociada %s (%s)", item.get("url") or item_title[:80], evidence)
             snippets.append(
                 ContextSnippet(
-                    text=(item_excerpt or item_title)[:OFFICIAL_SNIPPET_TEXT_MAX_CHARS],
+                    text=_official_label(_parse_item_time(str(item.get("published_at") or "")), reference)
+                    + (item_excerpt or item_title)[:OFFICIAL_SNIPPET_TEXT_MAX_CHARS],
                     source_type="official_source",
                     source_id=source.source_id,
                     source_url=str(item.get("url") or ""),
                     published_at=str(item.get("published_at") or ""),
+                    evidence=evidence,
                 )
             )
             if len(snippets) >= OFFICIAL_SNIPPET_MAX_ITEMS:
@@ -361,6 +446,7 @@ def _build_context_bundle(
             excerpt=excerpt,
             riojan_source=riojan_source,
             path=path,
+            reference_time=_parse_item_time(published_at),
         )
 
     candidates = ai.candidate_retrieval(

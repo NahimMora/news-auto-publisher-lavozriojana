@@ -1639,3 +1639,24 @@
   o postergan notas.
 - Corrección: ver `docs/DECISIONS.md` (2026-11-13). Tests en
   `tests/test_ig_cycle_window.py`.
+
+## 113. Fuente oficial de otro caso y día de la semana inventado en la web — CORREGIDO en rama 2026-11-14 (sin desplegar)
+
+- Síntoma: la nota «Identificaron al motociclista que murió tras chocar contra un
+  poste en Anguinán» (13/11/2026, fuente Nueva Rioja) decía «este domingo» (la
+  fuente dice «este viernes») y su recuadro «Fuentes consultadas» citaba un
+  comunicado del MPF del 06/11 sobre el juicio por otro homicidio.
+- Causa 1 (reproducida): `_gather_official_snippets` aceptaba un ítem oficial
+  con dos términos en común; los comunes eran «cuando», «primera» y «joven». En
+  un replay de 718 notas reales, ese comunicado aparecía en una docena de notas
+  ajenas (choques, robos, el juicio de Pity Álvarez).
+- Causa 2 (reproducida): `scraping/base_nuevarioja.py` no guardaba la bajada
+  (`section.bajada`), que era el único lugar con el día del hecho; la IA no
+  recibía la fecha de la fuente y el validador sólo controlaba fechas absolutas.
+- Corrección: ver `docs/DECISIONS.md` (2026-11-14). Tests en
+  `tests/test_editorial_context_bundle.py::OfficialSameEventTests`,
+  `tests/test_editorial_temporal.py` y `tests/test_scraper_fixtures.py`.
+- Pendiente: la nota ya publicada sigue con el error (corregirla en el CMS es
+  decisión del responsable). Tiempo Popular y Medios Rioja no se revisaron por
+  bajadas omitidas. El caption de Instagram usa otro generador y no tiene el
+  control temporal.
