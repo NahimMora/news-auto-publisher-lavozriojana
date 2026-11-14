@@ -706,6 +706,8 @@ def config_inventory() -> dict[str, list[str]]:
                 "WA_JOIN_STORY_DAYS",
                 "WA_JOIN_STORY_HOUR",
                 "WA_JOIN_STORY_UNTIL_HOUR",
+                "WA_APORTES_STORY_ENABLED",
+                "WA_APORTES_NUMBER",
                 "FB_GROUPS_ENABLED",
                 "FB_GROUPS_DRY_RUN",
                 "FB_GROUPS_HOURS",

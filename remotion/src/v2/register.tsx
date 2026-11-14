@@ -16,6 +16,7 @@ import { NightlyNewscastV2, NightlyNewscastV2Props, NightlyNewscastV2Schema, new
 import { NightlyNewscastV3, NightlyNewscastV3Props, NightlyNewscastV3Schema } from "./newscast/NightlyNewscastV3";
 import { NightlyNewscastV5, NightlyNewscastV5Props, NightlyNewscastV5Schema } from "./newscast5/NightlyNewscastV5";
 import { NewscastCoverV5 } from "./newscast5/Cover";
+import { WA_STORY_DEFAULTS, WA_STORY_FPS, WA_STORY_FRAMES, WaAportesStory, WaAportesStorySchema } from "./social/WaAportesStory";
 
 const recapMetadata: CalculateMetadataFunction<WeeklyRecapV2Props> = ({ props }) => ({
   durationInFrames: recapDuration(Math.min(5, props.entries.length)),
@@ -54,6 +55,16 @@ const reelMetadata: CalculateMetadataFunction<EditorialReelV2Props> = ({ props }
 
 export const V2Compositions: React.FC = () => (
   <>
+    <Composition
+      id="WaAportesStory"
+      component={WaAportesStory}
+      durationInFrames={WA_STORY_FRAMES}
+      fps={WA_STORY_FPS}
+      width={1080}
+      height={1920}
+      schema={WaAportesStorySchema}
+      defaultProps={WA_STORY_DEFAULTS}
+    />
     <Composition
       id="EditorialReelV2"
       component={EditorialReelV2}

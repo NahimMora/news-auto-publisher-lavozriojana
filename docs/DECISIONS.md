@@ -3025,3 +3025,21 @@ cargue el bundle nuevo (ver memoria del render server persistente).
 **Rollback**: `T02_LAYOUT_ROTATION_ENABLED=false`; el render vuelve a ser idéntico.
 **Estado**: activada en producción el 2026-11-14 17:29 UTC por decisión del dueño
 del proyecto (variable en `true` y render server reiniciado entre ciclos).
+
+## 2026-11-14 — Historia "Mandanos tu noticia" por WhatsApp (WA-D4)
+
+**Contexto**: en la mesa de formatos de la Fase 2 el responsable del medio
+aprobó el formato WA-D4 (chat continuo, número 380 492-2704) y decidió que
+salga sólo en historias, justo después de la historia "Sumate a nuestro
+WhatsApp".
+**Decisión**: `meta/run_wa_aportes_story.py` publica, detrás de
+`WA_APORTES_STORY_ENABLED` (default `false`), un video de 11 s
+(`WaAportesStory`: notificación → chat → llamado con número y botón) con un
+sticker de enlace a `wa.me` sobre el botón dibujado, por la sesión de las
+historias nativas. Sólo los días en que la historia "Sumate" ya quedó
+`completed`; una por día; `unverified` no se reintenta. Sin IA: tres textos
+fijos que rotan por día. La foto del chat es un adjunto genérico (ícono de
+cámara), nunca una foto de una nota presentada como aporte de un vecino.
+**Evidencia**: `tests/test_wa_aportes_story.py`; render real 1080×1920, 11 s,
+h264 + aac, 17 s de render.
+**Rollback**: `WA_APORTES_STORY_ENABLED=false`.

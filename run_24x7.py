@@ -58,6 +58,9 @@ CYCLE_STEPS = [
     ("meta/run_native_stories.py", "instagram"),
     # Historia "Sumate a nuestro WhatsApp" (días fijos a las 20). Apagado por defecto.
     ("meta/run_wa_join_story.py", "instagram"),
+    # Historia "Mandanos tu noticia" (video, enlace a wa.me): sólo después de
+    # la de "Sumate" del mismo día. Apagado por defecto.
+    ("meta/run_wa_aportes_story.py", "instagram"),
     ("meta/run_comment_replies.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
     # Datos para la web en R2 (lo más visto, servicios, actualizaciones,
@@ -83,6 +86,8 @@ _STEP_TIMEOUTS = {
     "meta/run_social_formats.py": 1500,
     "meta/run_stories.py": 900,
     "meta/run_native_stories.py": 900,
+    # Render de 11 s de video (hasta 10 min) + subida.
+    "meta/run_wa_aportes_story.py": 900,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 
