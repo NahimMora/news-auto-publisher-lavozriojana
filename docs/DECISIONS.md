@@ -2972,3 +2972,56 @@ pasan a riojanas y las 13 lo son (11 por referente y 2 del MPF); ningún falso
 positivo. Tests en `tests/test_riojan_entities.py`.
 **Rollback**: vaciar `RIOJAN_ENTITY_TERMS` y `RIOJAN_INSTITUTIONAL_SOURCES` en
 `utils/editorial_router.py`.
+
+### 2026-11-14 — Fuentes oficiales sólo con evidencia del mismo hecho y control de fechas en la web
+
+**Contexto**: caso Anguinán (KNOWN_ISSUES 113): fuente oficial de otro caso y
+«este domingo» en lugar de «este viernes».
+**Decisión**:
+- `editorial_context/bundle.py`: las palabras de relato y de tipo de hecho
+  (cuando, primera, joven, choque, homicidio, audiencia, etc.) ya no cuentan
+  como términos en común. En `policiales` hacen falta dos evidencias
+  independientes entre entidad específica, localidad específica y ≥ 2 términos
+  distintivos; una persona (un fiscal), un barrio o el tipo de delito solos no
+  alcanzan. Cada fragmento lleva un rótulo de fecha para la IA: «Comunicado
+  oficial del dd/mm/aaaa» o, si tiene más de `OFFICIAL_STRICT_MAX_AGE_DAYS` (3)
+  días, «Antecedente oficial … no confirma el hecho actual». La evidencia de
+  cada asociación queda en `editorial_context.log`. La forma de `sources[]` del
+  CMS no cambia.
+- `scraping/base_nuevarioja.py`: la bajada visible va como primer párrafo (como
+  el copete de Fénix); nunca la meta description.
+- `pipeline/node_webapp/editorial.py`: la IA recibe `contexto_temporal` (fecha
+  de publicación de la fuente y fecha de redacción, hora argentina) y reglas de
+  fechas en el prompt. `_temporal_warnings` marca `invented_weekday` (día que no
+  está en la fuente ni se deduce de su fecha, de «hoy/ayer/anoche» o de una
+  fecha absoluta), `invented_relative_day` y `stale_relative_day` («ayer» de la
+  fuente usado otro día). Son warnings duros: piden revisión y bloquean el
+  último intento, igual que `invented_date`.
+**Evidencia**: replay de sólo lectura sobre 718 notas reales recientes:
+notas con fuente oficial 329 → 236; se mantienen las asociaciones legítimas
+(Martorelli, Trinidad Ruarte). Suite completa 1385 tests OK.
+**Rollback**: revertir los tres archivos (no hay migración ni cambio de estado).
+Para relajar sólo policiales: quitar `policiales` de `OFFICIAL_STRICT_CATEGORIES`.
+
+### 2026-11-14 — Rotación al azar de diseños de la placa de Instagram (T02)
+
+**Decisión**: con `T02_LAYOUT_ROTATION_ENABLED=true` (default `false`), cada placa
+con foto sale al azar con uno de tres diseños aprobados por el usuario en la mesa
+de formatos: la card V2 actual (`layout: "auto"`, T02-N-0), la portada con
+localidad (`"localidad"`, T02-N-A2, sólo si la nota tiene localidad) o el bloque de
+color (`"bloque"`, T02-N-C2). Sin foto sigue el póster. La foto completa (T02-N-B)
+quedó fuera de la rotación por pedido del usuario.
+**Contexto**: el usuario quiere variar el feed sin reglas fijas («intercalar de
+manera aleatoria»).
+**Implementación**: `utils/growth_image_rules.py::rotation_layout` (azar sembrado
+con la URL de la nota: un reintento del mismo post repite el diseño), cableado en
+`layout/image_generator.py::_generate_instagram_remotion` (queda en
+`render_meta["t02_layout"]`) y dos composiciones nuevas en
+`remotion/src/v2/AutomaticInstagramCardV2.tsx` (`LocalityCover`, `ColorBlock`).
+**Evidencia**: renders reales de los tres diseños con fotos de la semana; tests
+`tests/test_t02_rotation.py`; suite completa 1371 OK en el worktree.
+**Activación**: poner la variable en `true` y reiniciar el render server para que
+cargue el bundle nuevo (ver memoria del render server persistente).
+**Rollback**: `T02_LAYOUT_ROTATION_ENABLED=false`; el render vuelve a ser idéntico.
+**Estado**: activada en producción el 2026-11-14 17:29 UTC por decisión del dueño
+del proyecto (variable en `true` y render server reiniciado entre ciclos).

@@ -1,7 +1,29 @@
 # Estado actual
 
-Última actualización: 2026-11-01 (Noticiero V5; el resto del documento
-describe el estado previo y sigue vigente).
+Última actualización: 2026-11-14 (fuentes oficiales y fechas en la web; el
+resto del documento describe el estado previo y sigue vigente).
+
+## Rotación de diseños de la placa de Instagram (2026-11-14, activa en producción)
+
+`T02_LAYOUT_ROTATION_ENABLED` (default `false`; producción `true` desde el
+2026-11-14 17:29 UTC, con el render server reiniciado): al azar entre la card V2
+actual, la portada con localidad y el bloque de color. Apagada, la placa es
+idéntica a la anterior. Cada render deja el diseño en `render_meta["t02_layout"]`
+y en el log («Rotación T02: diseño …»). Detalle en `docs/DECISIONS.md` 2026-11-14.
+
+## Fuentes oficiales y fechas en las notas web (2026-11-14, en producción)
+
+La redacción web sólo recibe un comunicado oficial como fuente del hecho cuando
+comparte evidencia del mismo suceso: en policiales hacen falta dos evidencias
+independientes (persona o entidad, localidad, ≥ 2 términos distintivos) y un
+comunicado de más de `OFFICIAL_STRICT_MAX_AGE_DAYS` días (3 por defecto) entra
+rotulado como antecedente que no confirma el hecho actual. El scraper de Nueva
+Rioja guarda la bajada como primer párrafo (ahí suele estar el día del hecho).
+La IA recibe `contexto_temporal` (fecha de la fuente y de redacción) y un día
+de la semana, «hoy», «ayer» o «anoche» que no salga de la fuente es un warning
+duro que obliga a reescribir. Detalle: `docs/KNOWN_ISSUES.md` #113 y
+`docs/DECISIONS.md` 2026-11-14. Rollback: revertir `editorial_context/bundle.py`,
+`scraping/base_nuevarioja.py` y `pipeline/node_webapp/editorial.py`.
 
 ## Noticiero V5 (2026-11-01, publicación diaria activa)
 

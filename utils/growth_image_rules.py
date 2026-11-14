@@ -25,6 +25,8 @@ import os
 import re
 import unicodedata
 from collections.abc import Mapping
+import hashlib
+import random
 from functools import lru_cache
 
 from PIL import Image, ImageChops, ImageFilter, ImageFont, ImageStat
@@ -64,6 +66,36 @@ def growth_image_rules_enabled(workflow: str, values: Mapping[str, str] | None =
     raw = str(env.get(WORKFLOWS_ENV) or "").strip()
     workflows = {w.strip().lower() for w in raw.split(",") if w.strip()} if raw else set(DEFAULT_WORKFLOWS)
     return workflow in workflows
+
+
+# ── Rotación de diseños de la placa (T02, decisión del 2026-11-14) ─────────
+ROTATION_ENV = "T02_LAYOUT_ROTATION_ENABLED"
+# "auto" es la card V2 actual (T02-N-0); "localidad" es T02-N-A2 y "bloque",
+# T02-N-C2. La foto completa (T02-N-B) quedó fuera de la rotación.
+ROTATION_LAYOUTS = ("auto", "localidad", "bloque")
+
+
+def t02_rotation_enabled(values: Mapping[str, str] | None = None) -> bool:
+    env = os.environ if values is None else values
+    return str(env.get(ROTATION_ENV, "false")).strip().lower() in _TRUE
+
+
+def rotation_layout(article: Mapping[str, object], *, has_photo: bool, locality: str,
+                    values: Mapping[str, str] | None = None) -> str | None:
+    """Diseño de la placa al azar entre los tres aprobados.
+
+    ``None`` con la rotación apagada (render idéntico al actual). Sin foto no
+    hay rotación: sigue el póster. «localidad» sólo entra si la nota tiene
+    localidad calculada. El azar se siembra con la URL de la nota, así un
+    reintento del mismo post vuelve a salir con el mismo diseño."""
+    if not t02_rotation_enabled(values) or not has_photo:
+        return None
+    options = ["auto", "bloque"] + (["localidad"] if str(locality or "").strip() else [])
+    seed = str(article.get("canonical_url") or article.get("url") or article.get("web_url") or article.get("titulo") or "")
+    if not seed:
+        return random.choice(options)
+    digest = int(hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12], 16)
+    return random.Random(digest).choice(sorted(options))
 
 
 def _fold(text: str) -> str:

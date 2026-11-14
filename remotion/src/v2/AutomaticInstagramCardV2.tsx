@@ -10,9 +10,12 @@
 //   · Banda de pie con el color de la sección: "Nota completa en
 //     lavozriojana.com →", fecha y @lavozriojana.
 //
-// Variantes por reglas (nunca al azar): foto horizontal/cuadrada → foto
-// arriba; foto vertical → foto a pantalla completa con el texto sobre un
-// velo; sin foto → póster en el color de la sección. Dos tonos: tinta
+// Variantes por reglas: foto horizontal/cuadrada → foto arriba; foto
+// vertical → foto a pantalla completa con el texto sobre un velo; sin foto →
+// póster en el color de la sección. Con la rotación T02
+// (``T02_LAYOUT_ROTATION_ENABLED``, decidida en Python) llegan además
+// "localidad" (portada con la localidad en grande) y "bloque" (bloque de color
+// con el titular y la foto debajo). Dos tonos: tinta
 // (policiales, deportes, espectáculos, urgentes) y papel (el resto).
 // Props compatibles con AutomaticInstagramCardSchema (V1) + opcionales V2.
 import React from "react";
@@ -44,8 +47,9 @@ export const AutomaticInstagramCardV2Schema = z.object({
   assetHeight: z.number().default(0),
   breaking: z.boolean().default(false),
   update: z.boolean().default(false),
-  // "papel"/"tinta" fuerzan el tono; "cintas" fuerza foto completa.
-  layout: z.enum(["auto", "papel", "tinta", "cintas", "poster"]).default("auto"),
+  // "papel"/"tinta" fuerzan el tono; "cintas" fuerza foto completa;
+  // "localidad" y "bloque" son los diseños de la rotación T02.
+  layout: z.enum(["auto", "papel", "tinta", "cintas", "poster", "localidad", "bloque"]).default("auto"),
   dateLabel: z.string().default(""),
   // Reglas de crecimiento (T02, GROWTH_IMAGE_RULES_ENABLED). Apagado = render
   // idéntico al anterior.
@@ -56,7 +60,7 @@ export const AutomaticInstagramCardV2Schema = z.object({
 
 export type AutomaticInstagramCardV2Props = z.infer<typeof AutomaticInstagramCardV2Schema>;
 
-type Layout = "papel" | "tinta" | "cintas" | "poster";
+type Layout = "papel" | "tinta" | "cintas" | "poster" | "localidad" | "bloque";
 
 const M = IG.margin; // 64
 const INNER_W = IG.w - M * 2;
@@ -374,6 +378,84 @@ const FullPhoto: React.FC<{ props: AutomaticInstagramCardV2Props; style: Section
   );
 };
 
+// ── Rotación T02: portada con localidad (T02-N-A2) ─────────────────────
+// Foto arriba con el foco de la nota, la localidad en un bloque rojo grande
+// sobre el borde de la foto y el titular protagonista debajo.
+const LOC_PHOTO_H = 760;
+const LocalityCover: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionStyle; tokens: Token[] }> = ({ props, style, tokens }) => {
+  const ink = style.tone === "ink" || props.breaking;
+  const bg = ink ? C.ink : C.paper;
+  const textColor = ink ? C.white : C.paperInk;
+  const textTop = LOC_PHOTO_H + 70;
+  const textBottom = IG.h - 128;
+  const plan = planText(props.titulo, "", textBottom - textTop, INNER_W, 96, props.growth);
+  const place = (props.locality || "").toLocaleUpperCase("es-AR");
+  const placeFit = fit({ text: place || style.label.toLocaleUpperCase("es-AR"), maxWidth: 560, maxHeight: 60, min: 36, max: 54, weight: 900, lh: 1, stretch: "condensed", tracking: 0, maxLines: 1 });
+  return (
+    <AbsoluteFill style={{ backgroundColor: bg }}>
+      <div style={{ position: "absolute", left: 0, top: 0, width: IG.w, height: LOC_PHOTO_H, overflow: "hidden", backgroundColor: C.ink2 }}>
+        <Img src={staticFile(props.assetFile)} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `50% ${props.assetFocusY}%` }} />
+      </div>
+      <div style={{ position: "absolute", left: 0, top: 0, width: IG.w, height: 220, background: `linear-gradient(180deg, ${rgba(C.ink, 0.55)} 0%, ${rgba(C.ink, 0)} 100%)` }} />
+      <BrandTab accent={style.accent} />
+      <div style={{ position: "absolute", left: M - 8, top: LOC_PHOTO_H - 62, display: "flex", alignItems: "stretch", height: 96 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 28px", backgroundColor: C.red, color: C.white, fontFamily: `"${V2_FONT_SANS}"`, fontWeight: 900, fontStretch: "condensed", fontSize: placeFit.fontSize, lineHeight: 1, whiteSpace: "nowrap" }}>
+          <svg viewBox="0 0 24 24" style={{ width: placeFit.fontSize * 0.8, height: placeFit.fontSize * 0.8 }}><path fill={C.white} d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.6A2.6 2.6 0 1 1 12 6.4a2.6 2.6 0 0 1 0 5.2z" /></svg>
+          <span>{place || style.label.toLocaleUpperCase("es-AR")}</span>
+        </div>
+        {place ? <div style={{ display: "flex", alignItems: "center", padding: "0 22px", backgroundColor: ink ? C.white : C.paperInk, color: ink ? C.ink : C.white, ...caps, fontSize: 26, letterSpacing: "0.1em" }}>{style.label}</div> : null}
+      </div>
+      {props.update ? (
+        <div style={{ position: "absolute", right: 0, top: 54, height: 50, display: "flex", alignItems: "center", padding: `0 ${M - 8}px 0 22px`, backgroundColor: UPDATE_FILL, ...caps, fontSize: 22, fontWeight: 900, color: C.ink }}>Actualización</div>
+      ) : null}
+      <div style={{ position: "absolute", left: M, top: textTop, width: INNER_W }}>
+        <StaticHeadline fitted={plan.headline} tokens={tokens} color={textColor} accent={style.accent} />
+      </div>
+      <div style={{ position: "absolute", left: M, right: M, bottom: 40, borderTop: `4px solid ${style.accent}`, paddingTop: 18, display: "flex", justifyContent: "space-between", ...caps, fontSize: 26, letterSpacing: "0.08em", color: ink ? rgba(C.white, 0.78) : C.paperMute }}>
+        <span>Nota completa en lavozriojana.com</span>
+        <span>@lavozriojana.ok</span>
+      </div>
+      <Grain opacity={ink ? 0.04 : 0.05} />
+    </AbsoluteFill>
+  );
+};
+
+// ── Rotación T02: bloque de color (T02-N-C2) ────────────────────────────
+// Bloque del color de la sección con el titular arriba; el bloque toma la
+// altura del texto y la foto ocupa todo lo que queda (mínimo 520 px).
+const BLOCK_MIN_PHOTO = 520;
+const ColorBlock: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionStyle; tokens: Token[] }> = ({ props, style, tokens }) => {
+  const headTop = 150;
+  const room = IG.h - BLOCK_MIN_PHOTO - headTop - 44;
+  const plan = planText(props.titulo, "", room, INNER_W, 96, props.growth);
+  const photoTop = headTop + plan.height + 44;
+  const boxAccent = style.field === C.red ? C.ink : C.red;
+  return (
+    <AbsoluteFill style={{ backgroundColor: style.field }}>
+      <Halftone color={rgba(C.white, 0.12)} top={0} height={photoTop} />
+      <BrandTab accent={style.field === C.red ? C.white : C.red} />
+      <div style={{ position: "absolute", right: M - 8, top: 66, ...caps, fontSize: 26, color: rgba(C.white, 0.9) }}>{style.label}</div>
+      {props.update ? (
+        <div style={{ position: "absolute", right: 0, top: 104, height: 44, display: "flex", alignItems: "center", padding: `0 ${M - 8}px 0 22px`, backgroundColor: UPDATE_FILL, ...caps, fontSize: 20, fontWeight: 900, color: C.ink }}>Actualización</div>
+      ) : null}
+      <div style={{ position: "absolute", left: M, top: headTop, width: INNER_W }}>
+        <StaticHeadline fitted={plan.headline} tokens={tokens} color={C.white} accent={boxAccent} />
+      </div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: photoTop, bottom: 0, overflow: "hidden", backgroundColor: C.ink2 }}>
+        <Img src={staticFile(props.assetFile)} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `50% ${props.assetFocusY}%` }} />
+      </div>
+      {props.locality ? (
+        <div style={{ position: "absolute", left: M - 8, top: photoTop - 30, display: "flex", alignItems: "center", gap: 10, backgroundColor: C.white, color: C.ink, padding: "10px 22px 8px", fontFamily: `"${V2_FONT_SANS}"`, fontWeight: 900, fontStretch: "condensed", fontSize: 44, lineHeight: 1, whiteSpace: "nowrap" }}>
+          <svg viewBox="0 0 24 24" style={{ width: 34, height: 34 }}><path fill={C.red} d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.6A2.6 2.6 0 1 1 12 6.4a2.6 2.6 0 0 1 0 5.2z" /></svg>
+          <span>{props.locality}</span>
+        </div>
+      ) : null}
+      <div style={{ position: "absolute", right: 0, bottom: 0, backgroundColor: C.ink, padding: "18px 30px", ...caps, fontSize: 26, letterSpacing: "0.08em", color: C.white }}>Nota completa en lavozriojana.com</div>
+      <Grain opacity={0.04} />
+    </AbsoluteFill>
+  );
+};
+
 // ── Póster: sin fotografía ──────────────────────────────────────────────
 const Poster: React.FC<{ props: AutomaticInstagramCardV2Props; style: SectionStyle; tokens: Token[] }> = ({ props, style, tokens }) => {
   const top = 200;
@@ -411,5 +493,7 @@ export const AutomaticInstagramCardV2: React.FC<AutomaticInstagramCardV2Props> =
   const layout = resolveCardLayout(props, style);
   if (layout === "poster") return <Poster props={props} style={style} tokens={tokens} />;
   if (layout === "cintas") return <FullPhoto props={props} style={style} tokens={tokens} />;
+  if (layout === "localidad") return <LocalityCover props={props} style={style} tokens={tokens} />;
+  if (layout === "bloque") return <ColorBlock props={props} style={style} tokens={tokens} />;
   return <PhotoTop props={props} style={style} ink={layout === "tinta"} tokens={tokens} />;
 };

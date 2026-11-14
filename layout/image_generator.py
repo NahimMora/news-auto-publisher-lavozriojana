@@ -532,12 +532,19 @@ def _generate_instagram_remotion(
                 # Foto casi cuadrada o vertical recortada en alto: se sube el
                 # foco para no cortar cabezas (sin detectar caras).
                 props["assetFocusY"] = 35
+            from utils.growth_image_rules import rotation_layout
+
+            t02_layout = rotation_layout(article, has_photo=bool(local_path), locality=str(props.get("locality") or ""))
+            if t02_layout:
+                props["layout"] = t02_layout
+                logger.info("Rotación T02: diseño %s", t02_layout)
             asset_paths = {"assetFile": local_path} if local_path else {}
             # V2 siempre renderiza a 2× (bordes de texto finos en el feed).
             png_bytes, _metadata = render_still(decision.composition, props, asset_paths=asset_paths, scale=2)
             publication_visual_style = True
             if render_meta is not None:
                 render_meta["growth_rules"] = rules
+                render_meta["t02_layout"] = t02_layout or "off"
         else:
             png_bytes = _render_instagram_v1(
                 article, local_path, orientation, highlight_terms, publication_visual_style,

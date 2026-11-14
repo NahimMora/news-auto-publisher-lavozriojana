@@ -636,6 +636,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "VISUAL_STYLE_VERSION",
                 "REEL_VISUAL_STYLE_VERSION",
                 "INSTAGRAM_VISUAL_STYLE_VERSION",
+                "T02_LAYOUT_ROTATION_ENABLED",
                 "OG_VISUAL_STYLE_VERSION",
                 "REEL_COVER_ENABLED",
                 "REEL_COVER_FACEBOOK_ENABLED",
