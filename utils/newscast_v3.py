@@ -743,11 +743,16 @@ def check_media(images: list[str], *, title: str, excerpt: str, video: bool, cac
             with open(path, "rb") as fh:
                 parts.append(types.Part.from_bytes(data=fh.read(), mime_type="image/jpeg"))
         client = genai.Client(api_key=key)
+        vision_model = os.getenv("NIGHTLY_NEWSCAST_VISION_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        started_at = time.perf_counter()
         response = client.models.generate_content(
-            model=os.getenv("NIGHTLY_NEWSCAST_VISION_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+            model=vision_model,
             contents=[*parts, prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
         )
+        from utils.ai_client import record_usage
+
+        record_usage(stage="vision:newscast_media", model=vision_model, response=response, started_at=started_at, success=True)
         out = json.loads(response.text or "{}")
     except Exception as exc:  # noqa: BLE001 — sin control visual: las puertas lo tratan como no verificado
         logger.warning("Control visual falló: %s", type(exc).__name__)

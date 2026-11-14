@@ -196,6 +196,12 @@ def _hashtags(noticia: dict) -> str:
 
 def build_instagram_caption(noticia: dict) -> str:
     cuerpo = _caption_from_web(noticia) if _caption_from_web_enabled() else ""
+    if not cuerpo and noticia.get("caption_deferred") and not str(noticia.get("texto_instagram") or "").strip():
+        # Caption diferido (utils/cost_controls.py): se genera recién acá,
+        # sólo para las notas que una red publica sin texto de la web.
+        from utils.cost_controls import ensure_caption
+
+        ensure_caption(noticia)
     if not cuerpo:
         cuerpo = str(noticia.get("texto_instagram") or "").strip()
     if not cuerpo:

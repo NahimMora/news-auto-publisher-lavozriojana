@@ -37,13 +37,17 @@ class AiClientInstrumentationTests(unittest.TestCase):
         with ec_db.connection(self.db_path) as conn:
             return conn.execute("SELECT * FROM ai_call_metrics").fetchall()
 
-    def test_chat_completion_without_stage_does_not_instrument(self):
+    def test_chat_completion_without_stage_records_caller_module(self):
+        # Desde 2026-11-14 toda llamada se mide (controles de costo): sin
+        # ``stage`` queda registrada con el módulo que llamó.
         with patch("utils.ai_client.genai.Client", return_value=_fake_client()):
             result = ai_client.chat_completion(
                 messages=[{"role": "user", "content": "hola"}], api_key="fake-key"
             )
         self.assertEqual(result, "respuesta generada")
-        self.assertEqual(self._call_rows(), [])
+        rows = self._call_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["stage"].startswith("auto:"))
 
     def test_chat_completion_with_stage_records_metrics_with_real_usage(self):
         usage = _FakeUsage(prompt_tokens=42, candidate_tokens=7)

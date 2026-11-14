@@ -45,6 +45,38 @@ def _to_gemini_contents(
     return system_instruction, contents
 
 
+def _caller_stage() -> str:
+    """Etapa por defecto: el módulo que llamó a la IA (``auto:caption_generator``).
+
+    Así toda llamada queda medida aunque su call site no pase ``stage``
+    (antes sólo se registraban las que lo pasaban: editorial y noticiero).
+    """
+    import sys
+
+    frame = sys._getframe(1)
+    while frame is not None:
+        name = frame.f_globals.get("__name__", "")
+        if name and name != __name__ and not name.startswith(("editorial_context.instrumentation", "google.")):
+            return "auto:" + name.rsplit(".", 1)[-1]
+        frame = frame.f_back
+    return "auto:desconocido"
+
+
+def record_usage(*, stage: str, model: str, response: object = None, started_at: float, success: bool,
+                 input_chars: int = 0, output_chars: int = 0) -> None:
+    """Registra una llamada hecha directo con el SDK (voz, control de imágenes)."""
+    _record_instrumentation(
+        stage=stage,
+        article_id=None,
+        model_used=model,
+        started_at=started_at,
+        input_chars=input_chars,
+        output_chars=output_chars,
+        usage_metadata=getattr(response, "usage_metadata", None) if response is not None else None,
+        success=success,
+    )
+
+
 def _record_instrumentation(
     *,
     stage: str | None,
@@ -56,6 +88,7 @@ def _record_instrumentation(
     usage_metadata: object,
     success: bool,
 ) -> None:
+    stage = stage or _caller_stage()
     if not stage:
         return
     try:

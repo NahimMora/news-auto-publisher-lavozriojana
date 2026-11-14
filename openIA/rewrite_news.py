@@ -30,6 +30,7 @@ from utils.editorial_router import apply_routing
 from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
 from utils import same_event
+from utils import cost_controls
 from utils.logging_setup import setup_logger
 from utils.classifier import clasificar_con_resultado
 from utils.judicial_sources import JUDICIAL_RULES, assess_judicial, is_judicial, min_score as judicial_min_score
@@ -207,6 +208,88 @@ def _call_gemini(titulo: str, parrafos: list[str], reglas_fuente: str = "") -> t
     return nuevo_titulo, hashtag
 
 
+COMBINED_PROMPT = """Sos el editor de "La Voz Riojana", un medio digital de noticias de La Rioja, Argentina.
+Con la noticia de abajo hacé TODO esto en una sola respuesta.
+
+1) TÍTULO reescrito, más atractivo, claro e impactante:
+- Máximo 100 caracteres.
+- No inventar datos, armas, personas ni hechos que no estén en el texto original.
+- No agregar emociones ni adjetivos que no estén implícitos; respetar los hechos tal cual son.
+- Español rioplatense. El lector ya sabe que es de La Rioja: no agregues "de La Rioja", "riojano/a" ni "en la provincia", salvo que haga falta para distinguirla de un hecho nacional.
+- Directo y llamativo: empezá por el hecho más fuerte, verbo en voz activa, lenguaje de todos los días. Sin fórmulas de expediente ni sensacionalismo ni signos de exclamación.
+{reglas_fuente}
+2) HASHTAG de localidad: sólo si la noticia tiene UNA localidad riojana claramente identificable, uno de estos: {hashtags}. Si no, "".
+
+3) CATEGORÍA, una sola de: {categorias}
+- Interior: localidades del interior de La Rioja (fuera de la capital). Policiales: crímenes, accidentes, detenciones, violencia, robos.
+- Politica: gobierno, funcionarios, elecciones, legislatura, gestión pública. Sociedad: comunidad, vecinos, servicios, clima, ambiente, género.
+- Economia: finanzas, precios, trabajo, empresas, industria, minería, agro. Salud: medicina, hospitales, salud pública.
+- Educacion: escuelas, universidades, docentes, becas. Deportes: deporte y resultados.
+- Cultura: arte, patrimonio, tradiciones, eventos culturales, turismo. Espectaculos: artistas, shows, TV, cine, música, farándula.
+{puntaje}
+Respondé SOLO este JSON: {{"titulo": str, "hashtag": str, "categoria": str{campo_puntaje}}}
+
+NOTICIA ORIGINAL:
+Título: {titulo}
+Texto: {texto}
+"""
+
+_RELEVANCE_RUBRIC = (
+    "4) RELEVANCIA (entero 0-10) de esta nota de farándula para una audiencia general argentina: 9-10 hecho mayor con "
+    "figuras de primer nivel; 6-8 farándula relevante con figuras conocidas; 3-5 relleno; 0-2 trivial o sin figura relevante.\n"
+)
+_IMPACT_RUBRIC = (
+    "4) IMPACTO (entero 0-10) de esta noticia internacional para el público argentino: 9-10 hecho mundial mayor o que afecta "
+    "directamente a la Argentina; 7-8 relevante con repercusión regional; 4-6 interés moderado; 0-3 curiosidad lejana.\n"
+)
+
+
+def single_call_enabled() -> bool:
+    return os.getenv("REWRITE_SINGLE_CALL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+
+
+def _call_combined(noticia: dict, reglas_fuente: str) -> dict | None:
+    """Título, hashtag, categoría y puntaje en UNA llamada. ``None`` si la
+    respuesta no sirve (se cae a las llamadas separadas de siempre)."""
+    import json as _json
+
+    from utils.classifier import CATEGORIAS
+
+    source = str(noticia.get("source") or "").strip().lower()
+    kind = "relevancia" if source.startswith("paparazzi") else "impacto" if "internacional" in source else ""
+    texto = " ".join((noticia.get("parrafos") or [])[:3])[:1500]
+    prompt = COMBINED_PROMPT.format(
+        reglas_fuente=f"- {reglas_fuente}\n" if reglas_fuente else "",
+        hashtags=", ".join(LOCALITY_HASHTAGS),
+        categorias=", ".join(CATEGORIAS),
+        puntaje=_RELEVANCE_RUBRIC if kind == "relevancia" else _IMPACT_RUBRIC if kind == "impacto" else "",
+        campo_puntaje=f', "{kind}": int' if kind else "",
+        titulo=noticia.get("titulo", ""),
+        texto=texto,
+    )
+    try:
+        raw = _json.loads(chat_completion(
+            messages=[{"role": "user", "content": prompt}], model=GEMINI_MODEL, api_key=os.getenv("GEMINI_API_KEY"),
+            temperature=0.5, max_tokens=260, timeout=GEMINI_TIMEOUT, json_mode=True, stage="rewrite_combined",
+        ))
+    except Exception as exc:  # noqa: BLE001 — se cae a las llamadas separadas
+        logger.warning("Llamada única falló (%s): se usan las llamadas separadas", type(exc).__name__)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    title = " ".join(str(raw.get("titulo") or "").split())
+    category = next((c for c in CATEGORIAS if c.lower() == str(raw.get("categoria") or "").strip().lower()), "")
+    if not title or len(title) > 140 or not category:
+        logger.warning("Llamada única con respuesta inválida: se usan las llamadas separadas")
+        return None
+    hashtag = str(raw.get("hashtag") or "").strip()
+    out = {"titulo": title, "hashtag": hashtag if hashtag in LOCALITY_HASHTAGS else "", "categoria": category}
+    if kind:
+        value = raw.get(kind)
+        out[kind] = int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 10 else None
+    return out
+
+
 def rewrite_noticia(noticia: dict) -> dict:
     titulo_original = noticia.get("titulo", "")
     parrafos = noticia.get("parrafos", [])
@@ -219,7 +302,16 @@ def rewrite_noticia(noticia: dict) -> dict:
             f'Empezá el título por la novedad ({update["novedad"]}) y no repitas el título anterior'
         )
     fallbacks_used: dict[str, bool] = {}
+    combined = _call_combined(noticia, "\n- ".join(reglas)) if single_call_enabled() else None
+    if combined:
+        noticia["titulo_original"] = titulo_original
+        noticia["titulo"] = combined["titulo"]
+        noticia["hashtag_localidad"] = combined["hashtag"]
+        noticia["rewrite_fallback_used"] = False
+        logger.info(f"Reescrito (llamada única): {combined['titulo'][:70]}")
     for attempt in range(1, GEMINI_RETRY_COUNT + 1):
+        if combined:
+            break
         try:
             nuevo_titulo, hashtag = _call_gemini(titulo_original, parrafos, "\n- ".join(reglas))
             noticia["titulo_original"] = titulo_original
@@ -243,15 +335,21 @@ def rewrite_noticia(noticia: dict) -> dict:
 
     # Clasificar con IA y sobreescribir sección
     noticia["seccion_scraper"] = noticia.get("seccion", "")
-    classification = clasificar_con_resultado(noticia["titulo"], parrafos)
-    noticia["seccion"] = classification.category
-    noticia["classification_fallback_used"] = classification.fallback_used
-    if classification.fallback_used:
-        fallbacks_used["category"] = True
+    if combined:
+        noticia["seccion"] = combined["categoria"]
+        noticia["classification_fallback_used"] = False
+    else:
+        classification = clasificar_con_resultado(noticia["titulo"], parrafos)
+        noticia["seccion"] = classification.category
+        noticia["classification_fallback_used"] = classification.fallback_used
+        if classification.fallback_used:
+            fallbacks_used["category"] = True
 
     # Score de relevancia (sólo paparazzi): farándula nacional sin curación
     # local, así que este es el único filtro editorial antes del cupo de IG.
-    if str(noticia.get("source") or "").strip().lower().startswith("paparazzi"):
+    if combined and "relevancia" in combined:
+        noticia["paparazzi_relevance_score"] = combined["relevancia"]
+    elif str(noticia.get("source") or "").strip().lower().startswith("paparazzi"):
         relevance = score_relevance(noticia["titulo"], parrafos)
         noticia["paparazzi_relevance_score"] = relevance.score
         if relevance.fallback_used:
@@ -259,17 +357,25 @@ def rewrite_noticia(noticia: dict) -> dict:
 
     # Impacto (sólo internacionales): con PUBLISH_INTERNATIONAL_BUCKET_ENABLED
     # se publican sólo las de alto impacto (ver utils/publish_selection.py).
-    if "internacional" in str(noticia.get("source") or "").strip().lower():
+    if combined and "impacto" in combined:
+        noticia["international_impact_score"] = combined["impacto"]
+    elif "internacional" in str(noticia.get("source") or "").strip().lower():
         impact = score_international_impact(noticia["titulo"], parrafos)
         noticia["international_impact_score"] = impact.score
         if impact.fallback_used:
             fallbacks_used["international_impact"] = True
 
     # Generar caption estructurado (titulo mayusculas + que paso + lo relevante + el detalle + CTA)
-    caption_data = generate_caption(noticia)
-    noticia.update(caption_data)
-    if caption_data.get("caption_fallback_used"):
-        fallbacks_used["caption"] = True
+    # Con CAPTION_LAZY_ENABLED se genera recién si una red lo necesita
+    # (utils/cost_controls.py); las notas con video lo siguen generando acá.
+    has_video = bool(noticia.get("video_url") or noticia.get("video_embed_url"))
+    if cost_controls.lazy_caption_enabled() and not has_video:
+        noticia["caption_deferred"] = True
+    else:
+        caption_data = generate_caption(noticia)
+        noticia.update(caption_data)
+        if caption_data.get("caption_fallback_used"):
+            fallbacks_used["caption"] = True
 
     # Completar localidad/bajada para la card automática de una sola imagen
     # (AutomaticInstagramCard.tsx) — nunca bloquea la cola si falla: vacío
@@ -682,6 +788,7 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
     web_added = 0
     fallback_count = 0
     duplicates_avoided = 0
+    national_web_skipped = 0
     # Cargado una sola vez por corrida (no por noticia) — ver
     # utils/category_performance.py y docs/DECISIONS.md.
     category_performance = load_category_performance()
@@ -774,6 +881,14 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             elif check.related:
                 noticia["event_related"] = check.related_payload()
 
+        if cost_controls.paparazzi_enabled() and str(noticia.get("source") or "").strip().lower().startswith("paparazzi"):
+            passed, reason, _score = cost_controls.paparazzi_gate(noticia)
+            if not passed:
+                queue.dead_letter(item_id, reason)
+                record_queue_event(stage="rewrite", status="dead_letter", reason=reason, item=noticia)
+                succeeded += 1
+                continue
+
         original = copy.deepcopy(noticia)
         try:
             rewritten = processor(noticia)
@@ -827,7 +942,10 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             web_item = build_web_item(original, editorial_seed=rewritten)
             if _append_output(META_OUTPUT, meta_item, "meta_queue_key"):
                 meta_added += 1
-            if _append_output(WEB_OUTPUT, web_item, "web_queue_key"):
+            if cost_controls.national_web_skip_enabled() and cost_controls.is_national(rewritten):
+                national_web_skipped += 1
+                logger.info("Nacional sin vínculo riojano: no va a la web (%s)", str(rewritten.get("titulo") or "")[:70])
+            elif _append_output(WEB_OUTPUT, web_item, "web_queue_key"):
                 web_added += 1
             queue.complete(
                 item_id,
@@ -877,6 +995,7 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             "web_added": web_added,
             "fallback_count": fallback_count,
             "duplicates_avoided": duplicates_avoided,
+            "national_web_skipped": national_web_skipped,
             "state_path": REWRITE_STATE,
         },
     )

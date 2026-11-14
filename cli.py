@@ -425,6 +425,18 @@ def cmd_run_once(args) -> int:
     return aggregate.exit_code
 
 
+def cmd_ai_usage(args) -> int:
+    """Gasto estimado de IA por etapa y modelo (sólo lectura)."""
+    from utils import ai_usage
+
+    report = ai_usage.summary(days=args.days)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(ai_usage.render_text(report))
+    return 0
+
+
 def cmd_doctor(args) -> int:
     result = diagnose_environment(scope=getattr(args, "scope", "all"))
     if getattr(args, "json", False):
@@ -975,6 +987,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("--json", action="store_true")
 
+    usage_parser = sub.add_parser("ai-usage", help="Gasto estimado de IA por etapa y modelo")
+    usage_parser.add_argument("--days", type=float, default=7)
+    usage_parser.add_argument("--json", action="store_true")
+
     doctor_parser = sub.add_parser("doctor", help="Valida configuración sin publicar")
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.add_argument(
@@ -1161,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status,
         "run-once": cmd_run_once,
         "doctor": cmd_doctor,
+        "ai-usage": cmd_ai_usage,
         "preflight": cmd_preflight,
         "canary": cmd_canary,
         "reconcile-facebook": cmd_reconcile_facebook,

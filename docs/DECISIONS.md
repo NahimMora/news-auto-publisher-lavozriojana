@@ -3043,3 +3043,29 @@ cámara), nunca una foto de una nota presentada como aporte de un vecino.
 **Evidencia**: `tests/test_wa_aportes_story.py`; render real 1080×1920, 11 s,
 h264 + aac, 17 s de render.
 **Rollback**: `WA_APORTES_STORY_ENABLED=false`.
+
+## 2026-11-14 — Controles de costo de IA
+
+**Contexto**: los créditos prepagos de Gemini se agotaron dos veces en la
+semana; el responsable pidió bajar el costo, empezando por la reescritura, con
+un volumen más local y sin sacar paparazzi de la web (sólo bajarle el volumen).
+**Decisión** (cada punto detrás de su interruptor, apagado por defecto):
+1. Medición: toda llamada a la IA queda en `ai_call_metrics` (las que no pasan
+   `stage` se registran como `auto:<módulo>`; voz y control de imágenes también)
+   y `python cli.py ai-usage --days N` estima el gasto por etapa y modelo.
+2. `CAPTION_LAZY_ENABLED`: el caption con IA ya no se genera al reescribir cada
+   nota; con `IG_CAPTION_FROM_WEB_ENABLED` las redes usan el texto de la web.
+   Se genera sólo si hace falta y queda en `data/caption_cache.json`. Las notas
+   con video lo siguen generando al reescribir (los Reels lo usan).
+3. `PAPARAZZI_HEURISTIC_ENABLED`: puntaje 0–10 sin IA (figuras de primer nivel,
+   hechos fuertes, relleno) antes de procesar; mínimo `PAPARAZZI_HEURISTIC_MIN`
+   (5) y tope `PAPARAZZI_DAILY_MAX` (10) por día. Calibrado con las 105 notas de
+   la semana: pasa el 70 %.
+4. `REWRITE_SINGLE_CALL_ENABLED`: título, hashtag, sección y puntaje
+   (relevancia/impacto) en una sola llamada JSON; ante una respuesta inválida se
+   usan las llamadas separadas de siempre (nunca se pierde la nota).
+5. `NATIONAL_WEB_SKIP_ENABLED` (queda apagado): las nacionales sin vínculo
+   riojano no van a la web. Como Instagram y Facebook exigen `web_url`, también
+   dejan de salir en redes; activarlo es decisión del responsable.
+**Evidencia**: `tests/test_cost_controls.py`; reporte de uso sobre datos reales.
+**Rollback**: cada interruptor en `false`.

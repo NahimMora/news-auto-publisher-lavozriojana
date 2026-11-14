@@ -555,7 +555,11 @@ def synthesize(text: str, dest_wav: str, *, retries: int = 3, direction: str | N
     last: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
+            started_at = time.perf_counter()
             response = client.models.generate_content(model=model, contents=(direction or VOICE_DIRECTION) + text, config=config)
+            from utils.ai_client import record_usage
+
+            record_usage(stage="tts", model=model, response=response, started_at=started_at, success=True, input_chars=len(text))
             data = response.candidates[0].content.parts[0].inline_data.data
             pcm = base64.b64decode(data) if isinstance(data, str) else data
             if not pcm:
@@ -677,11 +681,16 @@ def check_photo(path: str) -> dict:
         with open(path, "rb") as fh:
             data = fh.read()
         client = genai.Client(api_key=key)
+        vision_model = os.getenv("NIGHTLY_NEWSCAST_VISION_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        started_at = time.perf_counter()
         response = client.models.generate_content(
-            model=os.getenv("NIGHTLY_NEWSCAST_VISION_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+            model=vision_model,
             contents=[types.Part.from_bytes(data=data, mime_type="image/jpeg"), PHOTO_CHECK_PROMPT],
             config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
         )
+        from utils.ai_client import record_usage
+
+        record_usage(stage="vision:check_photo", model=vision_model, response=response, started_at=started_at, success=True)
         out = json.loads(response.text or "{}")
         return {"face": bool(out.get("persona_primer_plano")), "flyer": bool(out.get("placa_con_texto"))}
     except Exception as exc:  # noqa: BLE001 — sin control visual se sigue; el operador revisa en la prueba
