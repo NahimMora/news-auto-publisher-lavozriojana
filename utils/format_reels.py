@@ -18,6 +18,9 @@ Facebook) con portada propia. Estado propio (``data/format_reels.json``):
 cada nota se evalúa una sola vez por formato y un resultado ambiguo de Meta
 no se reintenta.
 
+Voz: ``FORMAT_REELS_TTS_MODEL`` (default ``gemini-3.8-flash-tts``: los modelos de voz 2.5
+se dan de baja el 2026-11-17).
+
 Interruptores (apagados por defecto): ``FORMAT_REELS_UM_ENABLED``,
 ``FORMAT_REELS_DU_ENABLED``; ``FORMAT_REELS_FACEBOOK`` (default ``true``).
 """
@@ -618,7 +621,8 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     public = os.path.join(REMOTION_DIR, "public")
     rel = os.path.relpath(work, public).replace("\\", "/")
     wav = os.path.join(work, "voz.wav")
-    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=os.getenv("FORMAT_REELS_TEMPO", "1.08"), voice=voice())
+    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=os.getenv("FORMAT_REELS_TEMPO", "1.08"), voice=voice(),
+                           model=os.getenv("FORMAT_REELS_TTS_MODEL", "gemini-3.8-flash-tts"))
     alignment = align_clip(wav, plan.text, int(seconds * 1000))
     if not alignment.ok:
         raise RuntimeError(f"la voz no alinea con el guion: {alignment.errors[:2]}")

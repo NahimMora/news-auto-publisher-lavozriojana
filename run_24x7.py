@@ -41,6 +41,9 @@ CYCLE_STEPS = [
     ("meta/run_x_videos.py", "instagram"),
     # Notas de paparazzi con video: sólo Reel, estado propio.
     ("meta/run_paparazzi_videos.py", "instagram"),
+    # Reels propios de Último momento y Datos útiles (después de la web: usan
+    # notas ya publicadas). Estado propio; apagados por defecto.
+    ("meta/run_format_reels.py", "instagram"),
     # Canal y grupo de WhatsApp: lo que salió en Facebook en este ciclo (y los
     # Reels con nota, como link "VIDEO"). Apagado por defecto.
     ("meta/run_whatsapp.py", "facebook"),
@@ -88,6 +91,8 @@ _STEP_TIMEOUTS = {
     "meta/run_native_stories.py": 900,
     # Render de 11 s de video (hasta 10 min) + subida.
     "meta/run_wa_aportes_story.py": 900,
+    # Hasta un Reel de cada formato por ciclo: guion + voz + render (~1-2 min c/u).
+    "meta/run_format_reels.py": 1500,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

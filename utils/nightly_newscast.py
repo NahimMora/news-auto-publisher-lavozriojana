@@ -537,7 +537,7 @@ def cached_voice(text: str, dest_wav: str) -> float:
 
 
 def synthesize(text: str, dest_wav: str, *, retries: int = 3, direction: str | None = None, tempo: str | None = None,
-               voice: str | None = None) -> float:
+               voice: str | None = None, model: str | None = None) -> float:
     """Locución con tonada riojana (Gemini TTS). Devuelve la duración en s.
     ``direction``/``tempo``/``voice`` permiten otra dirección de voz (V3, Reels de
     formato) sin tocar la de V2."""
@@ -547,7 +547,7 @@ def synthesize(text: str, dest_wav: str, *, retries: int = 3, direction: str | N
     key = os.getenv("GEMINI_API_KEY", "")
     if not key or key == "PENDIENTE":
         raise RuntimeError("GEMINI_API_KEY no configurada")
-    model = os.getenv("NIGHTLY_NEWSCAST_TTS_MODEL", "gemini-2.5-pro-preview-tts")
+    model = model or os.getenv("NIGHTLY_NEWSCAST_TTS_MODEL", "gemini-2.5-pro-preview-tts")
     voice = voice or os.getenv("NIGHTLY_NEWSCAST_VOICE", "Orus")
     client = genai.Client(api_key=key)
     config = types.GenerateContentConfig(

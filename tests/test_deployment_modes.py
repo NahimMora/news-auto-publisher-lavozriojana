@@ -126,7 +126,7 @@ class DeploymentModeTests(unittest.TestCase):
         children = result.details["children"]
         self.assertEqual(
             # Al final, el feed de datos para la web (meta/run_web_feed.py).
-            ["scraping_rewrite", "scraping_rewrite", "web", "facebook"] + ["instagram"] * 3
+            ["scraping_rewrite", "scraping_rewrite", "web", "facebook"] + ["instagram"] * 4
             # WhatsApp copia lo de Facebook: sigue su interruptor.
             + ["facebook"] * 2 + ["instagram"] * 7 + ["web"],
             [item["stage"] for item in children],
