@@ -139,7 +139,7 @@ def render(props: dict) -> tuple[str, str]:
             json.dump(props, fh, ensure_ascii=False)
         result = subprocess.run(
             _npx_args(["remotion", "render", COMPOSITION, video, "--codec=h264", "--crf=18", f"--props={props_path}"]),
-            cwd=REMOTION_DIR, capture_output=True, text=True, timeout=600,
+            cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
         )
         if result.returncode != 0 or not os.path.isfile(video):
             raise RuntimeError(f"remotion: {(result.stderr or result.stdout)[-300:]}")

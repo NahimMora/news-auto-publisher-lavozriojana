@@ -16,6 +16,7 @@ import { NightlyNewscastV2, NightlyNewscastV2Props, NightlyNewscastV2Schema, new
 import { NightlyNewscastV3, NightlyNewscastV3Props, NightlyNewscastV3Schema } from "./newscast/NightlyNewscastV3";
 import { NightlyNewscastV5, NightlyNewscastV5Props, NightlyNewscastV5Schema } from "./newscast5/NightlyNewscastV5";
 import { NewscastCoverV5 } from "./newscast5/Cover";
+import { FORMAT_REEL_DEFAULTS, FORMAT_REEL_FPS, FormatReel, FormatReelProps, FormatReelSchema } from "./social/FormatReel";
 import { WA_STORY_DEFAULTS, WA_STORY_FPS, WA_STORY_FRAMES, WaAportesStory, WaAportesStorySchema } from "./social/WaAportesStory";
 
 const recapMetadata: CalculateMetadataFunction<WeeklyRecapV2Props> = ({ props }) => ({
@@ -53,8 +54,23 @@ const reelMetadata: CalculateMetadataFunction<EditorialReelV2Props> = ({ props }
   durationInFrames: props.durationInFrames + REEL_V2_OUTRO_FRAMES,
 });
 
+const formatReelMetadata: CalculateMetadataFunction<FormatReelProps> = ({ props }) => ({
+  durationInFrames: Math.max(1, props.totalFrames),
+});
+
 export const V2Compositions: React.FC = () => (
   <>
+    <Composition
+      id="FormatReel"
+      component={FormatReel}
+      durationInFrames={150}
+      fps={FORMAT_REEL_FPS}
+      width={1080}
+      height={1920}
+      schema={FormatReelSchema}
+      defaultProps={FORMAT_REEL_DEFAULTS}
+      calculateMetadata={formatReelMetadata}
+    />
     <Composition
       id="WaAportesStory"
       component={WaAportesStory}
