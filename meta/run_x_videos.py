@@ -52,7 +52,14 @@ def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
     """Devuelve ``completed``, ``skipped`` (puntaje editorial), ``failed`` o ``deferred``."""
     xv._transition(job_id, status="processing", attempts=int(job.get("attempts") or 0))
 
-    noticia = xv.build_news_item(job, xv.fetch_x_metadata(job["url"]))
+    metadata = xv.fetch_x_metadata(job["url"])
+    salta = xv.salta_reason(job, metadata) if os.getenv("X_VIDEO_EXCLUDE_SALTA", "true").strip().lower() != "false" else ""
+    if salta:
+        # Descarte terminal antes de gastar IA y render: no se publica.
+        xv._transition(job_id, status="skipped", reason="region_salta", region_detail=salta)
+        xv.logger.info("Video de X descartado por ser de Salta (%s): %s", salta, job["url"])
+        return "skipped"
+    noticia = xv.build_news_item(job, metadata)
     if noticia is None:
         _retry_or_dead(job_id, job, "x_metadata_unavailable")
         return "failed"

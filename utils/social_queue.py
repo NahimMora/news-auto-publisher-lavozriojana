@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Literal
+from typing import Callable, Literal
 
 from utils.editorial_priority import item_source, priority_interleave, split_priority_batch
 from utils.file_manager import load_json, update_json
@@ -258,6 +258,7 @@ def get_pending(
     max_items: int | None = None,
     source_prefix: str | None = None,
     exclude_source_prefix: str | None = None,
+    item_filter: Callable[[dict], bool] | None = None,
 ) -> list[dict]:
     """Retorna pendientes; processing nunca se reintenta automáticamente.
 
@@ -265,6 +266,8 @@ def get_pending(
     fuente (ej. paparazzi) sin que compita por el mismo ``max_items`` que el
     resto — ver meta/run_ig.py, que llama esta función dos veces (pool
     general + pool reservado) en vez de mezclar todo en una sola selección.
+    ``item_filter`` hace lo mismo con un criterio arbitrario (p. ej. el
+    relleno local de Instagram, que sólo usa el cupo que sobra).
     """
     queue, expired = _expire_pending(platform)
     if expired:
@@ -288,6 +291,8 @@ def get_pending(
         pending = [
             item for item in pending if not item_source(item).startswith(exclude_source_prefix)
         ]
+    if item_filter is not None:
+        pending = [item for item in pending if item_filter(item)]
     if max_items is None:
         return _priority_interleave(pending)
     selected, deferred = split_priority_batch(pending, max_items=max_items)

@@ -17,6 +17,7 @@ from utils.logging_setup import setup_logger
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
 from utils.safe_http import UnsafeURLError, safe_get
+from utils.same_event import original_published
 from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
@@ -456,6 +457,9 @@ def post_to_facebook_detailed(noticia: dict) -> OperationResult:
             deduplicated=True,
         )
 
+    if original_published(noticia, "facebook"):
+        noticia = {**noticia, "show_update": True}
+
     endpoint = "feed"
     payload = {"message": _build_message(noticia)}
     timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
@@ -757,6 +761,53 @@ def post_reel_video_to_facebook(item: dict) -> OperationResult:
     return result
 
 
+_THUMB_MAX_BYTES = 8 * 1024 * 1024
+
+
+def set_video_thumbnail(video_id: str, image_url: str) -> OperationResult:
+    """Miniatura propia de un video/reel ya publicado (POST /{video-id}/thumbnails).
+
+    Best-effort y sin reintentos: nunca publica ni modifica el video; un
+    fallo sólo deja la miniatura que eligió Facebook.
+    """
+    if not video_id or not image_url:
+        return OperationResult(StageStatus.NO_WORK, error_type="missing_input")
+    try:
+        token = get_page_token()
+    except ValueError:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        image = safe_get(image_url, timeout=30)
+        image.raise_for_status()
+        content = image.content
+    except (UnsafeURLError, requests.RequestException) as exc:
+        logger.warning("Miniatura del reel no descargada: %s", type(exc).__name__)
+        return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_download_failed")
+    if not content or len(content) > _THUMB_MAX_BYTES:
+        return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_invalid_size")
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{video_id}/thumbnails",
+            data={"is_preferred": "true", "access_token": token},
+            files={"source": ("cover.jpg", content, "image/jpeg")},
+            timeout=int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Miniatura del reel no aplicada (red): %s", type(exc).__name__)
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error")
+    # El endpoint responde {"success": true} (sin id): no se usa _api_result.
+    data = _safe_json(response)
+    if response.status_code == 200 and data.get("success") is not False:
+        logger.info("Miniatura propia aplicada al reel de Facebook %s", video_id)
+        return OperationResult(StageStatus.SUCCESS, external_id=video_id, response=data)
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    logger.warning(
+        "Facebook no aceptó la miniatura del reel (HTTP %s, code %s)",
+        response.status_code, error.get("code"),
+    )
+    return OperationResult(StageStatus.DEGRADED, error_type="thumbnail_rejected", error_code=error.get("code") or response.status_code)
+
+
 # ── Media directa premium (Fase 3): social-only, sin link, sin CMS ────────
 # El backoff se comparte con el flujo automático (misma página/cuenta real
 # de Meta, vía ``_load_state``/``_backoff_until``/``_set_backoff`` sobre
@@ -892,3 +943,205 @@ def post_premium_direct_media_to_facebook(package: dict, slide_images: list[byte
     else:
         logger.error("Facebook rechazó la publicación premium: %s", result.to_dict())
     return result
+
+
+# ── Formatos sociales: historias, álbum diario, ediciones y comentarios ───
+# Sin dedup propio (lo lleva cada llamador). Comparten el backoff de la página.
+def _social_guard() -> OperationResult | None:
+    if not PAGE_ID or PAGE_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if PAGE_ID in DISABLED_PAGE_IDS:
+        return OperationResult(StageStatus.NO_WORK, error_type="platform_disabled")
+    try:
+        until = _backoff_until(_load_state())
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(StageStatus.DEGRADED, error_type="rate_limit", retryable=True, next_retry_at=until)
+    return None
+
+
+def _token_or_failure() -> tuple[str, OperationResult | None]:
+    try:
+        return get_page_token(), None
+    except ValueError as exc:
+        logger.error("No se obtuvo token de página: %s", exc)
+        return "", OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+
+
+def _success_flag_result(response) -> OperationResult:
+    """Endpoints que responden ``{"success": true}`` sin id."""
+    data = _safe_json(response)
+    if response.status_code == 200 and data.get("success") is not False and "error" not in data:
+        return OperationResult(StageStatus.SUCCESS, response=data)
+    result = _api_result(response)
+    return result if not result.ok else OperationResult(StageStatus.SUCCESS, response=data)
+
+
+def _upload_unpublished_photo(image_bytes: bytes, token: str, timeout: int) -> OperationResult:
+    response = requests.post(
+        f"{GRAPH_API}/{PAGE_ID}/photos",
+        data={"published": "false", "access_token": token},
+        files={"source": ("story.jpg", image_bytes, "image/jpeg")},
+        timeout=timeout,
+    )
+    return _api_result(response)
+
+
+def post_photo_story(image_bytes: bytes) -> OperationResult:
+    """Historia de foto de la página: foto sin publicar + ``/photo_stories``."""
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    if not image_bytes:
+        return OperationResult(StageStatus.FAILED, error_type="missing_image")
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        photo = _upload_unpublished_photo(image_bytes, token, timeout)
+        if not photo.ok:
+            return photo
+        response = requests.post(
+            f"{GRAPH_API}/{PAGE_ID}/photo_stories",
+            data={"photo_id": photo.external_id, "access_token": token},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    result = _api_result(response)
+    if result.ok:
+        logger.info("Historia publicada en Facebook: %s", result.external_id)
+    else:
+        logger.warning("Facebook rechazó la historia: %s", result.error_type)
+    return result
+
+
+def post_photo(image_bytes: bytes, message: str) -> OperationResult:
+    """Post de una foto con texto en la página (placas de servicio)."""
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    if not image_bytes:
+        return OperationResult(StageStatus.FAILED, error_type="missing_image")
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{PAGE_ID}/photos",
+            data={"message": message, "published": "true", "access_token": token},
+            files={"source": ("placa.jpg", image_bytes, "image/jpeg")},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    result = _api_result(response)
+    if result.ok:
+        logger.info("Placa publicada en Facebook: %s", result.external_id)
+    return result
+
+
+def post_photo_album(images: list[bytes], message: str) -> OperationResult:
+    """Post de varias fotos (carrusel de la mañana en Facebook)."""
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    if len(images) < 2:
+        return OperationResult(StageStatus.FAILED, error_type="invalid_slide_count")
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    timeout = int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "60"))
+    try:
+        fbids: list[str] = []
+        for image_bytes in images:
+            uploaded = _upload_unpublished_photo(image_bytes, token, timeout)
+            if not uploaded.ok:
+                return uploaded
+            fbids.append(uploaded.external_id)
+        response = requests.post(
+            f"{GRAPH_API}/{PAGE_ID}/feed",
+            data={"message": message, "attached_media": json.dumps([{"media_fbid": f} for f in fbids]), "access_token": token},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    result = _api_result(response)
+    if result.ok:
+        logger.info("Álbum publicado en Facebook: %s (%s fotos)", result.external_id, len(fbids))
+    return result
+
+
+def edit_post_message(post_id: str, message: str) -> OperationResult:
+    """Reemplaza el texto de un post propio (seguimiento de noticias)."""
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    if not post_id or not message:
+        return OperationResult(StageStatus.FAILED, error_type="missing_input")
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{post_id}",
+            data={"message": message, "access_token": token},
+            timeout=int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True)
+    result = _success_flag_result(response)
+    if result.ok:
+        logger.info("Texto actualizado en el post de Facebook %s", post_id)
+    return result
+
+
+def get_post_message(post_id: str) -> str | None:
+    token, failure = _token_or_failure()
+    if failure:
+        return None
+    try:
+        response = requests.get(f"{GRAPH_API}/{post_id}", params={"fields": "message", "access_token": token}, timeout=30)
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+    return str(_safe_json(response).get("message") or "")
+
+
+def reply_to_comment(comment_id: str, message: str) -> OperationResult:
+    blocked = _social_guard()
+    if blocked:
+        return blocked
+    token, failure = _token_or_failure()
+    if failure:
+        return failure
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{comment_id}/comments",
+            data={"message": message, "access_token": token},
+            timeout=int(os.getenv("FB_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    return _api_result(response)
+
+
+def post_comments(post_id: str, limit: int = 50) -> list[dict]:
+    token, failure = _token_or_failure()
+    if failure:
+        return []
+    try:
+        response = requests.get(
+            f"{GRAPH_API}/{post_id}/comments",
+            params={"fields": "id,message,created_time,from{id,name},comments.limit(20){from{id}}", "filter": "toplevel", "limit": limit, "access_token": token},
+            timeout=30,
+        )
+    except requests.RequestException:
+        return []
+    if response.status_code != 200:
+        return []
+    return list(_safe_json(response).get("data") or [])

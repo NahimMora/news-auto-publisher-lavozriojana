@@ -41,7 +41,28 @@ CYCLE_STEPS = [
     ("meta/run_x_videos.py", "instagram"),
     # Notas de paparazzi con video: sólo Reel, estado propio.
     ("meta/run_paparazzi_videos.py", "instagram"),
+    # Canal y grupo de WhatsApp: lo que salió en Facebook en este ciclo (y los
+    # Reels con nota, como link "VIDEO"). Apagado por defecto.
+    ("meta/run_whatsapp.py", "facebook"),
+    # Grupos de Facebook por localidad: arma la cola y lanza el publicador
+    # aparte (pausas largas sin frenar el ciclo). Apagado por defecto.
+    ("meta/run_fb_groups.py", "facebook"),
+    # Formatos propios (carrusel de las 8, resumen de los domingos,
+    # seguimiento), historias y respuestas: estado y cupos propios, cada uno
+    # con su interruptor apagado por defecto. Las historias van después de
+    # todo lo que publica en el feed para tomar las publicaciones del ciclo.
+    ("meta/run_social_formats.py", "instagram"),
+    ("meta/run_stories.py", "instagram"),
+    # Historias nativas con stickers reales (instagrapi): después de las de
+    # Graph para no duplicar las de último momento. Apagado por defecto.
+    ("meta/run_native_stories.py", "instagram"),
+    # Historia "Sumate a nuestro WhatsApp" (días fijos a las 20). Apagado por defecto.
+    ("meta/run_wa_join_story.py", "instagram"),
+    ("meta/run_comment_replies.py", "instagram"),
     ("meta/ig_insights.py", "instagram"),
+    # Datos para la web en R2 (lo más visto, servicios, actualizaciones,
+    # videos): después de las métricas para tomarlas frescas.
+    ("meta/run_web_feed.py", "web"),
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,
@@ -51,11 +72,17 @@ _STEP_TIMEOUTS = {
     # cada uno con video que puede tardar minutos en procesar en Meta, más el
     # reel best-effort y los posts automáticos generales, podían superarlo y
     # perder el ciclo completo (0 procesados) por timeout del subprocess.
-    "meta/run_ig.py": 1200,
+    # Con PIPELINE_IG_MAX_PER_CYCLE=12 y algún Reel, 20 min quedaba justo.
+    "meta/run_ig.py": 1800,
     # Hasta X_VIDEO_MAX_PER_CYCLE videos: descarga yt-dlp + render + proceso en Meta.
     "meta/run_x_videos.py": 1200,
     # Hasta PAPARAZZI_VIDEO_MAX_PER_CYCLE reels: descarga + render + proceso en Meta.
     "meta/run_paparazzi_videos.py": 1200,
+    # El Reel de los domingos renderiza ~30 s de video (hasta 15 min) y el
+    # carrusel de la mañana 7 láminas a 2×.
+    "meta/run_social_formats.py": 1500,
+    "meta/run_stories.py": 900,
+    "meta/run_native_stories.py": 900,
 }
 _DEFAULT_STEP_TIMEOUT = 600
 

@@ -57,10 +57,15 @@ class SelectSourcesTests(unittest.TestCase):
         sources = selector.select_sources(category="sociedad", keywords_text="el BCRA subio la tasa de referencia")
         self.assertIn("bcra", {s.source_id for s in sources})
 
-    def test_climate_keyword_adds_smn(self):
+    def test_climate_keyword_matches_smn_but_stays_filtered_while_disabled(self):
+        # smn_news quedó deshabilitada el 2026-10-18 (ws2.smn.gob.ar sin DNS,
+        # www.smn.gob.ar 403 a bots, argentina.gob.ar/smn/noticias sin
+        # novedades desde 2025): la regla sigue, el registry la filtra. El
+        # clima y las alertas se leen de los datos abiertos del SMN.
+        self.assertIn("smn_news", selector.KEYWORD_SOURCE_IDS["temporal"])
         sources = selector.select_sources(category="sociedad", keywords_text="alerta por temporal en la zona")
         ids = {s.source_id for s in sources}
-        self.assertIn("smn_news", ids)
+        self.assertNotIn("smn_news", ids)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,27 @@ if errorlevel 1 (
 )
 echo.
 
+echo [4/4] Registrando LaVozRiojana-Report ^(cada 3 dias, 9:00^) y LaVozRiojana-Watchdog ^(cada 15 min^)...
+schtasks /create /F ^
+  /tn "LaVozRiojana-Report" ^
+  /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%REPO_ROOT%\scripts\run_ops_task.ps1\" -Task report" ^
+  /sc daily /mo 3 /st 09:00 ^
+  /rl limited
+if errorlevel 1 (
+  echo [ERROR] No se pudo crear/actualizar LaVozRiojana-Report.
+  goto :fail
+)
+schtasks /create /F ^
+  /tn "LaVozRiojana-Watchdog" ^
+  /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%REPO_ROOT%\scripts\run_ops_task.ps1\" -Task watchdog" ^
+  /sc minute /mo 15 ^
+  /rl limited
+if errorlevel 1 (
+  echo [ERROR] No se pudo crear/actualizar LaVozRiojana-Watchdog.
+  goto :fail
+)
+echo.
+
 echo ======================================================
 echo   [OK] Tareas registradas.
 echo ======================================================

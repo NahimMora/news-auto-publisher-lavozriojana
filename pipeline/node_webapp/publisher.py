@@ -555,6 +555,8 @@ def _history_item(noticia: dict, payload: dict, public_url: str) -> dict:
         "url": noticia.get("url"),
         "web_url": public_url,
         "published_at_ts": int(time.time()),
+        # El seguimiento (utils/story_updates.py) enlaza la publicación anterior.
+        "event_update": noticia.get("event_update"),
     })
 
 
@@ -695,7 +697,29 @@ RIOJAN_SOURCE_SECTIONS = {
     "tiempopopular_interior",
     "nuevarioja_policiales",
     "nuevarioja_interior",
+    # Fénix sólo deja pasar notas con vínculo riojano (main_fenix._discard).
+    "fenix_locales",
+    # Medios Rioja: sólo Locales/Departamentales con vínculo riojano (main_mediosrioja._discard).
+    "mediosrioja_locales",
+    "mediosrioja_interior",
+    "judicial_mpf",
+    "judicial_justicia",
 }
+
+
+def web_post_id_for(url: str) -> str:
+    """ID del post del CMS para una URL publicada (la cola Meta guarda
+    ``web_post_id`` junto a ``web_url``; el archivo editorial no siempre)."""
+    if not url:
+        return ""
+    try:
+        items = load_json(META_OUTPUT, [], expected_type=list)
+    except JsonStateError:
+        return ""
+    for item in items:
+        if isinstance(item, dict) and item.get("web_url") == url and item.get("web_post_id"):
+            return str(item["web_post_id"])
+    return ""
 
 
 def _build_editorial_context_bundle(noticia: dict) -> dict | None:
@@ -715,11 +739,21 @@ def _build_editorial_context_bundle(noticia: dict) -> dict | None:
             category=category_to_slug(classify(noticia)),
             published_at=utc_now_iso(),
             riojan_source=str(noticia.get("source") or "").strip().lower() in RIOJAN_SOURCE_SECTIONS,
+            update_of_url=str((noticia.get("event_update") or {}).get("of_web_url") or ""),
         )
     except Exception:
         logger.exception("No se pudo construir el EditorialContextBundle; se publica sin contexto")
         return None
 
+    previous_post = bundle.link_previous_post_id or web_post_id_for(bundle.link_previous_url)
+    if previous_post and bundle.story_key:
+        # La nota anterior pasa a la misma historia verificada, así la web arma
+        # la cronología con las dos (best-effort: no frena la publicación).
+        from pipeline.node_webapp.editorial_flags import _patch_post
+
+        _patch_post(previous_post, {"storyKey": bundle.story_key})
+    elif bundle.link_previous_url and bundle.story_key:
+        logger.warning("No se encontró el post del CMS de la nota anterior: %s", bundle.link_previous_url)
     if bundle.context_depth == "NONE" and not bundle.story_key:
         return None
     return {

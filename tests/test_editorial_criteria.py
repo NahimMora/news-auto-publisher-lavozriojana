@@ -307,7 +307,7 @@ class InstagramLocalPolicyTests(unittest.TestCase):
         self.queue.enqueue_many(notes + [paparazzi, manual], platform="instagram")
 
         with mock.patch.dict(os.environ, {"IG_LOCAL_DAILY_MAX": "2"}):
-            kept, excluded = self.run_ig._apply_local_daily_cap(notes + [paparazzi, manual])
+            kept, excluded, _paced = self.run_ig._apply_local_daily_cap(notes + [paparazzi, manual])
 
         self.assertEqual([notes[0]["titulo"], paparazzi["titulo"], manual["titulo"]], [n["titulo"] for n in kept])
         self.assertEqual(2, excluded)
@@ -320,11 +320,114 @@ class InstagramLocalPolicyTests(unittest.TestCase):
         self.assertEqual(1, counts["unchanged"])
         self.assertEqual([], [n for n in self.queue.get_pending("instagram") if n["titulo"] == notes[1]["titulo"]])
 
+    def test_fill_category_only_uses_free_slots(self):
+        env = {"IG_LOCAL_CATEGORIES": "policiales,sociedad", "IG_LOCAL_FILL_CATEGORIES": "interior"}
+        policiales = [
+            self._note(i, seccion="policiales") for i in range(1, 4)
+        ]
+        interior = [
+            self._note(i, seccion="interior") for i in range(4, 7)
+        ]
+        self.queue.enqueue_many(interior + policiales, platform="instagram")
+        with mock.patch.dict(os.environ, env):
+            self.assertTrue(self.run_ig._local_allowed_by_category(interior[0]))
+            self.assertFalse(self.run_ig._local_allowed_by_category(self._note(7, seccion="politica")))
+            # Lote justo: interior no desplaza a policiales.
+            tight = self.run_ig._select_with_local_fill(3)
+            # Sobra cupo: interior completa el lote, siempre después.
+            roomy = self.run_ig._select_with_local_fill(5)
+        self.assertEqual({n["titulo"] for n in policiales}, {n["titulo"] for n in tight})
+        self.assertEqual({n["titulo"] for n in policiales}, {n["titulo"] for n in roomy[:3]})
+        self.assertEqual(2, len(roomy[3:]))
+        self.assertTrue(all(n["seccion"] == "interior" for n in roomy[3:]))
+
+    def test_fill_category_counts_for_daily_cap_after_primary(self):
+        env = {
+            "IG_LOCAL_CATEGORIES": "policiales",
+            "IG_LOCAL_FILL_CATEGORIES": "interior",
+            "IG_LOCAL_DAILY_MAX": "2",
+        }
+        policial = self._note(1, seccion="policiales")
+        interior = [
+            self._note(i, seccion="interior") for i in range(4, 6)
+        ]
+        self.queue.enqueue_many(interior + [policial], platform="instagram")
+        with mock.patch.dict(os.environ, env):
+            selected = self.run_ig._select_with_local_fill(5)
+            kept, excluded, _paced = self.run_ig._apply_local_daily_cap(selected)
+        self.assertEqual(policial["titulo"], kept[0]["titulo"])
+        self.assertEqual((2, 1), (len(kept), excluded))
+
+    def test_fill_disabled_by_default(self):
+        note = self._note(4, seccion="interior")
+        with mock.patch.dict(os.environ, {"IG_LOCAL_CATEGORIES": "policiales", "IG_LOCAL_FILL_CATEGORIES": ""}):
+            self.assertFalse(self.run_ig._local_allowed_by_category(note))
+            self.assertFalse(self.run_ig._is_local_fill(note))
+
     def test_no_cap_by_default(self):
         notes = [self._note(i) for i in range(1, 4)]
         with mock.patch.dict(os.environ, {"IG_LOCAL_DAILY_MAX": "0"}):
-            kept, excluded = self.run_ig._apply_local_daily_cap(notes)
+            kept, excluded, _paced = self.run_ig._apply_local_daily_cap(notes)
         self.assertEqual((notes, 0), (kept, excluded))
+
+    def test_riojan_notes_of_any_category_enter_as_fill(self):
+        env = {"IG_LOCAL_CATEGORIES": "policiales,sociedad,salud,educacion", "IG_LOCAL_FILL_CATEGORIES": "interior",
+               "IG_LOCAL_FILL_RIOJAN": "true"}
+        riojan = self._note(1, seccion="politica", titulo="Quintela inauguró una obra en Chilecito")
+        national = self._note(2, seccion="politica", titulo="El Congreso debate el presupuesto nacional")
+        salud = self._note(3, seccion="salud", titulo="Campaña de vacunación en todo el país")
+        with mock.patch.dict(os.environ, env):
+            self.assertTrue(self.run_ig._local_allowed_by_category(riojan))
+            self.assertTrue(self.run_ig._is_local_fill(riojan))
+            self.assertFalse(self.run_ig._local_allowed_by_category(national))
+            self.assertTrue(self.run_ig._local_allowed_by_category(salud))
+            self.assertFalse(self.run_ig._is_local_fill(salud))
+        with mock.patch.dict(os.environ, {**env, "IG_LOCAL_FILL_RIOJAN": "false"}):
+            self.assertFalse(self.run_ig._local_allowed_by_category(riojan))
+
+    def test_active_day_fraction_skips_quiet_hours(self):
+        def at(hour, minute=0):
+            return time.mktime((2026, 10, 30, hour, minute, 0, 0, 0, -1))
+
+        with mock.patch.dict(os.environ, {"IG_STATIC_QUIET_HOURS": "0-7"}):
+            self.assertEqual(0.0, self.run_ig._active_day_fraction(at(7)))
+            self.assertAlmostEqual(0.5, self.run_ig._active_day_fraction(at(15, 30)))
+            self.assertEqual(1.0, self.run_ig._active_day_fraction(at(3)))
+        with mock.patch.dict(os.environ, {"IG_STATIC_QUIET_HOURS": ""}):
+            self.assertAlmostEqual(0.5, self.run_ig._active_day_fraction(at(12)))
+
+    def test_pacing_defers_fresh_notes_and_drops_stale_ones(self):
+        now = time.time()
+        notes = [{**self._note(i), "social_queued_at": now - 600} for i in range(1, 5)]
+        stale = {**self._note(5), "social_queued_at": now - 7 * 3600}
+        self.queue.enqueue_many(notes + [stale], platform="instagram")
+        env = {"IG_LOCAL_DAILY_MAX": "10", "IG_LOCAL_PACING_SLACK": "1"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(self.run_ig, "_active_day_fraction", return_value=0.2):
+            # 10 x 0,2 + 1 de margen = 3 notas a esta hora.
+            kept, excluded, paced = self.run_ig._apply_local_daily_cap(notes + [stale])
+        self.assertEqual([n["titulo"] for n in notes[:3]], [n["titulo"] for n in kept])
+        self.assertEqual((1, 1), (excluded, paced))
+        states = {item["titulo"]: item["instagram_state"] for item in json.loads(self.queue_path.read_text(encoding="utf-8"))}
+        self.assertEqual("pending", states[notes[3]["titulo"]])
+        self.assertEqual("excluded", states[stale["titulo"]])
+
+    def test_pacing_off_by_default(self):
+        notes = [self._note(i) for i in range(1, 4)]
+        with mock.patch.dict(os.environ, {"IG_LOCAL_DAILY_MAX": "10", "IG_LOCAL_PACING_SLACK": "0"}),                 mock.patch.object(self.run_ig, "_active_day_fraction", return_value=0.0):
+            self.assertEqual((notes, 0, 0), self.run_ig._apply_local_daily_cap(notes))
+
+    def test_quota_guard_keeps_room_for_reels(self):
+        statics = [self._note(i) for i in range(1, 4)]
+        reel = {**self._note(9, seccion="espectaculos", source="paparazzi"), "video_url": "https://v/1.mp4"}
+        guard = self.run_ig._apply_static_quota_guard
+        with mock.patch.dict(os.environ, {"IG_STATIC_QUOTA_CEILING": "88"}):
+            with mock.patch.object(self.run_ig, "_publishing_quota_usage", return_value=87):
+                self.assertEqual(([statics[0], reel], 2), guard(statics + [reel]))
+            with mock.patch.object(self.run_ig, "_publishing_quota_usage", return_value=None):
+                self.assertEqual((statics, 0), guard(statics))
+        with mock.patch.dict(os.environ, {"IG_STATIC_QUOTA_CEILING": "0"}),                 mock.patch.object(self.run_ig, "_publishing_quota_usage") as usage:
+            self.assertEqual((statics, 0), guard(statics))
+            usage.assert_not_called()
 
 
 class PaparazziVideoJobsTests(unittest.TestCase):
@@ -371,6 +474,38 @@ class PaparazziVideoJobsTests(unittest.TestCase):
         pending = self.jobs.pending_jobs(5)
         self.assertEqual([reel_dedup_key(fresh)], [job_id for job_id, _ in pending])
         self.assertEqual(fresh["video_url"], pending[0][1]["noticia"]["video_url"])
+
+    def test_same_video_in_another_note_does_not_create_second_reel(self):
+        # Paparazzi reutiliza el mismo clip en notas distintas del mismo tema.
+        now = int(time.time())
+        first = {**_paparazzi("a", video=True), "queued_at": now - 120}
+        same_clip = {**_paparazzi("b", video=True), "queued_at": now - 60}
+        same_clip["video_url"] = first["video_url"] + "?v=2"
+        self._write_meta([first, same_clip])
+        self.assertEqual({"new": 1}, self.jobs.ingest(now=now))
+
+        # Ya publicado: el video queda en la evidencia y bloquea una nota posterior.
+        from utils.paparazzi_reels import reel_dedup_key
+
+        later = {**_paparazzi("c", video=True), "queued_at": now - 30, "video_url": first["video_url"]}
+        self.posted.write_text(
+            json.dumps({"posted": {reel_dedup_key(first): {"video_url": first["video_url"]}}}), encoding="utf-8"
+        )
+        Path(self.jobs.STATE_PATH).unlink()
+        self._write_meta([later])
+        self.assertEqual({"new": 0}, self.jobs.ingest(now=now))
+
+    def test_abandoned_job_does_not_block_same_video(self):
+        now = int(time.time())
+        first = {**_paparazzi("a", video=True), "queued_at": now - 120}
+        self._write_meta([first])
+        self.jobs.ingest(now=now)
+        from utils.paparazzi_reels import reel_dedup_key
+
+        self.jobs.transition(reel_dedup_key(first), status="dead_letter", reason="x")
+        retry = {**_paparazzi("b", video=True), "queued_at": now - 60, "video_url": first["video_url"]}
+        self._write_meta([first, retry])
+        self.assertEqual({"new": 1}, self.jobs.ingest(now=now))
 
     def test_respects_operational_cutoff_and_flag(self):
         now = int(time.time())

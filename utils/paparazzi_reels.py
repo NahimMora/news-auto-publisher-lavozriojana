@@ -55,6 +55,7 @@ def _mark_posted(dedup_key: str, noticia: dict, *, ig_id: str, fb_id: str) -> No
             "posted_at": int(time.time()),
             "titulo": noticia.get("titulo", ""),
             "canonical_url": noticia.get("canonical_url") or noticia.get("url") or "",
+            "video_url": noticia.get("video_url") or "",
             "instagram_id": ig_id,
             "facebook_id": fb_id,
         }
@@ -85,13 +86,23 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
 
     from utils.video_renderer import render_video
 
-    titulo_reel = str(noticia.get("titulo_instagram") or noticia.get("titulo") or "")[:80].upper()
+    from utils.visual_v2_props import reel_credit, reel_deck_from_caption
+
+    titulo_display = str(noticia.get("titulo_instagram") or noticia.get("titulo") or "")[:80].strip()
+    titulo_reel = titulo_display.upper()
     caption = str(noticia.get("texto_instagram") or noticia.get("caption") or "")
     seccion = str(noticia.get("seccion") or "espectaculos")
+    origin_url = source_url or noticia.get("canonical_url") or noticia.get("url") or ""
     render_item = {
-        "source_url": source_url or noticia.get("canonical_url") or noticia.get("url") or "",
+        "source_url": origin_url,
         "video_url": video_url,
         "titulo_reel": titulo_reel,
+        # V2: titular con su caja original, bajada (1.ª oración del caption)
+        # y crédito verificable del video.
+        "titulo_display": titulo_display,
+        "reel_deck": reel_deck_from_caption(caption),
+        "reel_credit": reel_credit(str(origin_url))
+        or (f"Video: {noticia['video_credit']}" if noticia.get("video_credit") else ""),
         "caption": caption,
         "seccion": seccion,
         "duration_seconds": int(os.getenv("PAPARAZZI_REEL_FALLBACK_DURATION_SECONDS", "20")),
@@ -122,6 +133,7 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
             (render_info.get("fallback_reason") or {}).get("error_type"),
         )
         _cleanup_local(video_path)
+        _cleanup_local(render_info.get("cover_path"))
         return None
 
     from utils import r2_storage
@@ -129,16 +141,21 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
     if not r2_storage.is_configured():
         logger.warning("R2 no configurado; no se puede publicar el reel")
         _cleanup_local(video_path)
+        _cleanup_local(render_info.get("cover_path"))
         return None
 
+    cover_path = str(render_info.get("cover_path") or "")
     try:
         public_url, r2_key = r2_storage.upload_temp(video_path, ttl_hint="reel")
     except RuntimeError as exc:
         logger.warning("No se pudo subir el reel a R2: %s", exc)
         _cleanup_local(video_path)
+        _cleanup_local(cover_path)
         return None
     finally:
         _cleanup_local(video_path)
+
+    cover_url = _upload_cover(cover_path, r2_key)
 
     reel_item = {
         "titulo": titulo_reel,
@@ -147,6 +164,10 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         "texto_instagram": caption,
         "caption": caption,
         "seccion": seccion,
+        # Fuente y localidad: etiquetas del Gobierno y ubicación (utils/gov_tags.py, utils/ig_location.py).
+        "source": noticia.get("source") or "",
+        "locality": noticia.get("locality") or "",
+        "excerpt": noticia.get("excerpt") or "",
         "imagen_url": render_item["imagen_url"],
         "video_url": public_url,
         "share_to_feed": True,
@@ -158,6 +179,10 @@ def render_reel_item(noticia: dict) -> tuple[dict, str] | None:
         # sigue eligiendo su propio frame por defecto.
         "thumb_offset_ms": int(os.getenv("PAPARAZZI_REEL_THUMB_OFFSET_MS", "2500")),
     }
+    if cover_url:
+        # Portada propia (ReelCoverV2): Instagram la prioriza sobre
+        # thumb_offset; Facebook la recibe como miniatura (best-effort).
+        reel_item["cover_url"] = cover_url
     return reel_item, r2_key
 
 
@@ -169,19 +194,48 @@ def publish_facebook_reel(reel_item: dict) -> tuple[bool, str]:
         fb_result = post_reel_video_to_facebook(reel_item)
         if not fb_result.ok:
             logger.warning("Reel no publicado en Facebook: %s", fb_result.error_type)
+        elif reel_item.get("cover_url") and _enabled("REEL_COVER_FACEBOOK_ENABLED"):
+            from meta.fb_client import set_video_thumbnail
+
+            # El reel ya está publicado: la miniatura nunca cambia ese resultado.
+            set_video_thumbnail(fb_result.external_id or "", str(reel_item["cover_url"]))
         return fb_result.ok, fb_result.external_id or ""
     except Exception:
         logger.exception("Error inesperado publicando el reel en Facebook")
         return False, ""
 
 
-def delete_reel_upload(r2_key: str) -> None:
+# Portada subida junto a cada reel: se limpia con él si la publicación falla.
+_COVER_KEYS: dict[str, str] = {}
+
+
+def _upload_cover(cover_path: str, reel_key: str) -> str:
+    """Sube la portada a R2 (best-effort). Devuelve la URL pública o ""."""
+    if not cover_path:
+        return ""
     from utils import r2_storage
 
     try:
-        r2_storage.delete(r2_key)
-    except Exception:
-        logger.warning("No se pudo limpiar el reel en R2 tras el fallo")
+        url, key = r2_storage.upload_temp(cover_path, ttl_hint="reel")
+    except RuntimeError as exc:
+        logger.warning("No se pudo subir la portada del reel a R2: %s", exc)
+        return ""
+    finally:
+        _cleanup_local(cover_path)
+    _COVER_KEYS[reel_key] = key
+    return url
+
+
+def delete_reel_upload(r2_key: str) -> None:
+    from utils import r2_storage
+
+    for key in (r2_key, _COVER_KEYS.pop(r2_key, "")):
+        if not key:
+            continue
+        try:
+            r2_storage.delete(key)
+        except Exception:
+            logger.warning("No se pudo limpiar el reel en R2 tras el fallo")
 
 
 def _instagram_dedup_key(noticia: dict) -> str:

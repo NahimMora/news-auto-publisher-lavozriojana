@@ -1,0 +1,33 @@
+{
+  "_doc": "Directorio de etiquetas de Instagram del Gobierno de La Rioja. Sólo cuentas verificadas con Business Discovery (nombre coincide con el titular) y confirmadas por el operador. Una cuenta sin verificar NO se agrega. Revisar cada mes: los funcionarios cambian. Ver utils/gov_tags.py. Cuentas personales (sin Business Discovery) confirmadas por la biografía del perfil en instagram.com el 2026-10-25: juancarlosvergaralr, adolfoscaglioni, federicorbazan, jose.delg95.",
+  "verified_at": "2026-10-25",
+  "entries": [
+    {"area": "Gobernación", "aliases": ["Gobierno de La Rioja"], "institution": "gobiernodelarioja", "person_aliases": ["Ricardo Quintela", "gobernador Quintela"], "person": "ricardocquintela"},
+    {"area": "Vicegobernación", "aliases": [], "person_aliases": ["Teresita Madera", "vicegobernadora Madera"], "person": "teresitalmadera"},
+    {"area": "Jefatura de Gabinete", "aliases": [], "person_aliases": ["Luna Corzo", "jefe de Gabinete provincial"], "person": "juanlunacorzo"},
+    {"area": "Secretaría General de la Gobernación", "aliases": [], "person_aliases": ["Ricardo Herrera", "Ricki Herrera"], "person": "rickiherrera_"},
+    {"area": "Comunicación y Planificación Pública", "aliases": ["Secretaría de Comunicación y Planificación"], "person_aliases": ["Santángelo Carrizo", "Luz Santángelo"], "person": "luzsantangelocarrizo"},
+    {"area": "Educación", "aliases": ["Ministerio de Educación", "ministro de Educación", "cartera educativa"], "institution": "mineducacionlarioja", "person_aliases": ["Martínez Francés", "Ariel Martínez"], "person": "arielmartinezlar"},
+    {"area": "Salud Pública", "aliases": ["Ministerio de Salud", "ministro de Salud", "cartera sanitaria"], "institution": "saludlarioja", "person_aliases": ["Juan Carlos Vergara"], "person": "juancarlosvergaralr"},
+    {"area": "Seguridad, Justicia y Derechos Humanos", "aliases": ["Ministerio de Seguridad", "ministro de Seguridad"], "institution": "", "person_aliases": ["Miguel Zárate", "Miguel Ángel Zárate"], "person": "dr.miguelzarate", "review": "Zárate pasa a fiscal general a principios de noviembre de 2026: actualizar titular."},
+    {"area": "Desarrollo, Igualdad e Integración Social", "aliases": ["Ministerio de Desarrollo", "ministro de Desarrollo"], "institution": "desarrollolr", "person_aliases": ["Turco Menem", "Alfredo Menem"], "person": "menemturco"},
+    {"area": "Producción y Ambiente", "aliases": ["Ministerio de Producción", "ministro de Producción"], "institution": "produccionyambientelarioja", "person_aliases": ["Harry Pérez", "Ernesto Pérez"], "person": "ernestoharry"},
+    {"area": "Agua y Energía", "aliases": ["Ministerio de Agua y Energía", "ministro de Agua"], "institution": "minaguayenergia", "person_aliases": ["Adolfo Scaglioni"], "person": "adolfoscaglioni"},
+    {"area": "Turismo y Culturas", "aliases": ["Ministerio de Turismo", "ministro de Turismo"], "institution": "", "person_aliases": ["Gustavo Luna"], "person": "gustavoaluna"},
+    {"area": "Vivienda, Tierras y Hábitat Social", "aliases": ["Ministerio de Vivienda", "ministro de Vivienda"], "institution": "minvivienda_lr", "person_aliases": ["Puy Soria", "Ariel Puy"], "person": "arielpuy"},
+    {"area": "Trabajo, Empleo, Industria y Minería", "aliases": ["Ministerio de Trabajo", "ministro de Trabajo"], "institution": "mintrabajo_lr", "person_aliases": ["Federico Bazán"], "person": "federicorbazan"},
+    {"area": "Secretaría de Justicia", "aliases": ["Secretaría de Justicia"], "institution": "secretariadejusticialr", "person_aliases": [], "person": ""},
+    {"area": "Derechos Humanos", "aliases": ["Secretaría de Derechos Humanos"], "institution": "derechoshumanos.lr", "person_aliases": [], "person": ""},
+    {"area": "Inclusión y Desarrollo Social", "aliases": ["Secretaría de Inclusión"], "institution": "inclusionydesarrollolr", "person_aliases": [], "person": ""},
+    {"area": "Asuntos Institucionales", "aliases": ["Secretaría de Relaciones Institucionales", "Secretaría de Asuntos Institucionales"], "institution": "secrelacionesinstitucionales", "person_aliases": [], "person": ""},
+    {"area": "Políticas Socioeducativas", "aliases": [], "person_aliases": ["Duilio Madera"], "person": "maderaduilio"},
+    {"area": "Deporte, Recreación e Inclusión", "aliases": ["Secretaría de Deporte", "Secretaría de Deportes"], "institution": "", "person_aliases": ["Jorge Luis Córdoba"], "person": "cordoba_jorgeluis"},
+    {"area": "Mujer y Diversidad", "aliases": ["Secretaría de la Mujer", "Secretaría de Mujer y Diversidad"], "institution": "", "person_aliases": ["Karen Navarro"], "person": "karen.navarro_ok"},
+    {"area": "Energía", "aliases": ["Secretaría de Energía de la Provincia", "Secretaría de Energía provincial"], "institution": "", "person_aliases": ["Alfredo Pedrali", "Pedrali"], "person": "apedrali"},
+    {"area": "Turismo", "aliases": ["Secretaría de Turismo"], "institution": "", "person_aliases": ["José Rosa"], "person": "joserosa.ok"},
+    {"area": "Culturas", "aliases": ["Secretaría de Culturas", "Secretaría de Cultura"], "institution": "", "person_aliases": ["Patricia Herrera"], "person": "patriciaherrerados"},
+    {"area": "Asesoría General de Gobierno", "aliases": ["Asesoría General de Gobierno"], "institution": "asesoriagoblr", "person_aliases": [], "person": ""},
+    {"area": "APOS", "aliases": ["APOS", "Administración Provincial de Obra Social"], "institution": "aposlr", "person_aliases": ["Claudia Ortiz"], "person": "m.claudiaortiz"},
+    {"area": "Juventudes", "aliases": ["Secretaría de Juventudes", "Secretaría de la Juventud"], "institution": "juventudeslarioja", "person_aliases": ["Juan Pablo Delgado"], "person": "jose.delg95"}
+  ]
+}

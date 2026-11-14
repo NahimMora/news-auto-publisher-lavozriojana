@@ -1,0 +1,25 @@
+{
+  "_doc": "Localidad (como la escribe el campo locality de la nota) -> ID de la página de lugar de Facebook (facebook_places_id de la ubicación de Instagram), que es lo que pide location_id. Sacados el 2026-10-25 del buscador de lugares de instagram.com, entrada \"<Localidad>, La Rioja, Argentina\" con coordenadas dentro de la provincia. Vacío = sin ubicación. Ver utils/ig_location.py.",
+  "locations": {
+    "Capital": "112819225399234",
+    "La Rioja": "112819225399234",
+    "Chilecito": "347961018633223",
+    "Chamical": "112785662074577",
+    "Aimogasta": "115896245094145",
+    "Chepes": "111630145532683",
+    "Villa Unión": "109232455764402",
+    "Famatina": "377298605671048",
+    "Olta": "107332525971354",
+    "Ulapes": "107413102628881",
+    "Villa Sanagasta": "109631799061569",
+    "Nonogasta": "111515565538633",
+    "Anillaco": "116331148381746",
+    "Milagro": "100244910016680",
+    "Tama": "113890661958272",
+    "Malanzán": "107399099297741",
+    "Villa Castelli": "112100685481861",
+    "Vinchina": "104658716240286",
+    "Patquía": "116343531712903",
+    "Arauco": "104879219549845"
+  }
+}

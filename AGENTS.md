@@ -177,8 +177,9 @@ Para tests y desarrollo use las variables `LVR_DATA_DIR`, `LVR_LOGS_DIR`,
   timestamps durables de cola. No usar la fecha editorial para limpiar colas:
   detener el supervisor, ejecutar `queue-cutover --keep-latest 20 --report-only`,
   crear backup y aplicar únicamente con decisión operativa.
-- Web no tiene límite por ciclo; Facebook e Instagram tienen máximo 8 por plataforma
-  y ciclo. El deployment mode sigue subordinado a los kill switches individuales.
+- Web no tiene límite por ciclo; Facebook tiene máximo 8 por ciclo e Instagram
+  `PIPELINE_IG_MAX_PER_CYCLE` (default 8, producción 12 desde 2026-11-13). El deployment
+  mode sigue subordinado a los kill switches individuales.
 - Facebook publica el mismo caption de Instagram + URL Web (sin el título por
   delante). Con `FB_LINK_PREWARM_ENABLED=true` debe validar primero la nota y su
   `og:image`. Antes de publicar, siempre fuerza un re-scrape real del `og:image`

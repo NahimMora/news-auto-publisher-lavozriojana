@@ -18,6 +18,7 @@ from utils.scraper_contract import (
     request_error_details,
 )
 from utils.stage_result import StageStatus
+from scraping.video_embeds import youtube_embed
 
 BASE_SITE = "https://www.tiempopopular.com.ar"
 
@@ -166,6 +167,9 @@ def scrap_noticia_result(url: str, section_name: str) -> ArticleScrapeResult:
         "imagen_optimizada": imagen_optimizada,
         "fecha": fecha,
         "source": f"tiempopopular_{section_name}",
+        **youtube_embed(
+            soup.select_one("div.entry-content, div.post-content, div.td-post-content, article")
+        ),
     }
     warnings = []
     if imagen_url and not imagen_optimizada:

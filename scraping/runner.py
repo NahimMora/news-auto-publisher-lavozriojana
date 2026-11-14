@@ -80,11 +80,18 @@ def run_section(
     succeeded = 0
     failed = 0
     discarded = 0
+    deferred = 0
     warnings: list[str] = []
 
     for url in candidates:
-        processed += 1
         article_result = fetch_article(url)
+        # ``no_work`` sin artículo: la nota todavía no está completa en la fuente
+        # (p. ej. "NOTA EN REDACCIÓN"). No es falla ni entra al histórico: se
+        # vuelve a intentar en el ciclo siguiente.
+        if article_result.status == StageStatus.NO_WORK and not article_result.article:
+            deferred += 1
+            continue
+        processed += 1
         if article_result.status == StageStatus.FAILED or not article_result.article:
             failed += 1
             record_queue_event(
@@ -162,10 +169,11 @@ def run_section(
     result = result_from_counts(
         stage,
         received=len(links_result.links),
-        selected=len(candidates),
+        selected=len(candidates) - deferred,
         processed=processed,
         succeeded=succeeded,
         failed=failed,
+        deferred=deferred,
         duration_seconds=time.monotonic() - started,
         details={
             "known": len(links_result.links) - len(candidates),

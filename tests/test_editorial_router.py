@@ -52,6 +52,20 @@ class EditorialRouterPureLogicTests(unittest.TestCase):
         self.assertEqual("automatic", decision2.route_by_channel["instagram"])
         self.assertEqual(2, decision2.topic_post_number)
 
+    def test_local_by_source_counts_as_riojan_link(self):
+        from utils.editorial_router import detect_riojan_link, evaluate_routing
+
+        # Hiperlocal sin localidad nombrada: antes quedaba "candidate" por gate:no_riojan_link.
+        note = {**_noticia("Incendio de pastizales en el barrio Las Talas", hashtag_localidad=""), "source": "mediosrioja_locales"}
+        self.assertEqual((True, "source:mediosrioja_locales"), detect_riojan_link(note))
+        decision = evaluate_routing(note, recent_topic_entries=[], now_ts=1000)
+        self.assertEqual("automatic", decision.route_by_channel["instagram"])
+        self.assertNotIn("gate:no_riojan_link", decision.route_reason)
+
+        # Las secciones mixtas siguen necesitando evidencia en el texto.
+        mixed = {**note, "source": "nuevarioja_sociedad"}
+        self.assertEqual((False, "no_riojan_link_detected"), detect_riojan_link(mixed))
+
     def test_third_post_of_same_topic_is_candidate(self):
         from utils.editorial_router import evaluate_routing
 

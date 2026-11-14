@@ -1,7 +1,89 @@
 # Estado actual
 
-Última actualización: 2026-09-10 (Editorial Context Engine / Story Engine / Source
-Registry; el resto del documento describe el estado previo y sigue vigente).
+Última actualización: 2026-11-01 (Noticiero V5; el resto del documento
+describe el estado previo y sigue vigente).
+
+## Noticiero V5 (2026-11-01, publicación diaria activa)
+
+`NIGHTLY_NEWSCAST_VISUAL=v5` en `scripts/run_nightly_newscast.ps1`: apertura en
+frío (la noticia principal desde el frame 0, marca integrada que se contrae en
+el HUD), guion directo de 140–210 palabras, voz con pausas acortadas y ritmo
+≤ 1,08× sin volver a sintetizar, tomas de ~2,6 s cortadas en pausas reales,
+mapa de La Rioja con el nomenclador oficial, subtítulos cinéticos, portada
+1080×1920 como `cover_url`, caption sin fuentes con 4 hashtags y ubicación La
+Rioja en Instagram. Misma selección, barreras factuales y publicación que V4.
+Detalle, métricas y flags en `docs/NIGHTLY_NEWSCAST.md` § V5; QA en la skill
+`.claude/skills/lvr-video-qa`. Rollback: `NIGHTLY_NEWSCAST_VISUAL = "v3"`.
+
+## Noticiero policial V4 (2026-10-31, publicación diaria activa)
+
+Misma bandera `NIGHTLY_NEWSCAST_VISUAL=v3`: policiales de 24 h desde la
+biblioteca de notas propias (`data/newscast_library.json`), 8–12 hechos en
+≈1:45, apertura de 5–7 s, titulares animados, datos sincronizados con la voz,
+transiciones propias, música y efectos, cierre con `@lavozriojana.ok`. Detalle
+en `docs/NIGHTLY_NEWSCAST.md` § V4. Publicación diaria en IG y FB a las 21
+(tarea `LaVozRiojana-Noticiero`, arranca 20:15; `NIGHTLY_NEWSCAST_PUBLISH=true`
+en `scripts/run_nightly_newscast.ps1`), activada por el responsable el 2026-10-31.
+Ningún hecho sale sin foto o video propio: prefiltro de imágenes antes del
+guion (`NIGHTLY_NEWSCAST_REQUIRE_MEDIA=true`).
+
+## Noticiero de la Noche V3 (2026-10-31, sin publicar)
+
+`NIGHTLY_NEWSCAST_VISUAL=v3` en el script de la tarea: guion por tramos (un
+hecho por tramo, control factual por tramo), control visual de pertinencia de
+cada foto/video, ocho familias visuales en `NightlyNewscastV3`, subtítulos
+alineados con whisper.cpp local, apertura informativa desde el frame 0 y
+cierre de ~2,5 s. Temas sensibles incluidos con reglas reforzadas. Sigue sin
+publicar (`NIGHTLY_NEWSCAST_PUBLISH=false`) y la tarea no está registrada.
+Detalle en `docs/NIGHTLY_NEWSCAST.md` § V3.
+
+## Noticiero de la Noche (2026-10-30, prueba sin publicar)
+
+Reel locutado de las 21 con lo más importante del día en La Rioja
+(`docs/NIGHTLY_NEWSCAST.md`): guion de Gemini con control factual, voz Orus con
+tonada riojana, `NightlyNewscastV2` en Remotion con sirena, música y video
+silenciado. Tarea `LaVozRiojana-Noticiero` (20:30) en modo prueba: genera en
+`output/noticiero/<fecha>/` sin publicar (`NIGHTLY_NEWSCAST_PUBLISH=false`)
+durante 3 noches; después se decide activar la publicación.
+
+## Historias nativas de Instagram con stickers (2026-10-28, apagadas)
+
+- `meta/run_native_stories.py` + `utils/native_story.py` +
+  `meta/instagrapi_client.py`: una historia por post del feed con la publicación
+  compartida, el enlace a la nota y la ubicación como stickers nativos (API
+  privada, `instagrapi==3.1.0`). Detalle, variables y limitaciones en
+  `docs/IG_NATIVE_STORIES.md`.
+- `IG_NATIVE_STORIES_ENABLED=false` y `IG_NATIVE_STORIES_DRY_RUN=true` por
+  defecto. Prueba real 2026-10-28 sobre @lavozriojana.ok verificada a mano por el
+  operador: los tres stickers abren lo correcto. Los stickers de la API son
+  invisibles; la imagen dibuja post, ubicación y botón (diseño editorial V2).
+- Sólo notas policiales (cualquier provincia) o riojanas; ubicación leída del
+  post publicado; sin IA; imagen subida sin recodificar (JPEG 97, 4:4:4).
+
+## Cupo de Instagram, etiquetas del Gobierno y ubicación (2026-10-24/25)
+
+- Meta permite 100 publicaciones por API cada 24 h y las historias cuentan.
+  `POST_STORIES_MANUAL=true` (producción): las historias "Nueva publicación" y de
+  Reel ya no salen por API en Instagram; el operador las sube a mano sobre el fondo
+  `ManualStoryTemplate`. Último momento, servicio y Facebook siguen automáticos.
+- Reels sin repetir: una nota cuyo video ya está en un Reel vivo o publicado no
+  genera otro (Paparazzi reutiliza clips).
+- Diagnóstico: el backoff de IG registra http/code/subcode de Meta; la imagen de IG
+  distingue `image_render_error` de `r2_upload_error`; la disponibilidad de
+  Remotion usa el `/health` del servidor de render antes que `npx`.
+- Etiquetas del Gobierno (`GOV_TAGS_ENABLED=true`): `utils/gov_tags.py` +
+  `config/gov_directory.json` (37 cuentas verificadas). Una nota local que nombra
+  un ministerio u organismo etiqueta en IG a la cuenta del área y a su responsable
+  y los menciona con @; nunca policiales ni ministerios en notas del Gobierno
+  nacional; topes 4 por post y 20 por 24 h. Facebook sin @.
+- Ubicación (`IG_LOCATION_ENABLED=true`): `config/ig_locations.json` con el
+  `facebook_places_id` de 20 localidades; se usa la del campo `locality`.
+- Si Meta rechaza etiquetas o ubicación, el contenedor se reintenta una vez sin
+  ellas. Primera verificación en publicaciones reales: pendiente (IG en horario
+  silencioso 0-7 h al momento del deploy).
+- Vínculo riojano por fuente: `RIOJAN_BY_SOURCE` en `utils/editorial_router.py`
+  (Medios Rioja y Fénix) evita que una nota hiperlocal sin localidad nombrada
+  quede como candidata en IG.
 
 ## Token de Meta rotado y reset social (2026-10-15)
 
@@ -25,12 +107,120 @@ Registry; el resto del documento describe el estado previo y sigue vigente).
   Web; en redes, paparazzi con video sólo como Reel (etapa
   `meta/run_paparazzi_videos.py`) y sin video con relevancia ≥ 6; internacionales
   sólo de alto impacto (≥ 8, 1 por ciclo); Instagram con locales sólo de último
-  momento/policiales/sociedad y máximo 12 por día; Facebook sin cambios. Deportes
+  momento/policiales/sociedad/salud/educación, interior y toda nota con vínculo
+  riojano como relleno con el cupo libre del ciclo (`IG_LOCAL_FILL_CATEGORIES`,
+  `IG_LOCAL_FILL_RIOJAN`) y máximo 40 por día repartido en el día, con las
+  imágenes en espera si el tope de Meta llega a 88/100 (desde 2026-10-30; ver
+  DECISIONS); el mismo hecho sin ancla no se repite en Instagram
+  (`SAME_EVENT_SOCIAL_SKIP`). Facebook sin cambios. Deportes
   sigue excluido.
+- WhatsApp (2026-10-30, `docs/WHATSAPP.md`): el grupo recibe lo que sale en
+  Facebook (Reels como link "VIDEO") y el canal sólo último momento, vía Baileys
+  sin navegador (`meta/run_whatsapp.py`); historia "Sumate al canal" lunes,
+  miércoles y viernes a las 20 (`meta/run_wa_join_story.py`).
+- Grupos de Facebook (2026-10-30, `docs/FB_GROUPS.md`): la página comparte cada
+  nota riojana en 1–2 grupos de su localidad, de a una cada 8–20 min, con freno de
+  48 h ante cualquier aviso (`meta/run_fb_groups.py`).
+- Fénix 95.1 (2026-10-22): `main_fenix.py` lee la sección Locales de
+  fenix951.com.ar (`SCRAPER_FENIX_ENABLED`, apagado por defecto, activo en
+  producción). Sólo entran notas con vínculo riojano en título/copete/cuerpo; las
+  nacionales quedan en el histórico como `fenix_sin_vinculo_riojano`. Una nota
+  publicada como "NOTA EN REDACCIÓN" se difiere (`article_in_progress`, sin falla ni
+  histórico) y se reintenta en el ciclo siguiente.
+- Medios Rioja (2026-10-25): `main_mediosrioja.py` lee el RSS de
+  mediosrioja.com.ar (`SCRAPER_MEDIOSRIOJA_ENABLED`, apagado por defecto, activo en
+  producción). Sólo entran ítems de categoría Locales o Departamentales que no sean
+  Nacionales/Internacionales; Departamentales va como `interior`
+  (`mediosrioja_interior`), el resto como `mediosrioja_locales`. Aporta policiales y
+  sucesos hiperlocales de Capital y del interior. Las notas que repiten un hecho de
+  Nueva Rioja/Tiempo Popular las frena `SAME_EVENT_CHECK_ENABLED` en la reescritura.
+- Reels locales (2026-10-22, `LOCAL_VIDEO_REEL_ENABLED`, apagado por defecto y
+  activo en producción): Tiempo Popular, Nueva Rioja y Fénix guardan el primer
+  YouTube del cuerpo (`video_embed_url`, `video_embed_author`). Si la nota
+  seleccionada es de `LOCAL_VIDEO_REEL_CATEGORIES` (policiales, interior), en
+  Instagram sale como Reel EditorialReel desde `meta/run_paparazzi_videos.py`, con
+  "Video: <canal>" en pantalla y en el caption, fuera del tope diario y del cupo
+  por ciclo. Web y Facebook (post con link) no cambian. Si el Reel queda en
+  `dead_letter`/`expired`, `run_ig` la publica como imagen.
+- Fuentes judiciales (2026-10-22, `SCRAPER_JUDICIALES_ENABLED`, apagado por
+  defecto y activo en producción): `main_judiciales.py` lee los RSS del MPF y de
+  la Función Judicial. Antes de reescribir, Gemini puntúa (0–10) y detecta el
+  mismo caso contra lo encolado en 72 h; pasan sólo con `JUDICIAL_MIN_SCORE` (7).
+  Título, nota Web y caption llevan `JUDICIAL_RULES`.
+- Placas de servicio v2 (2026-10-23, `PAYMENT_POSTS_ENABLED`, `QUAKE_POSTS_ENABLED`):
+  plantilla única sin IA (estado HOY/MAÑANA/ACTUALIZADO/CANCELADO, un dato
+  protagonista, pie "Fuente · actualizado HH:MM", ≤ 25 palabras, zonas libres de
+  250 px arriba y 350 px abajo). Pagos de Hacienda: historia cada día de pago
+  desde las 7, post IG sólo el primer día del cronograma y FB todos los días.
+  Sismos con epicentro en La Rioja y magnitud ≥ 4,0 (INPRES `sismos.xml` +
+  detalle), a cualquier hora, post IG + FB + historia; si era automático y
+  INPRES lo revisa con otro valor, historia ACTUALIZADO (`utils/service_posts.py`,
+  `docs/SOCIAL_FORMATS.md`).
+- Sistema visual de servicio (2026-10-23): las historias de clima, alerta, dólar,
+  avisos, feriados y seguimiento y el carrusel "Lo que tenés que saber hoy" usan el
+  mismo sistema que las placas (`THEMES`, `PlateBackdrop`, `TagPair` en
+  `remotion/src/v2/social/ServicePieces.tsx`): azul noche con cuadrícula, Archivo
+  condensada 900, rojo de marca para lo destacado. Sólo cambia el diseño; los
+  textos y las reglas de publicación son los mismos.
+- Historias (2026-10-23): el agrupamiento automático está apagado
+  (`STORY_ENGINE_AUTO_ENABLED=false`) porque mezclaba hechos en las
+  cronologías de la web (KNOWN_ISSUES #101); sólo se arman historias con
+  actualizaciones verificadas del mismo hecho.
+- Datos para la web (2026-10-23, `WEB_FEED_ENABLED`): cada ciclo publica en
+  `https://media.lavozriojana.com/feed/v1/` lo más visto (alcance en Instagram,
+  con la URL de la nota), servicios (clima, alerta SMN, dólar, feriados, pagos,
+  sismos, cortes), actualizaciones y videos de Instagram. Contrato en
+  `docs/WEB_FEED.md`.
+- Resaltados (2026-10-23): historias, placas y carrusel destacan el núcleo del
+  título en color y los datos (cifras, horarios, fechas) en negrita; el resto va
+  más liviano. Ver `docs/SOCIAL_FORMATS.md`.
+- Mismo hecho y actualizaciones (2026-10-23, `SAME_EVENT_CHECK_ENABLED`): una
+  nota local del mismo hecho que otra de las últimas 36 h no sale si no trae
+  nada nuevo; con un dato nuevo sale como ACTUALIZACIÓN (placa, texto, historia,
+  comentario en el post de IG, edición del de FB, misma historia en la web). Ver
+  `docs/SOCIAL_FORMATS.md`.
+- Alertas del SMN desde el feed CAP (2026-10-23): la historia de alerta toma
+  nivel, fenómeno, departamentos, texto oficial y vencimiento; las notas de otros
+  medios sobre alertas no salen (`WEATHER_ALERT_NEWS_SMN_ONLY`).
+- Placa de IG con hasta dos lugares y sin repetir el lugar en el título; títulos
+  sin "de La Rioja" y más directos (prompts de redes y web). Sanagasta y otras
+  localidades se suman a la lista del router.
+- Zona en los avisos de corte (2026-10-23): la historia agrega un bloque "Zona" con
+  el barrio, la localidad, la ruta o el alcance amplio que dice la nota; si no lo
+  dice, "No especificada en el aviso original". Los cortes de luz/agua de fuera de
+  La Rioja dejan de salir como aviso.
 - Infobae Policiales conectado a la reescritura (`KNOWN_ISSUES` 95): con video sólo
   Reel EditorialReel en redes y artículo Web; sin video, nota normal.
 - Estado JSON compactado (2026-10-17, `KNOWN_ISSUES` 96): el journal de eventos y
   los terminales de la cola de reescritura ya no guardan el texto de cada nota.
+- Gasto de Gemini (2026-10-17, `DECISIONS` 2026-10-17): con
+  `LOCALITY_DECK_LAZY_ENABLED=true` (script de arranque) la reescritura ya no pide
+  localidad/bajada; se piden en `meta/ig_client.py::_prepare_image` sólo para las
+  notas que renderizan la card estática de Instagram, con el extracto y el caption
+  como contexto. El caption sigue generándose en la reescritura (`titulo_instagram`
+  es el título web y el CTA alimenta el caption desde la web).
+- Visual System V2 activo (2026-10-17, `docs/design/VISUAL_SYSTEM_V2.md`):
+  `VISUAL_STYLE_VERSION=v2` cambia Reels (`EditorialReelV2`), card automática de
+  IG (`AutomaticInstagramCardV2`) y OG (`FacebookOgCardV2`). La caída a Pillow de
+  las imágenes estáticas sigue siendo V1; los Reels sin Remotion no se publican.
+- Revisión V2 (2026-10-18): Reel con titular fijo desde el cuadro 0 (sin hook que
+  se borra), video a todo el ancho, crédito, bajada y fondo con textura; portada
+  propia `ReelCoverV2` (`REEL_COVER_ENABLED`, `REEL_COVER_FACEBOOK_ENABLED`)
+  apta para el recorte 4:5; post "portada" con pestañas, bajada con barra y banda
+  de pie con CTA y fecha.
+- Ubicación (2026-10-18): los captions no ubican en La Rioja hechos cuya fuente no
+  la menciona (regla en la pauta + control sin IA con reintento y fallback a la
+  fuente); sin vínculo riojano verificable los hashtags son neutros.
+- Formatos sociales (2026-10-18, `docs/SOCIAL_FORMATS.md`): historias de cada
+  publicación de Instagram (misma imagen en Facebook) y de servicio (clima y
+  alertas del SMN, dólar, feriados, cortes, rutas); carrusel "Lo que tenés que
+  saber hoy" a las 8; Reel "La semana en cinco" los domingos; seguimiento de
+  noticias en desarrollo; respuestas a preguntas (modo sugerencia la primera
+  semana); reporte por correo cada 3 días y vigilante del supervisor.
+- Fuentes (2026-10-18): `gobierno_larioja` lee la API JSON del portal
+  (`neotec_json`), `hacienda_larioja` la API de WordPress (`wordpress_json`);
+  `smn_news` deshabilitada (sin DNS / 403 / sin novedades): clima y alertas
+  salen de los datos abiertos del SMN.
 
 ## Calidad de Instagram tras el deploy (2026-10-04)
 
@@ -646,7 +836,8 @@ sensible, no una caída de CMS/Meta.
 - Supervisor: activo, PID registrado `52088` al iniciar el ciclo #8.
 - Modo: `all`.
 - Canales solicitados/habilitados: Web, Facebook e Instagram.
-- Límite efectivo: Web sin límite; Facebook 8 e Instagram 8 por ciclo.
+- Límite efectivo: Web sin límite; Facebook 8 por ciclo; Instagram `PIPELINE_IG_MAX_PER_CYCLE`
+  (default 8, producción 12 desde 2026-11-13), recortado después de los filtros.
 - Intervalo: 3.600 segundos.
 - Heartbeat: fresco y persistente.
 - Último ciclo: #11 `success`, 4/4 etapas aceptables.
@@ -707,3 +898,17 @@ servicio solicitado por el operador está activo con límites y watchdog.
 
 Próximo gate: obtener review/aprobación, agregar un endpoint CMS read-only y ensayar
 reboot/rollback antes de mergear o crear el tag oficial.
+
+## Correcciones 2026-10-22
+
+- Validador editorial: el comienzo de línea y los signos de apertura cuentan como
+  comienzo de oración, y "uno" como pronombre ya no es la cifra 1 (KNOWN_ISSUES #98,
+  `LVR-BUG-0005`).
+- Dedup de Instagram por título limitado a 72 h en producción
+  (`IG_POSTED_DEDUP_WINDOW_HOURS`, KNOWN_ISSUES #99, `LVR-BUG-0006`).
+- Re-scrape de Facebook sigue rechazado por la configuración de la app de Meta
+  (KNOWN_ISSUES #88, `LVR-BUG-0007`).
+- Plan maestro T01/T02 (2026-10-30, rama `feature/growth-t01-t02`, sin
+  desplegar): medición por cohortes (`GROWTH_METRICS_ENABLED`) y reglas
+  visuales del V2 (`GROWTH_IMAGE_RULES_ENABLED`), ambos apagados. Ver
+  `docs/GROWTH_T01_T02.md`.

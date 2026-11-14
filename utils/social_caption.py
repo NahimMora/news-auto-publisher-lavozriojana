@@ -18,6 +18,21 @@ _SECTION_TAGS = {
     "sociedad": "#LaRiojaHoy #Sociedad",
 }
 
+# Sin vínculo riojano verificable (videos virales, nacionales,
+# internacionales) los hashtags no ubican el hecho en La Rioja.
+_NEUTRAL_SECTION_TAGS = {
+    "policiales": "#Policiales #Seguridad",
+    "deportes": "#Deportes",
+    "cultura": "#Cultura",
+    "espectaculos": "#Espectaculos #Famosos",
+    "politica": "#Politica",
+    "economia": "#Economia",
+    "salud": "#Salud",
+    "educacion": "#Educacion",
+    "interior": "#Interior",
+    "sociedad": "#Sociedad #Actualidad",
+}
+
 
 _SECTION_OPENERS = {
     "policiales": "🚨",
@@ -137,16 +152,38 @@ def _caption_from_web(noticia: dict) -> str:
     return "\n\n".join(parts)[:_WEB_BODY_MAX_CHARS].rstrip()
 
 
+# Medios riojanos: sus notas conservan las etiquetas locales aunque el
+# texto no nombre una localidad (salvo su sección internacional).
+_RIOJAN_SOURCE_PREFIXES = ("nuevarioja", "tiempopopular", "fenix", "mediosrioja", "judicial_")
+
+
+def _has_riojan_link(noticia: dict) -> bool:
+    from utils.editorial_router import detect_riojan_link
+
+    if str(noticia.get("locality") or "").strip():
+        return True
+    source = str(noticia.get("source") or "").strip().lower()
+    if source.startswith(_RIOJAN_SOURCE_PREFIXES) and "internacional" not in source:
+        return True
+    linked, _reason = detect_riojan_link(noticia)
+    return linked
+
+
 def _hashtags(noticia: dict) -> str:
-    """Hashtags sin repetir (``hashtag_localidad`` suele ser ``#LaRioja``)."""
+    """Hashtags sin repetir (``hashtag_localidad`` suele ser ``#LaRioja``).
+
+    Las etiquetas riojanas sólo van si la nota tiene un vínculo riojano
+    verificable; si no, se usan las neutras de la sección."""
     seccion = str(noticia.get("seccion") or "").lower()
-    raw = " ".join(
-        (
+    if _has_riojan_link(noticia):
+        parts = (
             str(noticia.get("hashtag_localidad") or "").strip(),
             _SECTION_TAGS.get(seccion, "#RiojaHoy"),
             "#LaVozRiojana #LaRioja #Noticias",
         )
-    )
+    else:
+        parts = (_NEUTRAL_SECTION_TAGS.get(seccion, "#Actualidad"), "#LaVozRiojana #Noticias")
+    raw = " ".join(parts)
     tags: list[str] = []
     seen: set[str] = set()
     for tag in raw.split():
@@ -165,4 +202,11 @@ def build_instagram_caption(noticia: dict) -> str:
         parrafos = noticia.get("parrafos") or []
         primero = noticia.get("excerpt") or (parrafos[0] if parrafos else "")
         cuerpo = f"{noticia.get('titulo', '')}\n\n{primero}"
+    if noticia.get("show_update"):
+        # Actualización de un hecho que ya salió en esta red (utils/same_event.py).
+        cuerpo = f"🔄 ACTUALIZACIÓN\n\n{cuerpo}"
+    if noticia.get("caption_complete"):
+        # Texto ya cerrado con sus propios hashtags (Noticiero V5): no se
+        # agrega un segundo bloque de etiquetas.
+        return cuerpo[:2200]
     return f"{cuerpo}\n\n{_hashtags(noticia)}"[:2200]

@@ -6,6 +6,8 @@ import json
 import os
 import re
 import time
+import unicodedata
+from utils.judicial_sources import JUDICIAL_RULES, is_judicial
 from utils.logging_setup import setup_logger
 
 logger = setup_logger("caption_generator", "caption_generator.log")
@@ -41,6 +43,7 @@ REGLAS CRÍTICAS:
 - cta: solo la pregunta final (sin emoji, sin "CTA:", sin el ❓ — eso va dentro de texto_instagram), entre "¿" y "?", sobre este hecho puntual y no una pregunta genérica.
 - Español rioplatense con voseo ("opinás", "creés"); nunca trates de "usted" al lector. Sin URLs, sin @menciones, sin hashtags dentro del texto.
 - No inventes datos, cifras ni nombres que no estén en la noticia.
+- Ubicación: La Voz Riojana también publica noticias nacionales, internacionales y videos virales. Mencioná La Rioja, "riojanos" o una localidad riojana SOLO si el texto original lo dice explícitamente. Si el hecho ocurre en otro lugar o no dice dónde, no lo ubiques en La Rioja, no lo presentes como local y no inventes un lugar.
 - Máximo 2000 caracteres en texto_instagram.
 """.strip()
 
@@ -58,7 +61,7 @@ ESTRUCTURA EXACTA del campo texto_instagram:
 
 📌 [Quién, qué, dónde, cuándo. 2-3 oraciones concretas.]
 
-🔑 [Impacto para los riojanos, contexto, dato clave. 2-3 oraciones.]
+🔑 [Contexto, impacto o dato clave. 2-3 oraciones. Hablá del impacto para La Rioja solo si el hecho ocurre en La Rioja.]
 
 💬 [Cifra, declaración textual o hecho sorpresivo. 1-2 oraciones.]
 
@@ -177,19 +180,24 @@ def generate_caption(noticia: dict) -> dict:
 
     seccion       = noticia.get("seccion", "")
     system_prompt = _get_prompt(seccion)
+    if is_judicial(noticia):
+        system_prompt += "\nREGLA DE FUENTE: " + JUDICIAL_RULES
     texto_body    = " ".join(noticia.get("parrafos", [])[:4])[:2000]
     user_content  = (
         f"Titulo: {noticia.get('titulo', '')}\n"
         f"Seccion: {seccion}\n"
         f"Noticia:\n{texto_body}"
     )
+    source_text = f"{noticia.get('titulo', '')}\n{texto_body}"
+    correction = ""
+    invented: set[str] = set()
 
     for attempt in range(1, retry_count + 1):
         try:
             content = chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_content},
+                    {"role": "user",   "content": user_content + correction},
                 ],
                 model=model,
                 api_key=api_key,
@@ -205,6 +213,20 @@ def generate_caption(noticia: dict) -> dict:
                 "cta":              data.get("cta") or "¿Qué opinás?",
                 "caption_fallback_used": False,
             }
+            invented = invented_riojan_reference(
+                source_text,
+                "\n".join((result["titulo_instagram"], result["texto_instagram"], result["cta"])),
+            )
+            if invented:
+                logger.warning(
+                    "Caption intento %s/%s ubicó en La Rioja un hecho sin vínculo riojano (%s); se reintenta",
+                    attempt, retry_count, ", ".join(sorted(invented)),
+                )
+                correction = (
+                    "\n\nCORRECCIÓN: el texto original no menciona La Rioja ni ninguna localidad riojana. "
+                    "No ubiques el hecho en La Rioja, no uses \"riojano/a\" y no hables de impacto para los riojanos."
+                )
+                continue
             logger.info(f"Caption OK: {result['titulo_instagram'][:60]}")
             return result
         except Exception as e:
@@ -212,8 +234,38 @@ def generate_caption(noticia: dict) -> dict:
             if attempt < retry_count:
                 time.sleep(retry_sleep)
 
+    if invented:
+        # Mejor el texto de la fuente que un caption que ubica mal el hecho.
+        logger.error(f"Caption sin vínculo riojano verificable para: {noticia.get('titulo', '')[:60]}, usando fallback")
+        return _fallback(noticia, "riojan_reference_invented")
     logger.error(f"Caption falló para: {noticia.get('titulo', '')[:60]}, usando fallback")
     return _fallback(noticia, "gemini_failed")
+
+
+# ── Guardia de ubicación ──────────────────────────────────────
+# La pauta presenta al redactor como medio riojano y el modelo tiende a
+# "localizar" en La Rioja hechos de otros lugares (p.ej. un video viral
+# ajeno titulado "El bebé riojano…"). Se detecta sin IA: términos riojanos
+# en la salida que no aparecen en la fuente. "La Voz Riojana" es la marca.
+_BRAND_RE = re.compile(r"la\s+voz\s+riojana", re.IGNORECASE)
+
+
+def _riojan_terms(text: str) -> set[str]:
+    from utils.editorial_router import RIOJAN_LOCALITY_TERMS, _ascii_lower
+
+    folded = _ascii_lower(_BRAND_RE.sub(" ", str(text or "")))
+    folded = " " + re.sub(r"[^a-z0-9]+", " ", folded) + " "
+    return {term for term in RIOJAN_LOCALITY_TERMS if f" {_ascii_lower(term)} " in folded}
+
+
+def invented_riojan_reference(source: str, output: str) -> set[str]:
+    """Términos riojanos de ``output`` sin respaldo en ``source``.
+
+    Si la fuente ya tiene un vínculo riojano no se marca nada: el control
+    sólo evita ubicar en La Rioja hechos cuya fuente no la menciona."""
+    if _riojan_terms(source):
+        return set()
+    return _riojan_terms(output)
 
 
 # ── Localidad + bajada para piezas de una sola imagen ──────────
@@ -243,7 +295,7 @@ Sos editor de "La Voz Riojana", medio digital de La Rioja, Argentina.
 Salida obligatoria: JSON válido con exactamente estas claves:
 {_LOCALITY_DECK_SCHEMA}
 
-- "locality": una localidad, departamento o ciudad de La Rioja (p.ej. "Chilecito", "Capital", "Famatina") SOLO si el texto la nombra explícitamente. Si no hay ninguna localidad riojana concreta y verificable en el texto, dejalo vacío ("").
+- "locality": la localidad, departamento o ciudad de La Rioja donde pasó el hecho (p.ej. "Chilecito", "Capital", "Famatina") SOLO si el texto la nombra explícitamente. Si el hecho pasó en dos lugares, poné los dos separados por " · " (p.ej. "Capital · Chilecito"); nunca más de dos. Si no hay ninguna localidad riojana concreta y verificable en el texto, dejalo vacío ("").
 - "deck": una frase corta (máximo 90 caracteres) que funciona como bajada ANTES del título — agrega contexto o un dato (cuándo, quién, por qué importa), nunca repite ni parafrasea el título. Español rioplatense, sin emojis, sin comillas, sin punto final. Empezá con mayúscula y escribí los nombres propios (personas, lugares, clubes, organismos) con mayúscula, como en el texto.
 - No inventes lugares, datos, cifras, armas, personas ni hechos que no estén en el texto.
 """.strip()
@@ -280,6 +332,19 @@ _HIGHLIGHT_GENERIC_WORDS = {
     "policía", "policia", "provincia", "punto", "puntos", "región", "rioja",
     "riojana", "riojano", "sector", "sectores", "semana", "toda", "todas",
     "todo", "todos", "varias", "varios", "zona", "zonas",
+    "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+    "este", "esta", "estos", "estas",
+}
+
+# Calificativos y auxiliares que no pueden abrir ni cerrar la frase: dejan el
+# resaltado colgando ("empleado judicial por presunto", "agua este miércoles").
+_HIGHLIGHT_WEAK_EDGES = {
+    "presunto", "presunta", "presuntos", "presuntas", "supuesto", "supuesta",
+    "supuestos", "supuestas", "nuevo", "nueva", "nuevos", "nuevas", "había",
+    "habían", "fue", "fueron", "es", "son", "será", "serán", "está", "están",
+    "muy", "más", "menos", "ese", "esa", "esos", "esas",
 }
 
 # Raíces de acciones/resultados frecuentes en títulos. Sólo se usan para
@@ -290,12 +355,16 @@ _HIGHLIGHT_EVENT_PREFIXES = (
     "denunci", "despleg", "detuv", "disp", "fallec", "gan", "habilit",
     "inaugur", "investig", "lanz", "muri", "orden", "perdi", "present",
     "rechaz", "recuper", "reduj", "reforz", "realiz", "resolv", "secuestr",
-    "suspend",
+    "suspend", "volc", "choc", "herid", "rob", "asalt", "allan", "imput",
+    "conden", "rescat", "cort", "cerr", "apuñal", "bale", "dispar", "atropell",
+    "incendi", "desapareci", "encontr", "hall", "clausur", "evacu", "inund",
+    "estaf", "cobr", "pag",
 )
 
 _HIGHLIGHT_EVENT_NOUNS = {
     "acuerdo", "aumento", "choque", "condena", "detención", "incendio",
-    "medida", "obras", "operativo", "plan", "reforma", "rescate",
+    "medida", "obras", "operativo", "plan", "reforma", "rescate", "corte",
+    "cortes", "vuelco", "robo", "sumario", "coimas", "alerta", "paro",
 }
 
 
@@ -317,9 +386,16 @@ def _highlight_candidate_score(normalized_title: list[str], start: int, length: 
         return None
     if window[0] in _HIGHLIGHT_STOPWORDS or window[-1] in _HIGHLIGHT_STOPWORDS:
         return None
+    if window[0] in _HIGHLIGHT_WEAK_EDGES or window[-1] in _HIGHLIGHT_WEAK_EDGES:
+        return None
+    if window[-1] in _HIGHLIGHT_GENERIC_WORDS:
+        return None
 
     content = [word for word in window if word not in _HIGHLIGHT_STOPWORDS]
-    informative = [word for word in content if word not in _HIGHLIGHT_GENERIC_WORDS]
+    informative = [
+        word for word in content
+        if word not in _HIGHLIGHT_GENERIC_WORDS and word not in _HIGHLIGHT_WEAK_EDGES
+    ]
     event_count = sum(_is_highlight_event_word(word) for word in informative)
     if len(content) < 2 or len(informative) < 2:
         return None
@@ -335,11 +411,18 @@ def _highlight_candidate_score(normalized_title: list[str], start: int, length: 
         sum(min(len(word), 10) for word in informative)
         + len(informative) * 6
         + event_count * 10
+        # La acción al principio de la frase ("Murió el joven", "Corte de agua").
+        + (6 if _is_highlight_event_word(window[0]) else 0)
         - stopword_count * 4
         - generic_count * 7
         - abs(length - 3.5) * 2
         - start * 1.35
     )
+
+
+def _crosses_punctuation(words: list[str]) -> bool:
+    """"Jubilación obligatoria: suspenderán" cruza los dos puntos: no es una frase."""
+    return any(re.search(r"[:;,.!?]$", word) for word in words[:-1])
 
 
 def _validated_highlight_phrase(title: str, phrase: str) -> str:
@@ -357,6 +440,8 @@ def _validated_highlight_phrase(title: str, phrase: str) -> str:
             continue
         if _highlight_candidate_score(normalized_title, start, len(phrase_words)) is None:
             return ""
+        if _crosses_punctuation(title_words[start : start + len(phrase_words)]):
+            return ""
         return " ".join(title_words[start : start + len(phrase_words)])
     return ""
 
@@ -371,6 +456,8 @@ def _select_highlight_phrase(title: str) -> str:
     best: tuple[float, int, int] | None = None
     for length in range(2, min(4, len(words)) + 1):
         for start in range(0, len(words) - length + 1):
+            if _crosses_punctuation(words[start : start + length]):
+                continue
             score = _highlight_candidate_score(normalized, start, length)
             if score is None:
                 continue
@@ -442,6 +529,17 @@ def _locality_deck_fallback(reason: str, noticia: dict, *, include_highlight: bo
     return result
 
 
+def _verified_locality(raw: str, text: str) -> str:
+    """Hasta dos lugares ("Capital · Chilecito"), cada uno escrito en la nota."""
+    def fold(value: str) -> str:
+        return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+
+    haystack = fold(text)
+    places = [p.strip(" .") for p in re.split(r"\s*[·|/,]\s*|\s+y\s+", raw.strip()) if p.strip(" .")]
+    kept = [p for p in dict.fromkeys(places) if fold(p) in haystack]
+    return " · ".join(kept[:2])[:60]
+
+
 def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False) -> dict:
     """Completa localidad y bajada; opcionalmente, la frase destacada.
 
@@ -481,7 +579,10 @@ def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False
             )
             data = json.loads(content.strip())
             result = {
-                "locality": str(data.get("locality") or "").strip()[:40],
+                "locality": _verified_locality(
+                    str(data.get("locality") or ""),
+                    f"{noticia.get('titulo', '')}. {texto_body}",
+                ),
                 "deck":     restore_deck_casing(
                     str(data.get("deck") or "").strip()[:90],
                     f"{noticia.get('titulo', '')}. {texto_body}",
@@ -503,3 +604,49 @@ def generate_locality_and_deck(noticia: dict, *, include_highlight: bool = False
 
     logger.error(f"Locality/deck falló para: {noticia.get('titulo', '')[:60]}, usando vacío")
     return _locality_deck_fallback("gemini_failed", noticia, include_highlight=include_highlight)
+
+
+def locality_deck_lazy_enabled() -> bool:
+    """``LOCALITY_DECK_LAZY_ENABLED``: diferir localidad/bajada hasta la card de IG.
+
+    Default ``False``: desplegar el código no cambia producción hasta que el
+    host active el flag.
+    """
+    return os.getenv("LOCALITY_DECK_LAZY_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def ensure_locality_and_deck(noticia: dict) -> bool:
+    """Completa localidad/bajada diferidas justo antes de renderizar la card de IG.
+
+    Con ``LOCALITY_DECK_LAZY_ENABLED`` la reescritura no llama a Gemini para
+    esto y marca ``locality_deck_deferred``: sólo la card estática de
+    Instagram usa estos campos y buena parte de las notas nunca llega a
+    renderizarla. La cola social no guarda los párrafos, así que el contexto
+    es el extracto + el caption ya generado sobre la nota original. Nunca
+    bloquea la publicación: un fallo deja la card sin bajada, como antes.
+    Devuelve True si completó los campos.
+    """
+    if not noticia.get("locality_deck_deferred"):
+        return False
+    from utils.visual_style import automatic_manual_visual_style_enabled
+
+    parrafos = [str(p) for p in noticia.get("parrafos") or [] if str(p).strip()]
+    if not parrafos:
+        parrafos = [
+            str(noticia.get(field) or "").strip()
+            for field in ("excerpt", "texto_instagram")
+            if str(noticia.get(field) or "").strip()
+        ]
+    include_highlight = automatic_manual_visual_style_enabled()
+    data = generate_locality_and_deck(
+        {"titulo": noticia.get("titulo", ""), "parrafos": parrafos},
+        include_highlight=include_highlight,
+    )
+    noticia["locality"] = data["locality"]
+    noticia["deck"] = data["deck"]
+    if include_highlight and data.get("highlight_phrase") and not noticia.get("highlight_terms"):
+        noticia["highlight_terms"] = [data["highlight_phrase"]]
+    noticia.pop("locality_deck_deferred", None)
+    return True

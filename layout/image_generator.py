@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from utils.logging_setup import setup_logger
 from utils.safe_http import safe_get
 from utils.visual_style import uses_manual_publication_visual_style
+from utils.visual_version import resolve_visual_version
 
 logger = setup_logger("image_generator", "image_generator.log")
 
@@ -484,7 +485,27 @@ def _deck_for_render(article: dict) -> str:
     return restore_deck_casing(str(article.get("deck") or ""), reference)
 
 
-def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image | None" = None) -> bytes:
+def _apply_growth_rules(props: dict, workflow: str) -> str | None:
+    """Reglas visuales T02 sobre props V2 ya armados; devuelve la versión
+    aplicada o ``None`` (flag apagado: props intactos)."""
+    from utils.growth_image_rules import (
+        RULES_VERSION,
+        growth_image_rules_enabled,
+        refine_highlight_terms,
+        visual_section,
+    )
+
+    if not growth_image_rules_enabled(workflow):
+        return None
+    props["seccion"] = visual_section(str(props.get("seccion") or ""))
+    props["highlightTerms"] = refine_highlight_terms(str(props.get("titulo") or ""), list(props.get("highlightTerms") or []))
+    props["growth"] = True
+    return RULES_VERSION
+
+
+def _generate_instagram_remotion(
+    article: dict, *, preloaded_img: "Image.Image | None" = None, render_meta: dict | None = None,
+) -> bytes:
     """Renderiza la card automática con la composición Remotion
     ``AutomaticInstagramCard`` (sistema "Editorial Cinemática Riojana", ver
     docs/DECISIONS.md). Lanza ``RemotionRenderError`` si falla — el llamador
@@ -498,38 +519,31 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
     )
     local_path, orientation, cleanup = _materialize_image_for_remotion(article, preloaded_img=preloaded_img)
     try:
-        props = {
-            "titulo": article.get("titulo", ""),
-            "seccion": article.get("seccion", ""),
-            "assetFile": "",
-            "highlightTerms": highlight_terms,
-            # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
-            # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
-            "locality": str(article.get("locality") or ""),
-            "deck": _deck_for_render(article),
-            # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
-            # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
-            # esto todavía con "image_treatment" seteado; queda disponible
-            # para cuando exista una señal real (p.ej. origen "screenshot"
-            # en media_library.py) sin requerir otro cambio acá.
-            "imageTreatment": str(article.get("image_treatment") or "auto"),
-            # Publicaciones siempre lo activa. El lote automático adopta el
-            # mismo paquete sólo con su flag explícito apagado por default.
-            "publicationStyle": (
-                "manual_publication"
-                if publication_visual_style
-                else "automatic"
-            ),
-        }
-        if orientation:
-            props["assetOrientation"] = orientation
-        asset_paths = {"assetFile": local_path} if local_path else {}
-        png_bytes, _metadata = render_still(
-            "AutomaticInstagramCard",
-            props,
-            asset_paths=asset_paths,
-            scale=2 if publication_visual_style else 1,
-        )
+        decision = resolve_visual_version("instagram", article)
+        if decision.version == "v2":
+            from utils.visual_v2_props import instagram_props_v2
+
+            asset_size = _image_size(local_path)
+            props = instagram_props_v2(article, asset_file="", asset_size=asset_size)
+            props["imageTreatment"] = str(article.get("image_treatment") or "auto")
+            props["publicationStyle"] = "manual_publication" if publication_visual_style else "automatic"
+            rules = _apply_growth_rules(props, "instagram")
+            if rules and asset_size and asset_size[0] / max(1, asset_size[1]) < 1.3:
+                # Foto casi cuadrada o vertical recortada en alto: se sube el
+                # foco para no cortar cabezas (sin detectar caras).
+                props["assetFocusY"] = 35
+            asset_paths = {"assetFile": local_path} if local_path else {}
+            # V2 siempre renderiza a 2× (bordes de texto finos en el feed).
+            png_bytes, _metadata = render_still(decision.composition, props, asset_paths=asset_paths, scale=2)
+            publication_visual_style = True
+            if render_meta is not None:
+                render_meta["growth_rules"] = rules
+        else:
+            png_bytes = _render_instagram_v1(
+                article, local_path, orientation, highlight_terms, publication_visual_style,
+            )
+        if render_meta is not None:
+            render_meta.update(decision.as_metadata())
     finally:
         cleanup()
 
@@ -542,6 +556,60 @@ def _generate_instagram_remotion(article: dict, *, preloaded_img: "Image.Image |
             jpeg_options.update({"quality": 95, "subsampling": 0})
         opened.convert("RGB").save(buffer, format="JPEG", **jpeg_options)
         return buffer.getvalue()
+
+
+def _image_size(path: str | None) -> tuple[int, int] | None:
+    if not path:
+        return None
+    try:
+        with Image.open(path) as opened:
+            return opened.size
+    except (OSError, ValueError):
+        return None
+
+
+def _render_instagram_v1(
+    article: dict,
+    local_path: str | None,
+    orientation: str | None,
+    highlight_terms: list[str],
+    publication_visual_style: bool,
+) -> bytes:
+    from utils.remotion_renderer import render_still
+
+    props = {
+        "titulo": article.get("titulo", ""),
+        "seccion": article.get("seccion", ""),
+        "assetFile": "",
+        "highlightTerms": highlight_terms,
+        # Completados por IA (openIA/caption_generator.py::generate_locality_and_deck,
+        # ver docs/DECISIONS.md) — vacíos por default, nunca inventados acá.
+        "locality": str(article.get("locality") or ""),
+        "deck": _deck_for_render(article),
+        # Selección EXPLÍCITA y compatible hacia atrás (default "auto" —
+        # ver AutomaticInstagramCardSchema/HeroMedia.tsx). Nadie llama
+        # esto todavía con "image_treatment" seteado; queda disponible
+        # para cuando exista una señal real (p.ej. origen "screenshot"
+        # en media_library.py) sin requerir otro cambio acá.
+        "imageTreatment": str(article.get("image_treatment") or "auto"),
+        # Publicaciones siempre lo activa. El lote automático adopta el
+        # mismo paquete sólo con su flag explícito apagado por default.
+        "publicationStyle": (
+            "manual_publication"
+            if publication_visual_style
+            else "automatic"
+        ),
+    }
+    if orientation:
+        props["assetOrientation"] = orientation
+    asset_paths = {"assetFile": local_path} if local_path else {}
+    png_bytes, _metadata = render_still(
+        "AutomaticInstagramCard",
+        props,
+        asset_paths=asset_paths,
+        scale=2 if publication_visual_style else 1,
+    )
+    return png_bytes
 
 
 def generate_instagram_with_engine(
@@ -562,11 +630,16 @@ def generate_instagram_with_engine(
             "el motor de automatic exige Remotion pero no está disponible en este entorno"
         )
 
+    render_meta: dict = {}
+    started = time.monotonic()
     if engine == "remotion":
         try:
-            return _generate_instagram_remotion(article, preloaded_img=preloaded_img), "remotion"
+            jpeg = _generate_instagram_remotion(article, preloaded_img=preloaded_img, render_meta=render_meta)
+            _record_render_metadata(article, "remotion", render_meta, started)
+            return jpeg, "remotion"
         except RemotionRenderError as exc:
             logger.warning("Remotion falló para la card automática, cae a Pillow: %s", exc)
+            render_meta = {"fallback_reason": "remotion_render_error"}
 
     publication_visual_style = uses_manual_publication_visual_style(article)
     render_scale = 2 if publication_visual_style else 1
@@ -581,7 +654,27 @@ def generate_instagram_with_engine(
     if publication_visual_style:
         jpeg_options.update({"quality": 95, "subsampling": 0})
     img.convert("RGB").save(buffer, "JPEG", **jpeg_options)
+    _record_render_metadata(article, "pillow", {**render_meta, "composition": "generate_post"}, started)
     return buffer.getvalue(), "pillow"
+
+
+def _record_render_metadata(article: dict, engine: str, meta: dict, started: float) -> None:
+    """T01: deja en la pieza con qué se renderizó (motor, composición,
+    versión visual y reglas). Sólo con ``GROWTH_METRICS_ENABLED``; el
+    publisher lo copia a ``ig_posted.json`` como ``growth_render``."""
+    from utils.growth_measurement import growth_metrics_enabled
+
+    if not growth_metrics_enabled():
+        return
+    article["growth_render"] = {
+        "engine": engine,
+        "composition": meta.get("composition"),
+        "visual_style_version": meta.get("visual_style_version"),
+        "growth_rules": meta.get("growth_rules"),
+        "fallback_reason": meta.get("fallback_reason"),
+        "render_ms": round((time.monotonic() - started) * 1000),
+        "rendered_at": int(time.time()),
+    }
 
 
 def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | None" = None) -> bytes:
@@ -608,7 +701,19 @@ def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | 
             ),
         }
         asset_paths = {"assetFile": local_path} if local_path else {}
-        png_bytes, _metadata = render_still("FacebookOgCard", props, asset_paths=asset_paths)
+        decision = resolve_visual_version("og", article)
+        if decision.version == "v2":
+            from utils.visual_v2_props import og_props_v2
+
+            props = og_props_v2(article, asset_file="")
+            props["publicationStyle"] = "manual_publication" if publication_visual_style else "automatic"
+            if _apply_growth_rules(props, "og") and local_path:
+                recomposed = _recompose_og_photo(local_path)
+                if recomposed:
+                    asset_paths = {"assetFile": recomposed}
+                    previous_cleanup = cleanup
+                    cleanup = lambda: (previous_cleanup(), os.unlink(recomposed))  # noqa: E731
+        png_bytes, _metadata = render_still(decision.composition, props, asset_paths=asset_paths)
     finally:
         cleanup()
 
@@ -618,6 +723,26 @@ def _generate_facebook_remotion(article: dict, *, preloaded_img: "Image.Image | 
         # oscura se ve borroso con 4:2:0 en el link preview.
         opened.convert("RGB").save(buffer, format="JPEG", quality=95, subsampling=0, optimize=True)
         return buffer.getvalue()
+
+
+def _recompose_og_photo(local_path: str) -> str | None:
+    """Foto compuesta (dos paneles, grilla o barras laterales) → archivo
+    temporal con paneles enteros para el hueco del OG. ``None`` = sin cambio."""
+    from utils.growth_image_rules import OG_PHOTO_SLOT, recompose_for_slot
+
+    try:
+        with Image.open(local_path) as opened:
+            recomposed, info = recompose_for_slot(opened.convert("RGB"), OG_PHOTO_SLOT)
+    except (OSError, ValueError) as exc:
+        logger.warning("Reglas T02: no se pudo analizar la foto del OG (%s); se usa la original", type(exc).__name__)
+        return None
+    if recomposed is None:
+        return None
+    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    recomposed.save(tmp_path, "JPEG", quality=92)
+    logger.info("Reglas T02: foto compuesta %s recompuesta como %s", info.get("grid"), info.get("layout"))
+    return tmp_path
 
 
 def generate_facebook_with_engine(

@@ -3,6 +3,8 @@ Reescribe títulos de noticias con OpenAI para adaptarlos al estilo de La Voz Ri
 Lee desde noticias_norewrite_*.json y escribe en noticias_meta.json (cola unificada para redes sociales).
 """
 import copy
+import re
+import unicodedata
 import os
 import sys
 import time
@@ -23,19 +25,25 @@ from utils.file_manager import (
 from utils.category_performance import load_category_performance
 from utils.durable_queue import DurableQueue
 from utils.editorial_policy import evaluate_fallback_policy
-from utils.editorial_priority import priority_interleave
+from utils.editorial_priority import item_category, priority_interleave
 from utils.editorial_router import apply_routing
 from utils.news_filters import is_blocked
 from utils.news_dedup import duplicate_reason
+from utils import same_event
 from utils.logging_setup import setup_logger
 from utils.classifier import clasificar_con_resultado
+from utils.judicial_sources import JUDICIAL_RULES, assess_judicial, is_judicial, min_score as judicial_min_score
 from utils.paparazzi_relevance import score_international_impact, score_relevance
 from utils.paths import data_dir
 from utils.queue_events import record_queue_event
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 from utils.url_normalization import url_hash
 from utils.visual_style import automatic_manual_visual_style_enabled
-from openIA.caption_generator import generate_caption, generate_locality_and_deck
+from openIA.caption_generator import (
+    generate_caption,
+    generate_locality_and_deck,
+    locality_deck_lazy_enabled,
+)
 
 logger = setup_logger("rewrite_news", "rewrite_news.log")
 
@@ -46,6 +54,9 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "noticias_norewrite_interior.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_deportes.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_nuevarioja.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_fenix.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_mediosrioja.json"),
+    os.path.join(DATA_DIR, "noticias_norewrite_judiciales.json"),
     os.path.join(DATA_DIR, "noticias_norewrite_paparazzi.json"),
     # Infobae policiales: el scraper escribía desde 2026-08 pero nunca se leía
     # (KNOWN_ISSUES 95). Lo atrasado cae por ARTICLE_MAX_AGE_DAYS antes de la IA.
@@ -73,12 +84,15 @@ META_FIELDS = (
     "imagen_url",
     "video_url",
     "video_duration_seconds",
+    "video_embed_url",
+    "video_embed_author",
     "fecha",
     "source",
     "hashtag_localidad",
     "locality",
     "deck",
     "highlight_terms",
+    "locality_deck_deferred",
     "queued_at",
     "fallbacks_used",
     "fallback_policy",
@@ -92,6 +106,7 @@ META_FIELDS = (
     "routed_at_ts",
     "paparazzi_relevance_score",
     "international_impact_score",
+    "judicial_relevance_score",
     # Escritos por otras etapas DESPUÉS de que la nota ya está en
     # noticias_meta.json (sync_meta_web_link tras publicar en Web,
     # select_publish_batch.py al armar el lote) — deben sobrevivir a
@@ -109,6 +124,10 @@ META_FIELDS = (
     "publish_batch_at",
     "publish_bucket",
     "social_skip_reason",
+    # Actualización de un hecho ya publicado (utils/same_event.py).
+    "event_update",
+    # Mismo hecho sin ancla comprobable: no se repite en una red donde ya salió.
+    "event_related",
 )
 
 WEB_EXCLUDE_FIELDS = {
@@ -141,10 +160,12 @@ REGLAS:
 - No agregar emociones ni adjetivos que no estén implícitos en la noticia
 - Respetar los hechos tal cual son
 - El título debe ser en español rioplatense (Argentina)
+- El lector ya sabe que la noticia es de La Rioja: no agregues "de La Rioja", "riojano/a" ni "en la provincia", salvo que haga falta para distinguirla de un hecho nacional
+- Título directo y llamativo: empezá por el hecho más fuerte, con verbo en voz activa y lenguaje de todos los días. Evitá las fórmulas de expediente ("abrió un sumario administrativo", "se llevó a cabo", "en el marco de", "procedió a"). Sin sensacionalismo ni signos de exclamación
 - Si la noticia tiene una localidad claramente identificable de La Rioja, agregar UN solo hashtag de localidad al final del título. Si hay varias localidades o no se menciona ninguna específica, NO agregar hashtag.
 - Hashtags disponibles: {hashtags}
 - NO agregar hashtags de categoría (Policiales, Locales, etc.)
-
+{reglas_fuente}
 FORMATO DE RESPUESTA (solo esto, sin explicaciones):
 TITULO: <título reescrito>
 HASHTAG: <#HashtagLocalidad o NINGUNO>
@@ -155,10 +176,11 @@ Texto: {texto}
 """
 
 
-def _call_gemini(titulo: str, parrafos: list[str]) -> tuple[str, str]:
+def _call_gemini(titulo: str, parrafos: list[str], reglas_fuente: str = "") -> tuple[str, str]:
     """Retorna (nuevo_titulo, hashtag). Lanza excepción si falla."""
     texto_resumen = " ".join(parrafos[:3])  # Primeros 3 párrafos como contexto
     prompt = PROMPT_TEMPLATE.format(
+        reglas_fuente=f"- {reglas_fuente}\n" if reglas_fuente else "",
         hashtags=", ".join(LOCALITY_HASHTAGS),
         titulo=titulo,
         texto=texto_resumen[:1500],
@@ -189,10 +211,17 @@ def rewrite_noticia(noticia: dict) -> dict:
     titulo_original = noticia.get("titulo", "")
     parrafos = noticia.get("parrafos", [])
 
+    reglas = [JUDICIAL_RULES] if is_judicial(noticia) else []
+    update = noticia.get("event_update")
+    if isinstance(update, dict) and update.get("novedad"):
+        reglas.append(
+            f'Esta nota ACTUALIZA una ya publicada ("{update.get("of_title", "")}"). '
+            f'Empezá el título por la novedad ({update["novedad"]}) y no repitas el título anterior'
+        )
     fallbacks_used: dict[str, bool] = {}
     for attempt in range(1, GEMINI_RETRY_COUNT + 1):
         try:
-            nuevo_titulo, hashtag = _call_gemini(titulo_original, parrafos)
+            nuevo_titulo, hashtag = _call_gemini(titulo_original, parrafos, "\n- ".join(reglas))
             noticia["titulo_original"] = titulo_original
             noticia["titulo"] = nuevo_titulo
             noticia["hashtag_localidad"] = hashtag
@@ -245,21 +274,28 @@ def rewrite_noticia(noticia: dict) -> dict:
     # Completar localidad/bajada para la card automática de una sola imagen
     # (AutomaticInstagramCard.tsx) — nunca bloquea la cola si falla: vacío
     # es un resultado válido, no un error de publicación.
-    shared_visual_style = automatic_manual_visual_style_enabled()
-    locality_deck_data = generate_locality_and_deck(
-        noticia,
-        include_highlight=shared_visual_style,
-    )
-    noticia["locality"] = locality_deck_data["locality"]
-    noticia["deck"] = locality_deck_data["deck"]
-    if shared_visual_style and locality_deck_data.get("highlight_phrase"):
-        noticia["highlight_terms"] = [locality_deck_data["highlight_phrase"]]
+    if locality_deck_lazy_enabled():
+        # Sólo la card estática de IG usa estos campos: se generan al
+        # renderizarla (meta/ig_client.py::_prepare_image), no por cada nota.
+        noticia["locality_deck_deferred"] = True
+        for field in ("locality", "deck", "highlight_terms"):
+            noticia.pop(field, None)
     else:
-        # Mantiene el flag reversible incluso si se reprocesa una entrada
-        # creada mientras la paridad visual estaba activa.
-        noticia.pop("highlight_terms", None)
-    if locality_deck_data.get("locality_deck_fallback_used"):
-        fallbacks_used["locality_deck"] = True
+        shared_visual_style = automatic_manual_visual_style_enabled()
+        locality_deck_data = generate_locality_and_deck(
+            noticia,
+            include_highlight=shared_visual_style,
+        )
+        noticia["locality"] = locality_deck_data["locality"]
+        noticia["deck"] = locality_deck_data["deck"]
+        if shared_visual_style and locality_deck_data.get("highlight_phrase"):
+            noticia["highlight_terms"] = [locality_deck_data["highlight_phrase"]]
+        else:
+            # Mantiene el flag reversible incluso si se reprocesa una entrada
+            # creada mientras la paridad visual estaba activa.
+            noticia.pop("highlight_terms", None)
+        if locality_deck_data.get("locality_deck_fallback_used"):
+            fallbacks_used["locality_deck"] = True
 
     noticia.setdefault("queued_at", int(time.time()))
     noticia["fallbacks_used"] = fallbacks_used
@@ -469,6 +505,91 @@ def _expiry_reason(noticia: dict) -> str:
     return f"article_age_exceeded:{ARTICLE_MAX_AGE_DAYS}d"
 
 
+_NON_LOCAL_SOURCE_MARKERS = ("paparazzi", "infobae", "internacional")
+# Nunca son el mismo caso que un comunicado judicial: no gastan contexto.
+_NON_JUDICIAL_CATEGORIES = {"deportes", "espectaculos", "cultura"}
+
+
+def _recent_local_titles(*, hours: int | None = None, limit: int = 80) -> list[str]:
+    """Títulos originales de notas locales encoladas en las últimas horas.
+
+    Contra estos se decide si una nota judicial es el mismo caso que ya cubrió
+    Tiempo Popular, Nueva Rioja, Fénix o la otra fuente judicial.
+    """
+    window = hours if hours is not None else int(os.getenv("JUDICIAL_DEDUP_HOURS", "72"))
+    cutoff = int(time.time()) - window * 3600
+    rows = []
+    for item in load_json(META_OUTPUT, [], expected_type=list):
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").lower()
+        queued = item.get("queued_at")
+        if any(marker in source for marker in _NON_LOCAL_SOURCE_MARKERS):
+            continue
+        if item_category(item) in _NON_JUDICIAL_CATEGORIES:
+            continue
+        if not isinstance(queued, (int, float)) or queued < cutoff:
+            continue
+        title = str(item.get("titulo_original") or item.get("titulo") or "").strip()
+        if title:
+            rows.append((queued, title))
+    rows.sort(reverse=True)
+    return [title for _queued, title in rows[:limit]]
+
+
+def _judicial_gate(noticia: dict) -> tuple[str, str]:
+    """``("pass", "")``, ``("drop", motivo)`` o ``("retry", motivo)``."""
+    assessment = assess_judicial(
+        str(noticia.get("titulo") or ""),
+        noticia.get("parrafos") or [],
+        _recent_local_titles(),
+    )
+    if assessment.score is None:
+        return "retry", f"judicial_score_unavailable:{assessment.error_type}"
+    noticia["judicial_relevance_score"] = assessment.score
+    if assessment.duplicate_of:
+        return "drop", f"duplicate_judicial_case:{assessment.duplicate_of[:80]}"
+    if assessment.score < judicial_min_score():
+        return "drop", f"judicial_low_score:{assessment.score}"
+    return "pass", ""
+
+
+_ALERT_WORDS = ("alerta", "alertas", "aviso", "avisos")
+_MET_WORDS = (
+    "lluvia", "tormenta", "viento", "zonda", "nevada", "nieve", "granizo", "calor extremo",
+    "temperaturas extremas", "frio extremo", "niebla", "meteorolog",
+)
+
+
+_ALERT_LEAD = re.compile(
+    r"\b(?:alertas?|avisos?) (?:amarilla|naranja|roja)s?\b|\b(?:emitio|emitieron|rige|rigen|activo|activaron) (?:una |un |la |el )?(?:alerta|aviso)\b"
+)
+
+
+def is_weather_alert_news(noticia: dict) -> bool:
+    """Nota de otro medio sobre una alerta meteorológica ("Emiten alerta por
+    tormentas…"). Con ``WEATHER_ALERT_NEWS_SMN_ONLY`` no se publica: las
+    alertas salen sólo del feed oficial del SMN, como historia de alerta."""
+    if os.getenv("WEATHER_ALERT_NEWS_SMN_ONLY", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    text = " ".join(
+        str(noticia.get(field) or "") for field in ("titulo_original", "titulo")
+    )
+    folded = "".join(
+        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
+    ).lower()
+    words = set(re.findall(r"[a-z]+", folded))
+    if any(w in words for w in _ALERT_WORDS) and any(m in folded for m in _MET_WORDS):
+        return True
+    # El título no siempre lo dice ("Vientos de más de 100 km/h afectarán…"):
+    # el primer párrafo, sólo con fórmulas inequívocas de una alerta emitida.
+    lead = "".join(
+        c for c in unicodedata.normalize("NFD", str((noticia.get("parrafos") or [""])[0] or ""))
+        if unicodedata.category(c) != "Mn"
+    ).lower()
+    return bool(_ALERT_LEAD.search(lead)) and any(m in lead for m in _MET_WORDS)
+
+
 def _find_early_duplicate(noticia: dict) -> str | None:
     """Duplicado cross-fuente detectado ANTES de pagar las llamadas de IA
     (reescritura, clasificación, caption, localidad).
@@ -597,6 +718,12 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             succeeded += 1
             continue
 
+        if is_weather_alert_news(noticia):
+            queue.dead_letter(item_id, "weather_alert_smn_only")
+            record_queue_event(stage="rewrite", status="dead_letter", reason="weather_alert_smn_only", item=noticia)
+            succeeded += 1
+            continue
+
         early_duplicate = _find_early_duplicate(noticia)
         if early_duplicate:
             reason = f"duplicate_before_rewrite:{early_duplicate}"
@@ -610,6 +737,42 @@ def run_rewrite_pipeline(*, processor=None) -> StageResult:
             duplicates_avoided += 1
             succeeded += 1
             continue
+
+        if is_judicial(noticia):
+            action, reason = _judicial_gate(noticia)
+            if action == "retry":
+                destination = queue.fail(item_id, reason, retryable=True)
+                record_queue_event(
+                    stage="rewrite",
+                    status="failed" if destination == "pending" else "dead_letter",
+                    reason=reason,
+                    item=noticia,
+                )
+                failed += 1
+                if destination == "pending":
+                    deferred += 1
+                continue
+            if action == "drop":
+                queue.dead_letter(item_id, reason)
+                record_queue_event(stage="rewrite", status="dead_letter", reason=reason, item=noticia)
+                if reason.startswith("duplicate_"):
+                    duplicates_avoided += 1
+                succeeded += 1
+                continue
+
+        if same_event.enabled() and not is_judicial(noticia):
+            check = same_event.assess_same_event(noticia)
+            if check.relation == "duplicate":
+                reason = f"same_event_duplicate:{check.match.get('title', '')[:80]}"
+                queue.dead_letter(item_id, reason)
+                record_queue_event(stage="rewrite", status="dead_letter", reason=reason, item=noticia)
+                duplicates_avoided += 1
+                succeeded += 1
+                continue
+            if check.relation == "update":
+                noticia["event_update"] = check.update_payload()
+            elif check.related:
+                noticia["event_related"] = check.related_payload()
 
         original = copy.deepcopy(noticia)
         try:

@@ -108,12 +108,12 @@ def ingest(feed_items: list[dict], *, now: float | None = None) -> dict[str, int
 
     def mutate(state):
         jobs = state.setdefault("jobs", {})
-        # Un descarte editorial también bloquea la URL: no se vuelve a puntuar.
+        # Un descarte editorial o por región también bloquea la URL: no se vuelve a puntuar.
         known_urls = {
             job.get("url_key")
             for job in jobs.values()
             if job.get("status") != "skipped"
-            or job.get("reason") == "editorial_score_below_threshold"
+            or job.get("reason") in ("editorial_score_below_threshold", "region_salta")
         }
         # Del más viejo al más nuevo, como recomienda el manual del backend.
         for entry in reversed(feed_items):
@@ -210,6 +210,26 @@ def fetch_x_metadata(url: str) -> dict:
         "text": _clean_tweet_text(str(data.get("description") or data.get("title") or "")),
         "uploader": str(data.get("uploader") or data.get("uploader_id") or ""),
     }
+
+
+# Videos de Salta (pedido del responsable, 2026-10-31): llegan del backend de
+# HolaSalta y no son de interés para LVR. "Salta" se busca con mayúscula para
+# no confundir el verbo ("salta a la vista"); las localidades, tal cual.
+_SALTA_RE = re.compile(
+    r"\b(Salta|SALTA|[Ss]alteñ[oa]s?|Or[aá]n|Tartagal|Met[aá]n|Cafayate|Embarcaci[oó]n|Pichanal|"
+    r"Rosario de la Frontera|Rosario de Lerma|General G[uü]emes|Joaqu[ií]n V\. Gonz[aá]lez)\b"
+)
+_SALTA_ACCOUNTS = {"quepasasalta"}
+
+
+def salta_reason(job: dict, metadata: dict) -> str:
+    """Motivo si el post dice que es de Salta (texto o cuenta salteña); "" si no."""
+    match = re.search(r"x\.com/([^/]+)/status", str(job.get("url") or ""))
+    account = (match.group(1) if match else "").lower()
+    if account in _SALTA_ACCOUNTS or str(metadata.get("uploader") or "").lower().lstrip("@") in _SALTA_ACCOUNTS:
+        return f"cuenta {account or metadata.get('uploader')}"
+    found = _SALTA_RE.search(str(metadata.get("text") or ""))
+    return f"menciona '{found.group(0)}'" if found else ""
 
 
 def build_news_item(job: dict, metadata: dict) -> dict | None:

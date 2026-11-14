@@ -1,0 +1,73 @@
+{
+  "_doc": "Grupos de Facebook donde la página La Voz Riojana comparte sus notas, por localidad (meta/run_fb_groups.py). Una nota va sólo a los grupos de la localidad que nombra su título o copete; sin localidad del interior, a los de Capital. 'keywords': cómo se reconoce la localidad en el texto (sin tildes, palabra completa). Elegidos el 2026-10-30 entre los grupos de los que la página es miembro.",
+  "localities": {
+    "Capital": {
+      "keywords": ["la rioja capital", "ciudad de la rioja", "capital riojana", "capital"],
+      "groups": [
+        {"id": "1376847675754801", "name": "ALGUIEN SABE? YO SE! (RECARGADO)- LA RIOJA"},
+        {"id": "471349896281787", "name": "LA RIOJA CAPITAL ACTITUD POSITIVA"}
+      ]
+    },
+    "Chilecito": {
+      "keywords": ["chilecito", "anguinan", "malligasta", "sanogasta", "guanchin", "los sarmientos", "la puntilla"],
+      "groups": [
+        {"id": "1560682947543824", "name": "Bolsa De Trabajo (CHILECITO Y ALREDEDORES)"}
+      ]
+    },
+    "Nonogasta": {
+      "keywords": ["nonogasta"],
+      "groups": [{"id": "394392927720108", "name": "Compra Venta Nonogasta"}]
+    },
+    "Vichigasta": {
+      "keywords": ["vichigasta"],
+      "groups": [{"id": "297022880700150", "name": "compra y venta vichigasta"}]
+    },
+    "Famatina": {
+      "keywords": ["famatina", "campanas", "chanarmuyo", "plaza vieja", "angulos"],
+      "groups": [{"id": "291843357685298", "name": "Famatina Compra venta"}]
+    },
+    "Aimogasta": {
+      "keywords": ["aimogasta", "arauco", "machigasta", "banado de los pantanos", "san antonio de arauco"],
+      "groups": [
+        {"id": "402649299784057", "name": "COMPRA-VENTA Aimogasta, La Rioja, Argentina"},
+        {"id": "143082376641994", "name": "Compra Venta y Canje Aimogasta La Rioja Argentina"}
+      ]
+    },
+    "Chamical": {
+      "keywords": ["chamical"],
+      "groups": [
+        {"id": "375164929817879", "name": "Chamical La Rioja Argentina"},
+        {"id": "331387023955256", "name": "Venta de Todo Chamical (La Rioja)"}
+      ]
+    },
+    "Chepes": {
+      "keywords": ["chepes", "rosario vera penaloza"],
+      "groups": [
+        {"id": "1736299050020840", "name": "COMPRA Y VENTA CHEPES DE TODOS"},
+        {"id": "119163598430162", "name": "Compra y venta (chepes)"}
+      ]
+    },
+    "Olta": {
+      "keywords": ["olta", "general belgrano"],
+      "groups": [
+        {"id": "432281097285936", "name": "compra y venta olta"},
+        {"id": "828451020556808", "name": "OFERTAS OLTA"}
+      ]
+    },
+    "Villa Unión": {
+      "keywords": ["villa union", "felipe varela", "guandacol", "pagancillo"],
+      "groups": [
+        {"id": "201655696706041", "name": "Ventas Villa Union"},
+        {"id": "1150481288986877", "name": "COMPRA Y VENTA VILLA UNION (LA RIOJA)"}
+      ]
+    },
+    "Sanagasta": {
+      "keywords": ["sanagasta", "villa sanagasta"],
+      "groups": [{"id": "929284047628164", "name": "COMPRAS Y VENTAS LIBRE LA RIOJA y SANAGASTA"}]
+    },
+    "Tama": {
+      "keywords": ["tama"],
+      "groups": [{"id": "1661956627442610", "name": "CLASIFICADOS TAMA, LA RIOJA, ARGENTINA"}]
+    }
+  }
+}

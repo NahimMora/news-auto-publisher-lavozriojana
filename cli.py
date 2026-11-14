@@ -534,8 +534,54 @@ def cmd_alert_check(args) -> int:
     return result.exit_code
 
 
+def _print_growth_report(report: dict) -> None:
+    def fmt(value):
+        return "ND" if value is None else f"{value:,.0f}".replace(",", ".")
+
+    cov = report["coverage"]
+    print(f"Medición de crecimiento — últimos {report['days']} días (Instagram)")
+    print(f"Publicaciones: {cov['publications']}  con alguna medición: {cov['with_any_measurement']}")
+    print("Mediciones por cohorte (edad real): " + ", ".join(f"{k}={v}" for k, v in cov["by_cohort"].items()))
+    print("Formatos: " + ", ".join(f"{k}={v}" for k, v in sorted(report["content_types"].items())))
+    for dim, title in (("content_type", "Formato"), ("source", "Fuente"), ("category", "Categoría"), ("workflow", "Flujo")):
+        print(f"\n{title:<22} cohorte   n   mediana     p75      total")
+        for key, cohorts in sorted(report["by"][dim].items()):
+            for label, st in cohorts.items():
+                print(f"{key[:22]:<22} {label:<7} {st['n']:>4} {fmt(st['median']):>9} {fmt(st['p75']):>7} {fmt(st['total']):>10}")
+    print("\nExtraordinarias (≥ 3× la mediana de su cohorte):")
+    for label, ex in report["extraordinary"].items():
+        if ex.get("threshold") is None:
+            print(f"  {label}: muestra insuficiente (n={ex['n']})")
+            continue
+        share = ex["share_of_total"]
+        print(f"  {label}: n={ex['n']} mediana={fmt(ex['median'])} umbral={fmt(ex['threshold'])} "
+              f"habitual mediana={fmt(ex['habitual']['median'])} aporte extraordinarias={'ND' if share is None else f'{share:.0%}'}")
+        for out in ex["outliers"][:5]:
+            print(f"     {fmt(out['reach']):>8}  {out['content_type']:<8} {str(out['source'] or 'ND')[:18]:<18} {out['title']}")
+    if report["evolution"]:
+        print("\nEvolución (piezas con dos o más mediciones):")
+        for ev in report["evolution"][:10]:
+            print(f"  {fmt(ev['reach_from'])} a {ev['from_age_h']:.0f} h → {fmt(ev['reach_to'])} a {ev['to_age_h']:.0f} h  {ev['title']}")
+    for note in report["notes"]:
+        print(f"* {note}")
+
+
 def cmd_kpis(args) -> int:
     from utils.kpis import weekly_report
+
+    if getattr(args, "growth", False):
+        from utils.growth_measurement import growth_report
+
+        try:
+            report = growth_report(days=args.days)
+        except JsonStateError as exc:
+            print(red(f"No se pudieron leer las mediciones: {exc}"))
+            return 1
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            _print_growth_report(report)
+        return 0
 
     try:
         report = weekly_report(args.weeks)
@@ -748,6 +794,167 @@ def cmd_videos(args) -> int:
     return completed.returncode
 
 
+def cmd_report(args) -> int:
+    """Reporte operativo (correo cada 3 días). Sin --send sólo lo muestra."""
+    from utils import mailer, ops_report
+
+    if args.send and not mailer.configured():
+        print(red("Falta configurar el correo en .env (REPORT_EMAIL_TO, SMTP_USER, SMTP_PASSWORD)."))
+        return 3
+    report = ops_report.build(args.days, use_ai=not args.no_ai)
+    if not args.send:
+        print(report["subject"])
+        print()
+        print(report["text"])
+        return 0
+    if not args.force and time.time() - ops_report.last_sent("report") < (args.days * 86400 - 3600):
+        print(yellow("El último reporte se envió hace menos de un período; no se reenvía (usar --force)."))
+        return 0
+    result = mailer.send_email(report["subject"], report["html"], report["text"])
+    if result.ok:
+        ops_report.mark_sent("report")
+        print(green(f"Reporte enviado: {report['subject']}"))
+        return 0
+    print(red(f"No se pudo enviar el reporte: {result.error_type}"))
+    return 3 if result.error_type == "smtp_not_configured" else 1
+
+
+def cmd_watchdog(args) -> int:
+    """Vigilante del supervisor: avisa por correo si deja de funcionar y
+    cuando vuelve (un aviso por incidente)."""
+    from utils import mailer, ops_report
+
+    news = ops_report.watchdog_check(args.stale_minutes)
+    if news is None:
+        return 0
+    subject, text = news
+    result = mailer.send_email(subject, f"<p style=\"font-family:Arial,sans-serif;font-size:15px\">{text}</p>", text)
+    print(subject if result.ok else red(f"Aviso no enviado: {result.error_type}"))
+    return 0 if result.ok else 1
+
+
+def cmd_comment_replies(args) -> int:
+    from utils import comment_replies as cr
+
+    if args.action == "list":
+        pending = [(k, v) for k, v in (cr.load_state().get("comments") or {}).items() if v.get("status") == "suggested"]
+        if not pending:
+            print("No hay respuestas sugeridas para revisar.")
+        for key, entry in pending:
+            print(key)
+            print(f"  Pregunta: {entry.get('question')}")
+            print(f"  Respuesta: {entry.get('reply')}")
+            print()
+        return 0
+    if not args.key:
+        print(red("Indicá el comentario (por ejemplo instagram:1789...)."))
+        return 1
+    outcome = cr.approve(args.key) if args.action == "approve" else cr.reject(args.key)
+    print(outcome)
+    return 0 if outcome in {"replied", "rejected"} else 1
+
+
+def cmd_native_stories(args) -> int:
+    """Historias nativas de Instagram (stickers reales de publicación, enlace
+    y ubicación). Sólo ``login`` y ``live-test``/``delete`` tocan Instagram."""
+    from meta import instagrapi_client as igc
+    from meta import run_native_stories as rns
+    from utils import native_story as ns
+
+    if args.action == "status":
+        state = ns.load_state()
+        jobs = state.get("jobs") or {}
+        counts: dict[str, int] = {}
+        for entry in jobs.values():
+            counts[entry.get("status", "?")] = counts.get(entry.get("status", "?"), 0) + 1
+        print(json.dumps({
+            "enabled": ns.enabled(), "dry_run": ns.dry_run(), "include_reels": ns.include_reels(),
+            "today": ns.stories_today(state), "max_per_day": ns.max_per_day(), "by_status": counts,
+            "blocked_until": state.get("blocked_until"), "block_reason": state.get("block_reason"),
+            "session_file": os.path.exists(igc.session_path()),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.action == "preview":
+        # Nunca publica: payload + PNG de referencia en output/native_stories_preview/.
+        if not args.media_id:
+            result = rns.main(force_dry_run=True)
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            return 0 if result.acceptable else 1
+        candidate = ns.candidate_for(args.media_id)
+        if not candidate:
+            print(red("No está en ig_posted.json."))
+            return 1
+        payload, reason, image = rns.prepare(candidate)
+        if payload is None:
+            print(red(f"No se puede armar: {reason}"))
+            return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(green(f"Vista previa: {rns._write_preview(candidate, payload, image)}"))
+        return 0
+
+    if args.action == "login":
+        # Interactivo: si Instagram pide un código, lo pregunta en consola.
+        if not os.getenv("INSTAGRAPI_USERNAME"):
+            print(red("Falta INSTAGRAPI_USERNAME en el entorno."))
+            return 1
+        client = igc.NativeStoryClient(interactive=True)
+        if not client.password and not os.path.exists(client.path):
+            import getpass
+
+            client.password = getpass.getpass("Contraseña de Instagram (no se guarda): ")
+        try:
+            client.connect()
+        except igc.NativeStoryError as err:
+            print(red(f"No se pudo iniciar sesión: {err.kind}/{err.code}"))
+            return 1
+        ns.clear_blocked()
+        print(green(f"Sesión guardada en {client.path}"))
+        return 0
+
+    # live-test / delete: publicación externa real.
+    if not args.confirm_external_publication or not ns._flag("IG_NATIVE_STORY_LIVE_TEST"):
+        print(red("Prueba real: requiere IG_NATIVE_STORY_LIVE_TEST=true y --confirm-external-publication."))
+        return 1
+    client = igc.NativeStoryClient()
+    if args.action == "delete":
+        if not args.story_pk:
+            print(red("Indicá --story-pk."))
+            return 1
+        try:
+            print(green("Borrada.") if client.delete_story(args.story_pk) else red("Instagram no confirmó el borrado."))
+        except igc.NativeStoryError as err:
+            print(red(f"No se pudo borrar: {err.kind}/{err.code}"))
+            return 1
+        return 0
+    candidate = ns.candidate_for(args.media_id) if args.media_id else None
+    if not candidate:
+        print(red("Indicá --media-id de una publicación de ig_posted.json."))
+        return 1
+    if (ns.load_state().get("jobs") or {}).get(args.media_id, {}).get("status") == ns.STATUS_COMPLETED:
+        print(red("Esa publicación ya tiene historia nativa: no se duplica."))
+        return 1
+    try:
+        client.connect()
+        payload, reason, image = rns.prepare(candidate, client)
+        if payload is None:
+            print(red(f"No se puede armar: {reason}"))
+            return 1
+        outcome = rns.publish_one(client, candidate, payload, attempts=1, image=image)
+    except igc.NativeStoryError as err:
+        print(red(f"No publicada: {err.kind}/{err.code}"))
+        return 1
+    print(json.dumps(outcome, ensure_ascii=False, indent=2))
+    if outcome.get("status") != ns.STATUS_COMPLETED:
+        return 1
+    entry = ns.load_state()["jobs"][args.media_id]
+    print(green(f"Historia: {entry.get('story_url')}"))
+    print("Verificar a mano en la app: tocar el post abre la publicación; el enlace abre "
+          f"{payload['link']['url']}; la ubicación abre {(payload.get('location') or {}).get('name', '(sin ubicación)')}.")
+    print(f"Para borrarla: python cli.py native-stories delete --story-pk {entry.get('story_pk')} --confirm-external-publication")
+    return 0 if not outcome.get("missing") else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python cli.py",
@@ -816,6 +1023,8 @@ def main(argv: list[str] | None = None) -> int:
     kpis_parser = sub.add_parser("kpis", help="KPIs semanales de redes (seguidores, posts, alcance)")
     kpis_parser.add_argument("--weeks", type=int, default=4)
     kpis_parser.add_argument("--json", action="store_true")
+    kpis_parser.add_argument("--growth", action="store_true", help="Comparación por edad, formato, fuente y categoría (T01)")
+    kpis_parser.add_argument("--days", type=int, default=30)
 
     cutover_parser = sub.add_parser(
         "queue-cutover",
@@ -926,6 +1135,25 @@ def main(argv: list[str] | None = None) -> int:
     stats_parser.add_argument("--since-hours", type=int, default=24, dest="since_hours")
     stats_parser.add_argument("--since-days", type=int, default=7, dest="since_days")
 
+    report_parser = sub.add_parser("report", help="Reporte operativo (correo cada 3 días)")
+    report_parser.add_argument("--days", type=int, default=3)
+    report_parser.add_argument("--send", action="store_true", help="Envía el correo (si no, sólo lo muestra)")
+    report_parser.add_argument("--force", action="store_true", help="Reenvía aunque no haya pasado el período")
+    report_parser.add_argument("--no-ai", action="store_true", dest="no_ai", help="Sin resumen de Gemini")
+
+    watchdog_parser = sub.add_parser("watchdog", help="Avisa por correo si el supervisor deja de funcionar")
+    watchdog_parser.add_argument("--stale-minutes", type=int, default=120, dest="stale_minutes")
+
+    replies_parser = sub.add_parser("comment-replies", help="Revisa respuestas sugeridas a comentarios")
+    replies_parser.add_argument("action", choices=["list", "approve", "reject"])
+    replies_parser.add_argument("key", nargs="?", default="")
+
+    native_parser = sub.add_parser("native-stories", help="Historias nativas de Instagram con stickers (instagrapi)")
+    native_parser.add_argument("action", choices=["status", "preview", "login", "live-test", "delete"])
+    native_parser.add_argument("--media-id", default="", dest="media_id", help="ID de Graph de la publicación")
+    native_parser.add_argument("--story-pk", default="", dest="story_pk")
+    native_parser.add_argument("--confirm-external-publication", action="store_true", dest="confirm_external_publication")
+
     args = parser.parse_args(argv)
     commands = {
         "start": cmd_start,
@@ -948,6 +1176,10 @@ def main(argv: list[str] | None = None) -> int:
         "restore": cmd_restore,
         "source-probe": cmd_source_probe,
         "archive-index": cmd_archive_index,
+        "report": cmd_report,
+        "watchdog": cmd_watchdog,
+        "comment-replies": cmd_comment_replies,
+        "native-stories": cmd_native_stories,
     }
     if args.cmd not in commands:
         parser.print_help()

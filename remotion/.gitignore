@@ -15,3 +15,7 @@ public/tmp
 # y utils/remotion_renderer.py) — se regenera solo, nunca se commitea.
 .render-cache
 .render-server.json
+
+# Bundle de QA de la galería V1/V2 (scripts/render_compare.mjs)
+.render-cache-gallery
+.render-server.starting

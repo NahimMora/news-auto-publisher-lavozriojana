@@ -1217,6 +1217,8 @@
   re-scrape por el resto de la corrida (antes: hasta 8 llamadas fallidas por ciclo).
 - Pendiente: revisar la app en Meta for Developers (permisos y acceso a la
   funcionalidad de URL scraping). El Sharing Debugger manual sigue disponible.
+- 2026-10-22: sigue igual en todas las corridas (06:33, 07:36, 08:46); registrado
+  como `LVR-BUG-0007`.
 
 ## 89. Caption de IG/FB desde la web con chips como viñetas y lead cortado — CORREGIDO 2026-10-04
 
@@ -1409,3 +1411,231 @@
   404, se reintentó con la versión 540p y el Reel salió en IG y FB.
 - Estado actual: **corregido y verificado**.
 
+
+## 98. Falsos positivos del validador editorial al comienzo de línea y con "uno" — CORREGIDO 2026-10-22
+
+- ID: `LVR-BUG-0005`; severidad media. Entre el 19 y el 21/10 los fallbacks editoriales
+  pasaron de 1 a 3 por día (ciclos #1100, #1103 y #1104 `degraded`). En 7 días hubo
+  7 bloqueos duros por `invented_number` y 5 por `invented_proper_noun`, y la nota
+  salió con el texto casi crudo de la fuente.
+- Causa raíz (a): `_match_starts_sentence` hacía `rstrip()` antes de comparar con
+  `\n`, así que la excepción de #64 nunca se aplicaba a la primera palabra de una
+  línea (tras un título sin punto, la bajada o una viñeta). Tampoco contemplaba
+  `¿ ¡ « "`. Casos reales: `Buscar`, `Posible`, `Retomar` (Icardi) y `Versiones`,
+  `Informes`, `Reportes` (Bellingham).
+- Causa raíz (b): `uno` se traducía a `1` también en el texto generado, donde casi
+  siempre es pronombre ("uno de los conductores", "cada uno"). Caso real: choques
+  de Famatina/Anguinán y de La Llama (`invented_number:1` durante seis intentos).
+- Corrección: el salto de línea y los signos de apertura después de un límite de
+  oración cuentan como comienzo de oración. `uno` sigue contando en el original
+  (permite `1` en la salida) pero no en el texto generado. Los nombres dentro de la
+  oración, incluso entre paréntesis ("(Kremlin)"), siguen validándose.
+- Tests: `test_first_word_of_a_line_or_after_opening_marks_is_not_a_proper_name`,
+  `test_opening_marks_inside_a_sentence_still_validate_names`,
+  `test_validation_does_not_treat_pronoun_uno_as_numeric_one`,
+  `test_source_uno_still_allows_digit_one`.
+- Riesgo residual: igual que en #64, un nombre inventado de una sola palabra usado
+  sólo al comienzo de una línea u oración puede no detectarse.
+
+## 99. Dedup de Instagram contra todo el historial, sin ventana de tiempo — CORREGIDO 2026-10-22
+
+- ID: `LVR-BUG-0006`; severidad media. `_posted_duplicate_reason` comparaba el
+  título (Jaccard >= 0.5) contra los 3457 posts de `ig_posted.json`. El 22/10 se
+  omitieron, entre otras, un corte de luz en Famatina (0.67 contra un post de hace
+  ~61 días), Rugby Chelcos-CRAR (0.50, ~70 días) y una fecha del básquet de
+  Chilecito (0.60). Esas notas quedan `SUCCESS deduplicated` y no se reintentan.
+  El log no decía qué nota ni contra cuál.
+- Corrección: `IG_POSTED_DEDUP_WINDOW_HOURS` (default `0` = comportamiento
+  histórico) limita sólo la comparación por título a los posts con `posted_at` dentro
+  de la ventana. La coincidencia exacta por clave/URL no tiene ventana, y los
+  registros sin `posted_at` se siguen comparando. Se loguean ambos títulos.
+  Producción: `72` en `scripts/start_24x7_production.ps1`.
+- Tests: `InstagramPostedDedupWindowTests`,
+  `test_similarity_filter_skips_title_match_but_keeps_exact_key`.
+- Rollback: `IG_POSTED_DEDUP_WINDOW_HOURS=0`.
+
+## 100. Mismo hecho: historias distintas de un evento grande pueden juntarse — ABIERTO 2026-10-23
+
+- Síntoma: en la evaluación sobre notas reales, "García Cuerva destacó la
+  Peregrinación a Luján…" (Nueva Rioja) quedó como duplicado de "Miles de
+  fieles caminan a Luján…": comparten el ancla "Luján" aunque son dos notas
+  distintas del mismo evento.
+- Impacto: se pierde una nota (no se publica); no se edita ningún post, porque
+  no se marcó como actualización.
+- Mitigación: las fuentes no locales no se evalúan y el prompt excluye "otra
+  historia dentro de un evento grande". Revisar `same_event_duplicate` en
+  `queue_events.json` si aparecen faltantes.
+- Límite conocido: la cola Meta casi no guarda bajadas, así que las candidatas
+  se comparan sobre todo por título; "Confirmaron muerte cerebral…" no se
+  relacionó con el primer vuelco ("puente Virgen India"), porque ningún texto
+  dice que el puente está en Sanagasta.
+
+## 101. Cronologías de la web con hechos distintos — CORREGIDO 2026-10-23
+
+- Síntoma: el Story Engine asignaba la misma `storyKey` a notas que sólo
+  compartían una localidad y una palabra ("Chilecito" + "joven", "Córdoba" +
+  "trasladar"), y la web las mostraba como una cronología. 1103 de 6262 posts
+  tenían historia, en 403 historias; 201 con dos o más notas en la web. Ej.:
+  `story:bd3731a2cfe7` juntaba un femicidio en Saldán, un bebé trasladado a
+  Córdoba, hurtos en Chamical y droga en Chumbicha.
+- Corrección: `STORY_ENGINE_AUTO_ENABLED=false` (el agrupamiento automático no
+  asigna más historias). Las historias salen sólo de actualizaciones del mismo
+  hecho verificadas (`utils/same_event.py`, con ancla), con clave `event:`; la
+  nota anterior se pasa a esa historia en el CMS con `PATCH storyKey`.
+- Limpieza: `scripts/clear_auto_story_keys.py --apply` quita las claves
+  automáticas del CMS (`PATCH storyKey=null`) y del archivo local, con respaldo
+  en `output/story_keys_backup_*.json` (`--restore` las vuelve a poner).
+- Sin historia, la nota vuelve a mostrar "En contexto" cuando hay antecedentes.
+
+## 102. Carrusel de la mañana rechazado en Instagram sin motivo — CORREGIDO 2026-10-28
+
+- Síntoma: el 28/10 (08:28 y 09:55) el carrusel de la mañana dio
+  `instagram=request_rejected` (Facebook salió). El log no decía en qué paso
+  ni por qué: `post_image_carousel` devolvía el error de Graph sin registrarlo.
+  No fue el tope diario (74/100 en `content_publishing_limit`, y ese caso se
+  clasifica `rate_limit`) ni un cambio de código (sin commits desde el 26/10).
+- Causa probable: el padre `CAROUSEL` se armaba tras una espera fija de 5 s,
+  sin confirmar que las 7 láminas estuvieran `FINISHED`.
+- Corrección: cada lámina y el padre esperan `FINISHED` (misma espera que el
+  carrusel premium, `PREMIUM_IG_CONTAINER_PROCESSING_*`); `ERROR`/`EXPIRED`
+  falla y el timeout queda `degraded`, ambos `not_published`. Todo rechazo
+  loguea `stage`, lámina, `code`/`subcode`, `message` y `fbtrace_id`
+  ("Carrusel de la mañana de Instagram rechazado ..."). Si vuelve a fallar,
+  ese renglón da el motivo.
+
+## 103. OG con fotos compuestas recortadas por la costura — CORREGIDO detrás de flag 2026-10-30
+
+- Síntoma: el OG V2 recorta al centro un hueco de 600×630; en montajes de dos
+  paneles (Lali/Tini, carnet de conducir) la costura queda en el medio y corta
+  caras o deja media persona; en grillas 2×2 muestra cuatro cuartos de foto.
+  En una muestra de 400 fotos, el 22 % de las horizontales son montajes.
+- Corrección (`GROWTH_IMAGE_RULES_ENABLED`): díptico con paneles enteros,
+  primera columna de la grilla o foto sin barras laterales
+  (`utils/growth_image_rules.py`).
+- Límite: sin visión no se elige "el panel pertinente"; en montajes de tres
+  paneles quedan los dos primeros.
+
+## 104. Sin mediciones a 72 h ni 7 días — CORREGIDO detrás de flag 2026-10-30
+
+- Síntoma: `ig_insights` lee sólo las 30 publicaciones más recientes y
+  `ig_media_insights.json` guarda el último valor; en 14 días había 524
+  lecturas < 24 h, 48 a 24 h y ninguna a 72 h ni 7 d. Los Reels de Paparazzi,
+  premium y formatos sociales no se medían fuera de esa ventana.
+- Corrección (`GROWTH_METRICS_ENABLED`): cohortes por edad real y hasta 6
+  lecturas extra por ciclo para las piezas que cruzan 24 h / 72 h / 7 d.
+
+## 105. Titulares largos del OG exceden el límite de 5 líneas — ABIERTO 2026-10-30
+
+- Con un título de ~160 caracteres `fit` no encuentra tamaño ≥ 40 px en 5
+  líneas y renderiza 7 líneas a 40 px (no se corta: hay alto). Con las reglas
+  T02 el último recurso ajusta explícitamente por alto (46→40 px). Las reglas
+  no acortan títulos: eso exige una versión editorial corta (P01, fuera de
+  alcance).
+
+## 106. Instagram repetía el mismo hecho y dejaba afuera locales — CORREGIDO 2026-10-30
+
+- Síntoma: la licencia de conducir salió 4 veces en el feed (28–30/10), unas 105
+  locales en 72 h salieron en Facebook y no en Instagram, de noche sólo salían
+  Reels y 34 de 59 posts quedaron sin historia nativa en 48 h.
+- Causa: `valid_anchor` rechaza el "mismo hecho" cuando el ancla es un sustantivo
+  común; `IG_LOCAL_CATEGORIES` dejaba afuera política/economía/educación/salud;
+  el tope de 30 se llenaba a media tarde; 2 historias nativas por ciclo.
+- Corrección: `event_related` + `SAME_EVENT_SOCIAL_SKIP`, categorías ampliadas y
+  relleno riojano, tope 40 repartido, freno de imágenes con el tope de Meta en
+  88/100 e historias de a 4 (ver DECISIONS 2026-10-30).
+- Pendiente: los Reels de Infobae, paparazzi y X no pasan por el control del
+  mismo hecho (Nancy Godoy: 6 Reels y 5 posts en 3 días).
+
+## 107. Un test de Instagram depende del `.env` real — ABIERTO 2026-10-30
+
+- `test_node_webapp_publisher...test_instagram_skips_similar_without_fabricating_publication_record`
+  falla en la suite completa dentro de `C:\LVR`: otro módulo importado antes
+  llama a `load_dotenv()` y carga `IG_POSTED_DEDUP_WINDOW_HOURS=72`, con lo que
+  la publicación anterior del test (posted_at=123) queda fuera de la ventana.
+  En una copia sin `.env` la suite pasa completa. Corrección pendiente: fijar la
+  variable en el test.
+
+
+## 108. Noticiero de la Noche: voz sintética y control factual por coincidencia — ABIERTO 2026-10-30
+
+- La locución es Gemini TTS: la tonada riojana sale por indicación de estilo y
+  puede variar de una noche a otra; no hay voz es-AR nativa en Google.
+- El control factual compara cifras, nombres propios y días contra el texto de
+  nuestras notas: detecta datos agregados, no una paráfrasis que cambie el
+  sentido. Por eso las primeras 3 noches el operador revisa antes de publicar.
+- El modelo TTS es "preview": si Google lo retira, cambiar
+  `NIGHTLY_NEWSCAST_TTS_MODEL`.
+
+## 109. Noticiero V3: límites que no se automatizan — ABIERTO 2026-10-31
+
+- Pertinencia imagen–hecho: la decide un control visual de Gemini con el
+  título de la nota (en la edición del 30/10 atrapó el video de "allanamientos
+  en zona norte" embebido en la nota del penal, el fichaje y dos paneles de
+  estudio). Puede equivocarse en ambos sentidos: el operador revisa
+  `visual_plan.json` → `rejected` y las hojas de inspección.
+- Subtítulos: alineados sobre el audio real, pero sin anotación humana no hay
+  medición de error en ms (mediana/p95). Cobertura medida en los fixtures:
+  96–100 % con todas las cifras ancladas; las palabras `interpolated` quedan
+  marcadas.
+- Escucha: no hubo escucha humana de la mezcla V3 (voz, música −20 dB medido,
+  limitador). Pendiente del operador antes de publicar.
+- `freezedetect` marca como congeladas las placas tipográficas (`limited`,
+  `data`, `service`) y el cierre: son quietas a propósito y cambian los
+  subtítulos. No es error por sí solo.
+- El timeout del navegador headless al arrancar el render (contención con el
+  render server del supervisor) se reintenta una vez.
+
+## 110. Noticiero V4: pendientes de revisión humana — ABIERTO 2026-10-31
+
+- Escucha de la mezcla (voz con la dirección nueva, música a −13 dB, efectos):
+  medida, no escuchada.
+- El control visual de video puede devolver una lista por cuadro: se combina
+  (`merge_frame_checks`). Si devuelve otra cosa, el video queda fuera
+  ("sin control visual") y la historia usa foto.
+- Los videos de Fénix traen zócalo y un *ticker* abajo: a pantalla completa caen
+  en la zona de interfaz de Reels, debajo de los subtítulos.
+- La biblioteca guarda notas por 72 h en `data/` y medios en `output/`; si no se
+  programa `meta/run_newscast_library.py`, se actualiza recién al correr el
+  noticiero (alcanza: el historial web cubre la ventana).
+
+
+## 111. Noticiero V5: límites conocidos — ABIERTO 2026-11-01
+
+- **Retención sin medir.** La V5 se validó con el material del 31/10, no con
+  una edición publicada: no hay datos de que retenga más. Comparar con las
+  métricas de `docs/NIGHTLY_NEWSCAST.md` § V5 → Métricas antes de concluir.
+- **Voz no escuchada por una persona.** El ajuste de ritmo (≤ 1,08× con Rubber
+  Band) y el acorte de pausas se midieron (154–168 ppm), no se escucharon.
+- **Guion V5 sin corrida real del modelo.** El prompt nuevo no se probó contra
+  Gemini (sin gasto en esta etapa): la demo usó la locución y los textos del
+  31/10 con títulos reescritos a mano bajo las reglas nuevas. Si el modelo
+  devuelve bloques de más de 36 palabras, el validador pide recortar (hasta 4
+  intentos) y los bloques que sigan largos salen; con menos de 3 bloques
+  limpios no hay noticiero ese día (`script_rejected`).
+- **Video real sólo con prueba corta.** Las notas del 31/10 no tenían video:
+  la rama de video (`full` vertical, `band` apaisado) se probó con un render
+  corto de dos videos locales, no con una edición completa.
+- **Portada y ubicación sólo en Instagram.** `post_reel_video_to_facebook` no
+  manda miniatura ni lugar: Facebook elige el cuadro.
+- **Tiempo de render.** Con el host ocupado (otros renders del supervisor) el
+  video tarda 6–10 min y la portada 1–6 min (cada `npx remotion` bundlea). La
+  tarea arranca 20:15 y espera a las 21: hay margen, pero no infinito.
+- **Fotos chicas.** Con fotos de 700 px la tarjeta amplía 1,34× y el detalle
+  hasta 2,35×: se ven blandas en pantallas grandes. Mejor material en origen
+  es la única solución real.
+- **Mapa.** Sólo localidades exactas del nomenclador (90). Barrios, parajes y
+  calles no se ubican (decisión: nunca adivinar un punto).
+
+## 112. Render server en frío y tope de Instagram consumido por descartadas — CORREGIDO 2026-11-13
+
+- Síntoma: `render_server.mjs no respondió /health dentro de 90.0s` en casi todos
+  los ciclos (20 veces el 13/11) e imágenes por el subprocess viejo (~5-7 min cada
+  una); la etapa `meta/run_ig.py` terminó `failed` por timeout el 13/11 15:03.
+  Además, Instagram nunca llenaba los 8 lugares del ciclo y el relleno local
+  acumulaba pendientes de 20-45 h.
+- Causa: el bundle tarda ~100 s y el timeout era de 90 s; el servidor se apagaba
+  a los 20 min y los ciclos están a ~90 min; cada intento fallido lanzaba otro
+  servidor. En Instagram, el tope se aplicaba antes de los filtros que descartan
+  o postergan notas.
+- Corrección: ver `docs/DECISIONS.md` (2026-11-13). Tests en
+  `tests/test_ig_cycle_window.py`.

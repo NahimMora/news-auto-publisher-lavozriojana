@@ -1,0 +1,248 @@
+[
+  {
+    "id": "01_policial_corto",
+    "label": "Policial · titular corto",
+    "item": {
+      "titulo": "Se quedó dormido al volante y volcó en la Ruta 38",
+      "titulo_instagram": "Vuelco en Ruta 38: un conductor se quedó dormido al volante",
+      "seccion": "Policiales",
+      "deck": "el conductor de sesenta y cinco años resultó ileso tras el siniestro vial",
+      "highlight_terms": [
+        "quedó dormido"
+      ],
+      "breaking": false,
+      "locality": "Patquía",
+      "source_url": "https://nuevarioja.com.ar/policiales/se-durmio-al-volante-volco-en-ruta-38-y-sufrio-heridas-leves.htm"
+    },
+    "photo": "nuevarioja_policiales_720e5824c8aca4e68a64c366623b58a4ff836d26_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": true,
+    "notes": ""
+  },
+  {
+    "id": "02_local_largo",
+    "label": "Interior · titular largo + localidad",
+    "item": {
+      "titulo": "El Municipio realiza mejoras y puesta en valor en Polco ante la proximidad de sus fiestas patronales",
+      "titulo_instagram": "El Municipio prepara Polco para sus fiestas patronales",
+      "seccion": "Interior",
+      "deck": "Las tareas incluyen limpieza y mantenimiento integral de espacios públicos",
+      "highlight_terms": [
+        "realiza mejoras"
+      ],
+      "breaking": false,
+      "locality": "Polco",
+      "source_url": "https://nuevarioja.com.ar/interior/realizan-mejoras-en-la-localidad-de-polco.htm"
+    },
+    "photo": "nuevarioja_interior_e57b8f3d609c409fcb065ad2656976d5bf08edcf_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": "Foto original de baja resolución (700×366)."
+  },
+  {
+    "id": "03_espectaculos",
+    "label": "Espectáculos",
+    "item": {
+      "titulo": "Laura Ubfal reveló que la echaron de un programa por \"un tema de belleza\"",
+      "titulo_instagram": "Laura Ubfal reveló el motivo de su salida de Desayuno Americano",
+      "seccion": "Espectaculos",
+      "deck": "La periodista explicó los motivos de su desvinculación del ciclo de Pamela David",
+      "highlight_terms": [
+        "Laura Ubfal reveló"
+      ],
+      "breaking": false,
+      "source_url": "https://www.paparazzi.com.ar/teve/es-una-famosisima-periodista-brilla-en-lam-pero-ahora-destapo-que-la-echaron-por-un-escandaloso-motivo-me-fueron-por-un-tema-de-belleza"
+    },
+    "photo": "paparazzi_fd15ea999a8459c6e456ad05893b22ac866cc17d_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  },
+  {
+    "id": "04_deportes",
+    "label": "Deportes",
+    "item": {
+      "titulo": "Instituto le ganó a Defensa y Justicia y se afianza como único puntero",
+      "titulo_instagram": "Instituto se afianza en la punta tras vencer a Defensa y Justicia",
+      "seccion": "Deportes",
+      "deck": "El equipo cordobés se impuso por la mínima en Florencio Varela",
+      "highlight_terms": [
+        "Instituto le ganó"
+      ],
+      "breaking": false,
+      "source_url": "https://nuevarioja.com.ar/deportes/instituto-logro-un-triunfazo-ante-defensa-y-justicia-y-es-mas-puntero-que-nunca.htm"
+    },
+    "photo": "nuevarioja_deportes_35cd6bd2fa4c0104d338a101a76186ba0f8922db_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  },
+  {
+    "id": "05_video_horizontal",
+    "label": "Video horizontal 16:9",
+    "item": {
+      "titulo": "Divorcio de Icardi y Nara: qué pasará con la custodia de sus hijas tras el fallo judicial",
+      "titulo_instagram": "El divorcio de Wanda Nara y Mauro Icardi: qué pasa con la custodia de sus hijas",
+      "seccion": "Espectaculos",
+      "deck": "La abogada Ana Rosenfeld aclaró los puntos del fallo tras el anuncio del futbolista",
+      "highlight_terms": [
+        "Divorcio de Icardi"
+      ],
+      "breaking": false,
+      "source_url": "https://www.paparazzi.com.ar/teve/mauro-icardi-conto-la-escandalosa-verdad-de-sus-hijas-tras-el-divorcio-con-wanda-nara-que-pasara-con-ellas"
+    },
+    "photo": null,
+    "video": "_src_272f31738a.mp4",
+    "clip_seconds": 14,
+    "reel": true,
+    "notes": "Material de prueba: el video local no está vinculado a esta nota; se usa sólo para evaluar la composición."
+  },
+  {
+    "id": "05b_video_ultrawide",
+    "label": "Video horizontal ultra ancho (2,17:1)",
+    "item": {
+      "titulo": "Yanina Latorre cuestionó el triunfo de Sol Abraham en Gran Hermano: \"¿Compran la fama?\"",
+      "titulo_instagram": "Yanina Latorre pone en duda el triunfo de Sol Abraham en Gran Hermano",
+      "seccion": "Espectaculos",
+      "deck": "la panelista puso en duda la legitimidad del triunfo en el reality show",
+      "highlight_terms": [
+        "cuestionó el triunfo"
+      ],
+      "breaking": false,
+      "source_url": "https://www.paparazzi.com.ar/teve/yanina-latorre-sembro-dudas-y-sospechas-sobre-sol-abraham-y-su-consagracion-como-campeona-de-gran-hermano-tienen-maridos-millonarios-y-compran"
+    },
+    "photo": null,
+    "video": "_src_3ef052031d.mp4",
+    "clip_seconds": 12,
+    "reel": true,
+    "notes": "Material de prueba: el video local no está vinculado a esta nota."
+  },
+  {
+    "id": "06_video_vertical",
+    "label": "Video vertical 9:16 (28 s, con reprise)",
+    "item": {
+      "titulo": "Vélez le ganó 3 a 2 a Tigre y alcanzó la cima de la tabla anual",
+      "titulo_instagram": "Velez es el nuevo lider de la tabla anual",
+      "seccion": "Deportes",
+      "deck": "el equipo de Liniers sumó tres puntos clave en la décima fecha del torneo",
+      "highlight_terms": [
+        "Vélez le ganó"
+      ],
+      "breaking": false,
+      "source_url": "https://nuevarioja.com.ar/deportes/velez-le-gano-3-a-2-a-tigre-en-un-partido-infartante-y-es-lider-de-la-tabla-anual.htm"
+    },
+    "photo": null,
+    "video": "_src_160cdb64a2.mp4",
+    "clip_seconds": 28,
+    "reel": true,
+    "notes": "Material de prueba: el video local no está vinculado a esta nota."
+  },
+  {
+    "id": "06b_video_vertical_angosto",
+    "label": "Video vertical angosto (0,45:1)",
+    "item": {
+      "titulo": "Daniela Celis busca pretendientes mediante un formulario y recibe fuertes críticas en redes",
+      "titulo_instagram": "Daniela Celis busca pretendientes con un formulario",
+      "seccion": "Espectaculos",
+      "deck": "La ex Gran Hermano lanzó una convocatoria para conocer gente bajo condiciones específicas",
+      "highlight_terms": [
+        "busca pretendientes"
+      ],
+      "breaking": false,
+      "source_url": "https://www.paparazzi.com.ar/romances/daniela-celis-salio-a-buscar-novio-conto-sus-condiciones-innegociables-y-recibio-duras-criticas-querete-un-poco-flaca"
+    },
+    "photo": null,
+    "video": "_src_2ffe5ab162.mp4",
+    "clip_seconds": 10,
+    "reel": true,
+    "notes": "Material de prueba: el video local no está vinculado a esta nota."
+  },
+  {
+    "id": "07_foto_horizontal_cifra",
+    "label": "Foto horizontal + localidad",
+    "item": {
+      "titulo": "Inflación en el NOA: los precios subieron 1,9% en septiembre y acumulan 24,6% en 2026",
+      "titulo_instagram": "Inflación en el NOA: los precios subieron 1,9% en septiembre",
+      "seccion": "Economia",
+      "deck": "El informe de Politikon Chaco detalla el impacto en el presupuesto de los hogares",
+      "highlight_terms": [
+        "precios subieron"
+      ],
+      "breaking": false,
+      "locality": "La Rioja",
+      "source_url": "https://nuevarioja.com.ar/sociedad/disparidad-inflacionaria-en-el-pais-en-el-noa-los-precios-subieron-19-en-septiembre-y-acumulan-246-en-2026.htm"
+    },
+    "photo": "nuevarioja_sociedad_b8d7351c5f24c3dbc3aa0fff8a9ed422b5180fdc_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  },
+  {
+    "id": "08_foto_vertical",
+    "label": "Foto vertical",
+    "item": {
+      "titulo": "Hallaron nueve envoltorios de marihuana en la mochila de un alumno en Anguinán",
+      "titulo_instagram": "Hallaron envoltorios de marihuana en una mochila escolar en Anguinán",
+      "seccion": "Policiales",
+      "deck": "El hallazgo ocurrió durante una requisa en el Colegio Secundario Provincial",
+      "highlight_terms": [
+        "Hallaron nueve envoltorios"
+      ],
+      "breaking": false,
+      "locality": "Anguinán",
+      "source_url": "https://nuevarioja.com.ar/policiales/preocupacion-en-anguinan-por-el-ingreso-de-marihuana-a-una-escuela-secundaria-hallaron-nueve-envoltorios-en-la-mochila-de-un-alumno.htm"
+    },
+    "photo": "nuevarioja_policiales_c9c7101cc98a01440a5e471ac29d2d0e1c886933_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  },
+  {
+    "id": "09_sin_foto",
+    "label": "Sin fotografía",
+    "item": {
+      "titulo": "Más de 3.000 participantes en el Segundo Congreso Provincial de IA y Educación",
+      "titulo_instagram": "Más de 3.000 personas participaron del Congreso de IA y Educación en La Rioja",
+      "seccion": "Educacion",
+      "deck": "El encuentro reunió a docentes y estudiantes para debatir sobre el uso ético de la IA",
+      "highlight_terms": [
+        "3.000 participantes"
+      ],
+      "breaking": false,
+      "locality": "Capital",
+      "source_url": "https://nuevarioja.com.ar/sociedad/realizaron-el-segundo-congreso-provincial-sobre-ia-y-educacion.htm"
+    },
+    "photo": null,
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  },
+  {
+    "id": "10_bajada_localidad",
+    "label": "Deportes · bajada + localidad",
+    "item": {
+      "titulo": "Liga Chileciteña: se definen los semifinalistas en Chilecito y Nonogasta",
+      "titulo_instagram": "Jornada decisiva en la Liga Chileciteña",
+      "seccion": "Deportes",
+      "deck": "Se disputan los partidos de vuelta de los cuartos de final en el fútbol local",
+      "highlight_terms": [
+        "definen los semifinalistas"
+      ],
+      "breaking": false,
+      "locality": "Chilecito",
+      "source_url": "https://nuevarioja.com.ar/deportes/futbol-de-chilecito-en-nonogasta-el-parque-y-saniogasta-salen-semifinalistas.htm"
+    },
+    "photo": "nuevarioja_deportes_dcd1450d447f8eb843bd0433a57080da5ec1ac92_opt.jpg",
+    "video": null,
+    "clip_seconds": null,
+    "reel": false,
+    "notes": ""
+  }
+]

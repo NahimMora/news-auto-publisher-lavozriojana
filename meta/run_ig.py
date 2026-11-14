@@ -1,6 +1,7 @@
 """Etapa estructurada de publicación en Instagram."""
 from __future__ import annotations
 
+import math
 import os
 import sys
 import time
@@ -19,10 +20,12 @@ from meta.ig_client import (
     rate_limit_until,
 )
 from utils.editorial_priority import item_category, item_is_breaking, item_source
-from utils.editorial_router import manual_automatic_candidates
+from utils.editorial_router import detect_riojan_link, manual_automatic_candidates
 from utils.file_manager import JsonStateError, load_json
 from utils.logging_setup import setup_logger
+from utils.paparazzi_video_jobs import local_reel_expected
 from utils.paths import data_dir
+from utils.same_event import drop_already_posted, drop_superseded
 from utils.social_queue import (
     claim,
     bootstrap_not_before,
@@ -149,6 +152,9 @@ def _split_quiet_hours(selected: list[dict]) -> tuple[list[dict], int]:
 
 _LOCAL_EXCLUDED_SOURCE_MARKERS = ("paparazzi", "infobae", "internacional")
 
+# Ventana de candidatas por ciclo, en múltiplos de ``IG_MAX_PER_RUN``.
+SELECTION_WINDOW_FACTOR = 3
+
 
 def _is_local_news(noticia: dict) -> bool:
     """Nota local (Nueva Rioja, Tiempo Popular): ni farándula, ni Infobae, ni internacional."""
@@ -167,11 +173,58 @@ def _local_categories() -> set[str]:
     return {value.strip().lower() for value in raw.split(",") if value.strip()}
 
 
+def _local_fill_categories() -> set[str]:
+    """``IG_LOCAL_FILL_CATEGORIES``: categorías locales de relleno (vacío = ninguna).
+
+    Entran a Instagram sólo con el cupo del ciclo que no usaron las
+    categorías principales (``IG_LOCAL_CATEGORIES``) ni el resto del lote.
+    Cuentan para ``IG_LOCAL_DAILY_MAX`` como cualquier nota local.
+    """
+    raw = os.getenv("IG_LOCAL_FILL_CATEGORIES", "")
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _fill_riojan_enabled() -> bool:
+    """``IG_LOCAL_FILL_RIOJAN``: las notas locales con vínculo riojano de
+    cualquier categoría también entran como relleno."""
+    return os.getenv("IG_LOCAL_FILL_RIOJAN", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_local_fill(noticia: dict) -> bool:
+    """Nota local que sólo entra como relleno (no es principal ni último momento)."""
+    fill = _local_fill_categories()
+    riojan = _fill_riojan_enabled()
+    if not (fill or riojan) or not _is_local_news(noticia) or item_is_breaking(noticia):
+        return False
+    category = item_category(noticia)
+    if category in _local_categories():
+        return False
+    return category in fill or (riojan and detect_riojan_link(noticia)[0])
+
+
 def _local_allowed_by_category(noticia: dict) -> bool:
     allowed = _local_categories()
     if not allowed or not _is_local_news(noticia):
         return True
-    return item_is_breaking(noticia) or item_category(noticia) in allowed
+    return item_is_breaking(noticia) or item_category(noticia) in allowed or _is_local_fill(noticia)
+
+
+def _select_with_local_fill(limit: int) -> list[dict]:
+    """Lote del ciclo: primero lo principal y, si sobra cupo, el relleno local."""
+    if not _local_fill_categories():
+        return get_pending("instagram", max_items=limit)
+    selected = get_pending(
+        "instagram",
+        max_items=limit,
+        item_filter=lambda noticia: not _is_local_fill(noticia),
+    )
+    room = limit - len(selected)
+    if room > 0:
+        fill = get_pending("instagram", max_items=room, item_filter=_is_local_fill)
+        if fill:
+            logger.info("Relleno local en IG: %s notas con el cupo libre del ciclo", len(fill))
+        selected.extend(fill)
+    return selected
 
 
 def _local_daily_max() -> int:
@@ -199,32 +252,146 @@ def _local_posted_today(now: float | None = None) -> int:
     )
 
 
-def _apply_local_daily_cap(selected: list[dict]) -> tuple[list[dict], int]:
-    """Tope diario de notas locales (``IG_LOCAL_DAILY_MAX``, 0 = sin tope).
+def _active_day_fraction(now: float | None = None) -> float:
+    """Fracción transcurrida del día activo de Instagram (fuera del horario
+    silencioso de imágenes): 0 al terminar el silencio, 1 a la medianoche."""
+    current = time.localtime(now if now is not None else time.time())
+    hour = current.tm_hour + current.tm_min / 60
+    window = _quiet_hours_window()
+    if window is None:
+        return hour / 24
+    start, end = window
+    quiet = (end - start) % 24
+    active = 24 - quiet
+    elapsed = (hour - end) % 24
+    return min(1.0, elapsed / active) if elapsed < active else 1.0
+
+
+def _local_pacing_allowance(cap: int, now: float | None = None) -> int:
+    """Notas locales que pueden llevar publicadas hoy a esta hora.
+
+    ``IG_LOCAL_PACING_SLACK`` (0 = sin reparto) suma un margen sobre la parte
+    proporcional del tope: sin reparto, el tope de 30 se llenaba a media tarde
+    y de noche sólo salían Reels.
+    """
+    try:
+        slack = int(os.getenv("IG_LOCAL_PACING_SLACK", "0"))
+    except ValueError:
+        slack = 0
+    if slack <= 0:
+        return cap
+    return min(cap, math.ceil(cap * _active_day_fraction(now)) + slack)
+
+
+def _local_pacing_max_age() -> float:
+    try:
+        return float(os.getenv("IG_LOCAL_PACING_MAX_AGE_HOURS", "6")) * 3600
+    except ValueError:
+        return 6 * 3600
+
+
+def _queued_age(noticia: dict, now: float) -> float:
+    for field in ("social_queued_at", "queued_at"):
+        try:
+            value = float(noticia.get(field) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return now - value
+    return 0.0
+
+
+def _apply_local_daily_cap(selected: list[dict]) -> tuple[list[dict], int, int]:
+    """Tope diario de notas locales (``IG_LOCAL_DAILY_MAX``, 0 = sin tope),
+    repartido a lo largo del día (``IG_LOCAL_PACING_SLACK``).
 
     ``selected`` ya viene en orden de prioridad (último momento y policiales
     primero). Lo que excede el tope se descarta para Instagram (sigue en Web y
-    Facebook): pasarlo al día siguiente publicaría noticias viejas.
+    Facebook): pasarlo al día siguiente publicaría noticias viejas. Lo que
+    sólo excede el reparto de esta hora queda pendiente sin tomarlo de la cola
+    (sale en un ciclo siguiente) mientras tenga menos de
+    ``IG_LOCAL_PACING_MAX_AGE_HOURS``; más vieja, se descarta.
     """
     cap = _local_daily_max()
     if not cap:
-        return selected, 0
-    budget = max(0, cap - _local_posted_today())
+        return selected, 0, 0
+    now = time.time()
+    posted = _local_posted_today(now)
+    budget = max(0, cap - posted)
+    paced_budget = max(0, min(budget, _local_pacing_allowance(cap, now) - posted))
     kept: list[dict] = []
-    excluded = 0
+    excluded = paced = 0
     for noticia in selected:
         # Sin ``selected_for_publish`` sólo entra por promoción manual: no se topea.
         if not noticia.get("selected_for_publish") or not _is_local_news(noticia):
             kept.append(noticia)
-        elif budget > 0:
+        elif paced_budget > 0:
             kept.append(noticia)
+            paced_budget -= 1
             budget -= 1
+        elif budget > 0 and _queued_age(noticia, now) < _local_pacing_max_age():
+            paced += 1
         else:
             mark_policy_excluded(noticia, "instagram", "policy_ig_local_daily_cap")
             excluded += 1
     if excluded:
         logger.info("Tope diario de notas locales en IG (%s): %s descartadas para Instagram", cap, excluded)
-    return kept, excluded
+    if paced:
+        logger.info("Reparto diario de notas locales en IG: %s quedan para un ciclo siguiente", paced)
+    return kept, excluded, paced
+
+
+def _static_quota_ceiling() -> int:
+    try:
+        return max(0, int(os.getenv("IG_STATIC_QUOTA_CEILING", "0")))
+    except ValueError:
+        return 0
+
+
+def _publishing_quota_usage() -> int | None:
+    """Publicaciones por API de las últimas 24 h según Meta (lectura: no
+    consume el tope). ``None`` si no se pudo leer."""
+    from meta.ig_client import graph_get
+
+    data = graph_get(f"{IG_ACCOUNT_ID}/content_publishing_limit", {"fields": "quota_usage"})
+    try:
+        return int(((data or {}).get("data") or [{}])[0]["quota_usage"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _apply_static_quota_guard(selected: list[dict]) -> tuple[list[dict], int]:
+    """Con el tope de Meta (100 cada 24 h) cerca, las imágenes estáticas esperan
+    para dejar lugar a los Reels (``IG_STATIC_QUOTA_CEILING``, 0 = apagado).
+
+    Quedan pendientes sin tomarlas de la cola. Si el uso no se puede leer, no
+    se frena nada (comportamiento previo).
+    """
+    ceiling = _static_quota_ceiling()
+    if not ceiling or not any(_is_static_post(n) for n in selected):
+        return selected, 0
+    usage = _publishing_quota_usage()
+    if usage is None:
+        return selected, 0
+    room = max(0, ceiling - usage)
+    kept: list[dict] = []
+    deferred = 0
+    for noticia in selected:
+        if not _is_static_post(noticia):
+            kept.append(noticia)
+        elif room > 0:
+            kept.append(noticia)
+            room -= 1
+        else:
+            deferred += 1
+    if deferred:
+        logger.info(
+            "Tope de Meta cerca (%s/24 h, techo para imágenes %s): %s imágenes quedan para más tarde",
+            usage,
+            ceiling,
+            deferred,
+        )
+    return kept, deferred
 
 
 def _publish_paparazzi(noticia: dict):
@@ -278,6 +445,8 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
     # procesan varios minutos cada una). El resto queda para la próxima
     # corrida, no se pierde.
     manual_override_budget = int(os.getenv("IG_MANUAL_OVERRIDE_MAX_PER_RUN", "3"))
+    # Local con YouTube incrustado: sale como Reel desde run_paparazzi_videos.
+    reel_expected = local_reel_expected()
     seen_meta_identities: set[str] = set()
     for noticia in noticias:
         seen_meta_identities.update(_item_identities(noticia) & manual_identities)
@@ -298,6 +467,9 @@ def _bootstrap_queue() -> tuple[int, int, int, int, int, int]:
             omitted_by_policy += 1
             continue
         if not manual_override and _is_suppressed(noticia):
+            omitted_by_policy += 1
+            continue
+        if not manual_override and reel_expected(noticia):
             omitted_by_policy += 1
             continue
         if not manual_override and not _local_allowed_by_category(noticia):
@@ -425,9 +597,18 @@ def main() -> StageResult:
         # que Web y Facebook); acá sólo se pacea cuánto de ese lote se
         # intenta subir en esta corrida puntual.
         limit = int(os.getenv("IG_MAX_PER_RUN", "10"))
-        selected = get_pending("instagram", max_items=limit)
+        # Se toma una ventana más amplia que el tope y se recorta al final: las
+        # notas que se descartan o postergan (actualización, mismo hecho,
+        # horario silencioso, reparto local, cuota) ya no ocupan lugares del
+        # ciclo. Antes, de 8 lugares podían salir 2 y el relleno local no
+        # entraba nunca (13/11/2026).
+        selected = _select_with_local_fill(limit * SELECTION_WINDOW_FACTOR)
+        selected, superseded = drop_superseded(selected, "instagram")
+        selected, same_event_skipped = drop_already_posted(selected, "instagram")
         selected, quiet_deferred = _split_quiet_hours(selected)
-        selected, local_cap_excluded = _apply_local_daily_cap(selected)
+        selected, local_cap_excluded, local_paced = _apply_local_daily_cap(selected)
+        selected, quota_deferred = _apply_static_quota_guard(selected)
+        selected = selected[:limit]
     except JsonStateError as exc:
         logger.error("Estado social de Instagram ilegible: %s", exc)
         return StageResult(
@@ -448,6 +629,9 @@ def main() -> StageResult:
                 "included": included,
                 "quiet_hours_deferred": quiet_deferred,
                 "local_daily_cap_excluded": local_cap_excluded,
+                "local_paced_deferred": local_paced,
+                "quota_deferred": quota_deferred,
+                "same_event_already_posted": same_event_skipped,
                 "included_by_manual_override": manual_overrides,
                 "manual_override_without_web_url": manual_without_web_url,
                 "restored_from_candidate_store": restored_from_candidates,
@@ -455,6 +639,7 @@ def main() -> StageResult:
                 "blocked_missing_web_url": missing_web_url,
                 "synced": synced,
                 "ambiguous_to_dead_letter": ambiguous,
+                "superseded_by_update": superseded,
             },
         )
 
@@ -524,12 +709,16 @@ def main() -> StageResult:
         details={
             "quiet_hours_deferred": quiet_deferred,
             "local_daily_cap_excluded": local_cap_excluded,
+            "local_paced_deferred": local_paced,
+            "quota_deferred": quota_deferred,
+            "same_event_already_posted": same_event_skipped,
             "included_by_manual_override": manual_overrides,
             "manual_override_without_web_url": manual_without_web_url,
             "restored_from_candidate_store": restored_from_candidates,
             "omitted_by_policy": omitted,
             "blocked_missing_web_url": missing_web_url,
             "ambiguous_to_dead_letter": ambiguous,
+            "superseded_by_update": superseded,
         },
     )
     if error_type == "invalid_credential":

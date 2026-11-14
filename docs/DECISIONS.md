@@ -2230,3 +2230,745 @@ y la del puntaje de X):
   de la etapa es 1200 s; con 900 s el 16/10 se cortó un Reel a mitad de subida) y
   deja el resto pendiente para el ciclo siguiente. Los Reels no cuentan en
   `IG_MAX_PER_RUN`, `PUBLISH_MAX_PER_RUN` ni `IG_LOCAL_DAILY_MAX`.
+
+### 2026-10-17 — Localidad/bajada de Gemini sólo para notas que renderizan la card de IG
+
+**Contexto**: el operador pidió bajar el gasto de Gemini desde el próximo ciclo.
+Mediciones (logs y `ai_call_metrics`, 01–17/10): el modelo
+(`gemini-3.1-flash-lite`) y el volumen diario no cambiaron; no hay más reintentos.
+Cada nota reescrita hace ~5 llamadas: título, clasificación, caption, localidad/bajada
+y redacción web (1,56 en promedio con revisiones), más relevancia de paparazzi e
+impacto internacional cuando aplica. Instagram publica ~25–50 estáticas de ~50–100
+notas reescritas por día, pero la localidad/bajada (que sólo usa la card estática de
+IG, `AutomaticInstagramCard`) se pedía para todas.
+
+**Decisión**: `LOCALITY_DECK_LAZY_ENABLED` (default `false`, activado en
+`scripts/start_24x7_production.ps1` y en el `.env` del host). Con el flag, la
+reescritura marca `locality_deck_deferred` (persistido en `META_FIELDS`) y
+`meta/ig_client.py::_prepare_image` llama a
+`openIA/caption_generator.py::ensure_locality_and_deck` justo antes de renderizar.
+La cola social no guarda los párrafos: el contexto es `excerpt` + `texto_instagram`
+(o los párrafos, si la nota viene del almacén de candidatas). Un fallo deja la card
+sin bajada, igual que el fallback anterior; nunca bloquea la publicación. Lo
+generado no se persiste: un reintento de la misma nota vuelve a pedirlo.
+
+**Descartado**:
+
+- Diferir el caption: `titulo_instagram` es el título del artículo web
+  (`build_web_item`) y el CTA alimenta el caption desde la web; Facebook también lo
+  usa.
+- Filtrar por ruta `candidate`: Instagram ya no se decide por ruta sino por
+  `selected_for_publish`.
+- Cortar la revisión editorial ante `revision_no_material_change`: desde el 01/10
+  habría ahorrado 16 de 1352 llamadas (~1 %) y, en 18 de los 21 casos, un intento
+  posterior salió bien; el corte los habría degradado a fallback. Las primeras
+  revisiones se deben a warnings factuales (`invented_proper_noun`,
+  `invented_number`), que no se relajan.
+
+**Revertir**: `LOCALITY_DECK_LAZY_ENABLED=false` (o quitar la línea del script).
+Las notas ya marcadas siguen completándose al renderizar.
+
+### 2026-10-17 — Activación de Visual System V2 en Reel, card de IG y OG
+
+**Contexto**: V2 se evaluó contra V1 en la galería y el artifact de comparación
+(Reel policial, sin hook de cifra). El responsable editorial lo aprobó y autorizó
+el despliegue.
+
+**Decisión**: selector `utils/visual_version.py` cableado en los tres call sites
+de render; `VISUAL_STYLE_VERSION=v2` en el script de arranque y el `.env` del
+host. El código mantiene `v1` como default y las composiciones V1 intactas.
+
+**Descartado**: reemplazar las composiciones V1 (impide el rollback por variable);
+activar sólo un canal (la identidad debe coincidir entre Reel, post y link).
+
+**Rollback**: `VISUAL_STYLE_VERSION=v1` (script y `.env`), borrar
+`remotion/.render-cache` y reiniciar supervisor y UI manual.
+
+### 2026-10-18 — Revisión V2: Reel sin hook, portadas propias, post más completo y guardia de ubicación
+
+**Contexto**: tras el primer día de V2 en producción, el responsable editorial
+pidió: (1) no referenciar La Rioja en hechos ajenos (Reel de X "El bebé
+riojano…", fuente de una cuenta extranjera); (2) eliminar el titular que se
+muestra, se borra y vuelve a mostrarse, la animación partida y el fondo vacío
+del Reel; (3) portadas compatibles con 9:16 y el recorte 4:5 del feed; (4) posts
+menos "plantilla".
+
+**Decisión**:
+- Pauta del caption: regla explícita de ubicación y "impacto para La Rioja sólo
+  si ocurre en La Rioja". Control determinístico
+  (`invented_riojan_reference`): términos riojanos en la salida que no están en
+  la fuente → reintento con corrección; si persiste, fallback al texto de la
+  fuente (`caption_fallback_reason=riojan_reference_invented`). Hashtags
+  riojanos sólo con vínculo verificable (`detect_riojan_link`, localidad o medio
+  riojano).
+- Reel: composición estable desde el cuadro 0 (ver
+  `docs/design/VISUAL_SYSTEM_V2.md` §3). Portada `ReelCoverV2` como
+  `cover_url` y miniatura de Facebook best-effort, detrás de flags.
+- Post: formato "portada" (§4).
+
+**Descartado**: mantener el hook con una animación corregida (el pedido es no
+repetir el titular); generar la bajada del Reel con otra llamada a IA (se usa la
+primera oración del caption ya publicado); usar `thumb_offset` como portada (no
+controla qué queda dentro del 4:5).
+
+**Rollback**: `REEL_COVER_ENABLED=false` / `REEL_COVER_FACEBOOK_ENABLED=false`
+quitan las portadas; `VISUAL_STYLE_VERSION=v1` vuelve todo a V1. La guardia de
+ubicación no tiene flag: es una corrección factual.
+
+### 2026-10-18 — Formatos sociales, fuentes de servicio y reporte por correo
+
+**Contexto**: el responsable del medio aprobó (con correcciones sobre una
+maqueta con datos reales) historias en Instagram y Facebook, contenido de
+servicio para La Rioja, el carrusel de las 8, un Reel semanal rediseñado,
+seguimiento de noticias, respuestas a preguntas y un reporte cada 3 días,
+pidiendo no aumentar el costo de Gemini. Descartó Threads, Telegram,
+subtítulos, TikTok, YouTube, X, WhatsApp y Bluesky. Ver
+`docs/SOCIAL_FORMATS.md`.
+
+**Decisión**:
+- Historias sólo de publicaciones de Instagram ya hechas, con la pieza tal
+  cual salió (la API no permite adjuntar el post); la misma imagen en
+  Facebook (`/photo_stories`). Cupo propio (20/día, 6/ciclo).
+- Sin IA en historias, carrusel, resumen semanal y seguimiento: todo sale de
+  fuentes verificables. IA sólo en respuestas (Flash-Lite, tope 15/día) y en
+  el resumen del reporte (1 llamada cada 3 días).
+- Seguimiento: comentario en el post de Instagram (no se puede editar su
+  texto por API) y edición del texto del post de Facebook.
+- Respuestas: primera semana en modo sugerencia.
+- Fuentes: datos abiertos del SMN, dolarapi, calendario oficial de feriados;
+  cortes y rutas desde notas propias. `gobierno_larioja` y `hacienda_larioja`
+  pasan a APIs JSON; `smn_news` se deshabilita.
+- Reporte y vigilante como tareas programadas propias, fuera del supervisor
+  (si el supervisor se cae, el vigilante igual avisa).
+
+**Descartado**: compartir el post con sticker (no existe en la API); usar la
+OG del sitio como foto (ya trae el titular); deducir cortes de los sitios de
+EDELaR/Aguas Riojanas (no publican listados); responder en policiales,
+política o espectáculos.
+
+**Rollback**: interruptores por formato en
+`scripts/start_24x7_production.ps1`; `schtasks /delete` para las tareas.
+
+## 2026-10-22 — Ventana de 72 h para el dedup de Instagram por título
+
+**Contexto**: el dedup por similitud de título contra `ig_posted.json` no tenía
+ventana. Temas recurrentes (cortes de luz, fechas deportivas) quedaban bloqueados
+semanas después (KNOWN_ISSUES #99, `LVR-BUG-0006`). El operador autorizó corregir y
+activar el 22/10.
+
+**Decisión**: `IG_POSTED_DEDUP_WINDOW_HOURS=72` en producción; default del código
+`0` (sin ventana). La coincidencia exacta por clave/URL sigue sin ventana. Sin
+cambios de forma en el JSON: se usa el `posted_at` ya existente.
+
+**Rollback**: `IG_POSTED_DEDUP_WINDOW_HOURS=0` en el script de arranque.
+
+## 2026-10-22 — Tope de locales en Instagram a 30 e interior como relleno
+
+**Contexto**: el operador vio policiales locales relevantes en Web y Facebook que no
+llegaban a Instagram. Con `IG_LOCAL_DAILY_MAX=12` el tope se agotaba todos los días:
+33, 34 y 42 exclusiones `policy_ig_local_daily_cap` el 19, 20 y 21/10 (p. ej. la
+muerte del joven de Sanagasta el 22/10). Volumen local de la semana al 22/10: ~9
+policiales, ~2 sociedad y ~4 interior por día.
+
+**Decisión del operador**:
+
+- `IG_LOCAL_DAILY_MAX=30` (antes 12).
+- `IG_LOCAL_FILL_CATEGORIES=interior`: categorías locales de relleno. Entran a
+  Instagram sólo con el cupo del ciclo (`IG_MAX_PER_RUN`) que no usó el resto del
+  lote: `run_ig` arma primero el lote sin relleno y completa con relleno si sobra
+  lugar. Cuentan para `IG_LOCAL_DAILY_MAX` y, por orden, después de lo principal.
+  Default del código: vacío (sin relleno, comportamiento anterior).
+- Facebook y Web sin cambios.
+
+**Rollback**: `IG_LOCAL_DAILY_MAX=12` y `IG_LOCAL_FILL_CATEGORIES=""` en
+`scripts/start_24x7_production.ps1`.
+
+## 2026-10-22 — Fénix 95.1 como tercer medio local
+
+**Contexto**: el operador pidió evaluar fenix951.com.ar. Contra lo scrapeado de
+Tiempo Popular y Nueva Rioja el 22/10, Fénix tenía policiales riojanas propias que
+no estaban en ninguno de los dos (incendio cerca de la UNLaR, muerte por
+quemaduras en Villa Castelli, choque de motos en Gardel y Capitán Giachino,
+detenido en Catamarca buscado por la Justicia riojana). Las coincidencias reales
+eran casi todas nacionales.
+
+**Decisión del operador**: sumar `main_fenix.py` (sección Locales,
+`categoria.php?id=1`) con `SCRAPER_FENIX_ENABLED`, apagado por defecto y activo en
+`scripts/start_24x7_production.ps1`. Fuente `fenix_locales`, sección `locales`.
+
+- "Locales" de Fénix mezcla entrevistas de temas nacionales: entra sólo lo que
+  nombra una localidad o institución riojana (`RIOJAN_LOCALITY_TERMS` más
+  `FENIX_RIOJAN_TERMS`) en título, copete o cuerpo. La línea de fecha
+  ("… | La Rioja, Argentina | Fenix Multiplataforma") y los copetes de los menús
+  no cuentan. En la muestra del 22/10: 6 de 10 entran; Chaco, Córdoba, Diputados y
+  vivienda quedan afuera.
+- Al pasar ese filtro, se trata como medio riojano en hashtags, contexto editorial,
+  carrusel e historias (igual que Tiempo Popular y Nueva Rioja).
+- Las repetidas con los otros medios las frena el dedup por título existente.
+
+**Limitaciones**: cuerpos cortos (300–2.000 caracteres); sin RSS ni metadatos
+`og` salvo la imagen; el listado trae ~10 notas, así que depende de la frecuencia
+del ciclo.
+
+**Rollback**: `SCRAPER_FENIX_ENABLED = "0"` en el script de arranque.
+
+## 2026-10-22 — Reel en Instagram para locales con YouTube incrustado
+
+**Contexto**: relevamiento del 22/10 sobre 181 notas actuales: 8 de Tiempo Popular
+traen YouTube en el cuerpo (todas del canal Medios Provincia: recortes de 3–13 min
+de entrevistas de sus programas en vivo), 2 de Nueva Rioja (ninguna local) y 0 de
+Fénix. En policiales, 1 de 55. Son entrevistas en estudio, horizontales y con la
+marca del canal, no imágenes del hecho. El operador decidió igual publicarlas como
+Reel y priorizarlas en Instagram, para policiales e interior.
+
+**Decisión del operador**:
+
+- Los scrapers locales guardan `video_embed_url` (YouTube, primer iframe del cuerpo)
+  y `video_embed_author` (canal, vía oEmbed). Campos nuevos y opcionales en las
+  colas; no se usa `video_url` para no cambiar lo que recibe la Web.
+- `LOCAL_VIDEO_REEL_ENABLED` + `LOCAL_VIDEO_REEL_CATEGORIES=policiales,interior`:
+  la nota local seleccionada con video entra como job de
+  `paparazzi_video_jobs.json` con `reel_channels=["instagram"]`. Facebook mantiene
+  su post con link a la Web. Como todo Reel, no cuenta para `IG_MAX_PER_RUN` ni
+  `IG_LOCAL_DAILY_MAX`.
+- `run_ig` corre antes que la etapa de Reels: no encola la imagen mientras se
+  espere el Reel (`local_reel_expected`) y la retoma si el job queda en
+  `dead_letter` o `expired`. El dedup de Instagram por clave sigue evitando el
+  doble posteo.
+- Crédito: "Video: <canal>" en pantalla y "🎥 Video: <canal>" al final del caption.
+- `yt-dlp` sumó `bv*[ext=mp4][height<=1080]+ba[ext=m4a]` y
+  `--merge-output-format mp4`: YouTube ya no ofrece MP4 con audio y video juntos
+  (el selector anterior fallaba con "Requested format is not available"). El
+  primer formato no cambia, así que X y el resto siguen igual.
+
+**QA visual**: Reel real de Sanagasta renderizado en local (sin R2 ni publicación):
+1080×1920, 90 s, 20,5 MB, ~3 min de render. Los primeros ~20 s son la cortina del
+programa (toma de la ciudad) antes de la entrevista.
+
+**Riesgos**: contenido de un tercero con su marca en pantalla; recorte desde el
+inicio del clip; bajo volumen esperado (≈1–3 por semana en policiales/interior).
+
+**Rollback**: `LOCAL_VIDEO_REEL_ENABLED = "false"` en el script de arranque.
+
+## 2026-10-22 — MPF y Función Judicial a redes; placas de Hacienda e INPRES
+
+**Contexto**: relevamiento de fuentes oficiales para redes. MPF y Función Judicial
+estaban en el Source Registry sólo como contexto editorial. Hacienda publica el
+cronograma de pagos a estatales; INPRES, los sismos sentidos.
+
+**Decisión del operador**:
+
+- **MPF y Función Judicial** entran como policiales automáticas
+  (`main_judiciales.py`, `SCRAPER_JUDICIALES_ENABLED`). La información es oficial
+  y verificada: no se suaviza, pero tampoco se publica el comunicado crudo.
+  Requisitos: puntaje alto y nada repetido. Una sola llamada a Gemini antes de la
+  reescritura devuelve puntaje 0–10 y "mismo caso" contra hasta 80 títulos
+  locales encolados en 72 h (sin deportes, espectáculos ni cultura). Pasa con
+  `JUDICIAL_MIN_SCORE` (7); sin respuesta se reintenta (`fail` retryable).
+  `JUDICIAL_RULES` en título, nota Web y caption: estado procesal exacto, sin
+  condicionales que la fuente no usa, sin agregar datos que identifiquen a la
+  víctima y sin datos de víctimas menores.
+- QA real del 22/10 (18 notas): institucionales (campamento forense, pasantías,
+  congreso, disertación) 1–2 puntos; casos 8–10. Detectó como mismo caso dos ya
+  cubiertas por Nueva Rioja y el de violencia de género que publicaron MPF (con
+  iniciales) y Función Judicial (con nombre).
+- **Placas de servicio** como post (`ServiceCardV2`, 1080×1350) + historia
+  (`StoryV2` `payments`/`quake`), formato fijo sin IA: pagos de Hacienda el día
+  anterior o la mañana del pago; sismos sentidos en La Rioja con magnitud ≥ 3,0
+  (4 de 5 en las 6 semanas previas). La historia de servicio cubre la historia
+  automática del post.
+
+**Verificado y descartado**: EDELaR no publica cortes programados (autogestión
+detrás de captcha de Cloudflare, sin RSS ni API); Municipalidad de Chilecito sin
+sitio oficial que responda. No se suman Municipalidad de La Rioja (web vacía),
+Aguas Riojanas (sin avisos), Concejo Deliberante (última nota 28/08), Salud (en
+mantenimiento), UNLaR (bloquea lectores) ni buses (directorios fijos).
+
+**Rollback**: `SCRAPER_JUDICIALES_ENABLED = "0"`, `PAYMENT_POSTS_ENABLED = "false"`,
+`QUAKE_POSTS_ENABLED = "false"` en el script de arranque.
+
+## 2026-10-23 — Placas de servicio v2 (pagos y sismos)
+
+**Contexto**: las placas del 22/10 repetían la lista de organismos en la imagen
+y publicaban sismos sentidos desde 3,0 aunque el epicentro estuviera fuera de la
+provincia. El operador fijó reglas de formato para todas las placas de servicio.
+
+**Decisión del operador**:
+
+- Plantilla única para post (1080×1350) e historia (1080×1920): zonas libres de
+  250 px arriba y 350 px abajo, etiqueta de estado con color fijo (HOY, MAÑANA,
+  ACTUALIZADO, CANCELADO), un solo dato protagonista, pie "Fuente · actualizado
+  HH:MM" y un máximo de 25 palabras.
+- **Sismos**: sólo con epicentro en La Rioja y magnitud ≥ 4,0, a cualquier hora,
+  en post, historia y Facebook. Fuente: listado inmediato de INPRES
+  (`sismos.xml`, dice si es automático o revisado) más el detalle (distancias
+  a localidades). Si el dato es automático, la placa lo dice; si INPRES lo
+  corrige, historia ACTUALIZADO. El caption pregunta "¿Lo sentiste? ¿Desde
+  dónde?".
+- **Pagos**: historia a las 7 cada día de pago; post en Instagram sólo el primer
+  día del cronograma (mismo concepto) y en Facebook todos los días de pago. La
+  placa dice "Cobran estatales", la fecha, el concepto y el próximo pago si ya
+  está anunciado; la lista de organismos va al texto del post.
+
+**No se puede con estas reglas**: aviso útil desde el Source Registry (sólo
+guarda texto libre; extraer qué cambia, para quién y desde cuándo sin IA no es
+confiable) y cortes de luz/agua (EDELaR sin vía pública). Las historias de cortes
+existentes (desde notas propias) no siempre tienen lugar: queda pendiente decidir
+si se apagan o se filtran.
+
+**Rollback**: `PAYMENT_POSTS_ENABLED = "false"` / `QUAKE_POSTS_ENABLED = "false"`
+en el script de arranque; volver al commit `948065d` restaura las placas v1.
+
+## 2026-10-23 — Mismo hecho con IA, alertas sólo del SMN y lugar en la placa
+
+- Contexto: el 23/10 a las 07:33 y 07:34 Instagram publicó "Confirmaron muerte
+  cerebral…" y "Murió el joven que había volcado…": cuatro notas de dos fuentes
+  sobre el mismo vuelco en Sanagasta. El dedup por título no reconoce el mismo
+  hecho con otras palabras, y Sanagasta no estaba en la lista de localidades
+  del router (`no_riojan_link_detected`). La alerta por lluvias de la
+  cordillera salió como noticia de Fénix: la historia de alerta leía
+  `zipopendata.php?dato=alertas`, que viene vacío (nunca hubo una `svc:alert`).
+- Decisión: una llamada a Gemini por nota local con candidatas (mismo patrón
+  que `assess_judicial`), con ancla verificable para no relacionar hechos
+  distintos; actualización en post e historia de IG, edición del post de FB y
+  misma `storyKey` en la web. Alertas sólo desde el feed CAP del SMN; las notas
+  de otros medios sobre alertas no salen. Hasta dos lugares en la pestaña.
+- Evidencia: sobre 24 notas reales de la cola, la evaluación final marcó bien
+  la secuencia de Sanagasta (actualización y luego duplicado) y "Detuvieron al
+  conductor…" (actualización del choque de Aimogasta); sin ancla, "Murió un
+  empresario tras volcar…" dejó de relacionarse con otro vuelco. El feed CAP
+  devolvió una alerta amarilla por viento para Vinchina que la fuente anterior
+  no veía.
+- Rollback: `SAME_EVENT_CHECK_ENABLED=false` y `WEATHER_ALERT_NEWS_SMN_ONLY=false`
+  en `scripts/start_24x7_production.ps1`.
+
+## 2026-10-23 — Datos para la web como JSON en R2
+
+- Contexto: la web necesita lo más visto con URL, datos de servicios para armar
+  sus widgets, las actualizaciones de notas y los videos de Instagram. El CMS
+  sólo tiene `POST/PATCH /api/private/posts`.
+- Decisión: documentos JSON públicos en el bucket R2 que ya sirve
+  `media.lavozriojana.com` (`feed/v1/`), publicados por una etapa propia al
+  final del ciclo. No hace falta tocar el CMS; la web los lee cuando quiere.
+  Cada fuente falla por separado y conserva el último dato bueno.
+- Límite: "lo más visto" es alcance en Instagram, no visitas de la web (el
+  pipeline no tiene esa métrica).
+- Rollback: `WEB_FEED_ENABLED=false`; los archivos quedan con su última
+  `actualizado`.
+
+## 2026-10-24 — Tope de 100 publicaciones de Instagram y Reels repetidos
+
+- Contexto: Meta permite 100 publicaciones por API cada 24 h y las historias
+  cuentan (`content_publishing_limit`: 85/100 el 24/10 a las 13 h). En las 24 h
+  previas al corte del 24/10 hubo 96: 44 posts, 28 historias y 24 Reels. Además
+  salieron Reels repetidos porque Paparazzi reutiliza el mismo clip en notas
+  distintas (p. ej. `nfm0LHYu` en dos notas sobre Gisela Gordillo).
+- Decisión: `POST_STORIES_MANUAL` (apagado por defecto) saca de la API de
+  Instagram las historias "Nueva publicación" y de Reel; el operador las sube
+  a mano sobre el fondo vacío `ManualStoryTemplate` (Remotion), con la
+  publicación compartida y el sticker de link a la web, que la API no permite.
+  Último momento y servicio siguen automáticos; Facebook no cuenta para el
+  tope y sigue igual. El ingreso de Reels descarta una nota cuyo video (URL sin
+  query) ya está en un job vivo o en la evidencia publicada.
+- Diagnóstico: el backoff de rate limit registra http/code/subcode de Meta
+  (tope diario 9/2207042 vs. límite de llamadas 4/32/613); la imagen de
+  Instagram distingue `image_render_error` de `r2_upload_error` y registra la
+  excepción; la disponibilidad de Remotion se da por buena si el servidor de
+  render responde `/health`, sin `npx remotion versions` (60 s bajo carga
+  mandaron diez placas OG al diseño de respaldo el 23/10).
+- Datos de alcance (10 días): los Reels de Infobae policiales (mediana 1.384)
+  rinden más que los posts policiales locales (267): no se recortan.
+- Rollback: `POST_STORIES_MANUAL=false`.
+
+## 2026-10-24 — Etiquetas del Gobierno y ubicación en Instagram
+
+- Pedido: si una nota nombra un ministerio, etiquetar en Instagram a la
+  cuenta del ministerio y a su responsable, además de mencionarlos con @.
+- Decisión: `utils/gov_tags.py` con directorio versionado
+  `config/gov_directory.json`. Sólo cuentas confirmadas con Business Discovery
+  (el nombre de la cuenta coincide con el titular); las que no respondieron
+  (p. ej. Vergara, Scaglioni, Bazán, @jose.delg95) quedan afuera hasta
+  verificarlas. Detección determinista, sin IA: notas locales, nunca policiales
+  (`GOV_TAGS_EXCLUDED_SECTIONS`), sin ministerios si la nota habla del Gobierno
+  nacional, y un nombre propio sólo cuenta si el texto nombra un cargo
+  (evita homónimos: "Jerónimo Quintela", presidente de Edelar). Topes:
+  `GOV_TAGS_MAX_PER_POST=4`, `GOV_TAGS_DAILY_MAX=20`. Las menciones van sólo
+  al caption de Instagram; Facebook no puede etiquetar páginas por API y su
+  texto queda sin @. Si Meta rechaza el contenedor por una etiqueta o la
+  ubicación, se reintenta una vez sin ellas (el contenedor rechazado no se
+  publicó). Simulación sobre 1.500 notas de la cola: 72 con etiqueta.
+- Ubicación: `utils/ig_location.py` + `config/ig_locations.json` por el campo
+  `locality` de la nota. La búsqueda de lugares de la API está deprecada
+  (v8.0): se cargó el `facebook_places_id` (página de lugar de Facebook, lo
+  que pide `location_id`) de las 20 localidades, sacado del buscador de lugares
+  de instagram.com el 2026-10-25 (entrada "<Localidad>, La Rioja, Argentina"
+  con coordenadas en la provincia; el `pk` de `explore/locations` no sirve).
+  Sin ID, sin ubicación.
+- Flags: `GOV_TAGS_ENABLED`, `IG_LOCATION_ENABLED` (apagados por defecto,
+  encendidos en `scripts/start_24x7_production.ps1`). Rollback: `false`.
+- Revisión: el directorio se revisa cada mes; Zárate pasa a fiscal general a
+  principios de noviembre de 2026.
+
+## 2026-10-25 — Medios Rioja como fuente local
+
+- Contexto: en la competencia rinden las policiales y sucesos hiperlocales de
+  Capital (choques con la esquina exacta, allanamientos, incendios). Medios Rioja
+  publica ~20 notas por día con ese tipo de cobertura y tiene RSS de WordPress.
+- Decisión: `scraping/base_mediosrioja.py` + `main_mediosrioja.py`
+  (`SCRAPER_MEDIOSRIOJA_ENABLED`). Se usa la categoría del RSS como vínculo
+  riojano (Locales/Departamentales, nunca Nacionales/Internacionales): a
+  diferencia de Fénix, el sitio separa lo nacional, y un filtro por palabras
+  descartaba notas como "Incendio de pastizales en el barrio Las Talas". QA
+  read-only del 25/10: 5 notas locales de 20 del feed, todas con foto.
+- Duplicados con Nueva Rioja/Tiempo Popular: los resuelve el control de mismo
+  hecho existente (`SAME_EVENT_CHECK_ENABLED`, una llamada a Gemini por nota con
+  candidatas), que ya incluye a Medios Rioja como fuente local.
+- Rollback: `SCRAPER_MEDIOSRIOJA_ENABLED = "0"` en el script de arranque.
+
+## 2026-10-28 — Historias nativas con stickers por la API privada (instagrapi)
+
+- Contexto: desde el 24/10 el operador sube a mano la historia de cada post
+  (publicación compartida + sticker de link) porque la API Graph no admite
+  stickers en historias y además esas historias consumían el tope de 100
+  publicaciones por 24 h.
+- Decisión: etapa propia `meta/run_native_stories.py` con `instagrapi==3.1.0`
+  (la versión con las correcciones de stickers múltiples, incidencia #2320),
+  dentro del mismo proceso Python (no hace falta un servicio aparte: el
+  pipeline ya es Python y la dependencia se importa sólo si la etapa corre).
+  Estado propio `data/ig_native_stories.json`; no comparte cupos ni dedup.
+- Alternativas descartadas: dibujar los stickers sobre el JPG (no son
+  interactivos); `media_share_to_story()` (sólo arma el post compartido).
+- Riesgo aceptado con resguardos: es la API privada de la app. Flag apagado,
+  dry-run por defecto, cupos bajos, sesión persistente, sin flujo automático
+  de challenge y pausa de 24 h ante cualquier control de la plataforma.
+- Sin cambios de forma en JSON existentes: estado propio en
+  `data/ig_native_stories.json`.
+- Rollback: `IG_NATIVE_STORIES_ENABLED=false`.
+
+- Ajuste del mismo día: las historias nativas sólo salen para notas policiales o
+  con vínculo riojano (`detect_riojan_link`), reutilizan el post sin contenido
+  nuevo y llevan ubicación sólo si el post original la tenía (sin recurrir a la
+  tabla de localidades); nunca agregan menciones.
+- Prueba real y ajustes (2026-10-28): los stickers de la API son invisibles, así
+  que la imagen dibuja post, ubicación y botón bajo cada zona (diseño editorial
+  V2, aprobado por el operador). Policiales de cualquier provincia. La ubicación
+  se lee del post publicado (un pedido a la app; sin IA), no de un registro
+  propio. La imagen se sube sin recodificar (instagrapi la bajaba a calidad 75).
+
+## 2026-10-30 — Plan maestro T01/T02: medición por cohortes y reglas visuales (apagado)
+
+- Contexto: el plan maestro de crecimiento pide comparar piezas a edades
+  comparables y corregir encuadre, destacados y legibilidad del V2 sin otro
+  motor. `ig_media_insights.json` sólo guardaba el último valor de las 30
+  publicaciones más recientes (ninguna medición a 72 h ni 7 d) y el 22 % de las
+  fotos horizontales son montajes que el OG recortaba por la costura.
+- Decisión: sin base ni cola nuevas. T01 agrega `cohorts` y `growth_render`
+  como campos opcionales a los JSON existentes, un inventario de lectura que
+  deduplica por `media_id` y `cli.py kpis --growth`. T02 son reglas
+  determinísticas (Pillow `ImageChops`, sin dependencias nuevas ni IA) y una
+  prop `growth` en las composiciones V2. Detalle: `docs/GROWTH_T01_T02.md`.
+- Flags apagados: `GROWTH_METRICS_ENABLED`, `GROWTH_IMAGE_RULES_ENABLED`
+  (+ `GROWTH_IMAGE_RULES_WORKFLOWS`, `GROWTH_COHORT_MAX_PER_RUN`).
+- Alternativas descartadas: visión con IA para elegir panel (costo por pieza y
+  el adaptador no es multimodal); detección de caras (dependencia pesada);
+  dashboard nuevo.
+- Compatibilidad: `record_media_insights` ahora fusiona el registro (antes lo
+  reemplazaba) para no perder campos; los cinco campos de siempre conservan su
+  forma. Con el flag apagado el OG es idéntico píxel a píxel y el IG difiere
+  ≤ 5/255 por ruido del propio render (lo mismo entre dos corridas del código
+  anterior).
+- Rollback: los flags en `false`.
+
+## 2026-10-30 — Instagram: el mismo hecho no se repite, más locales riojanas y tope repartido
+
+- Contexto (datos del 23 al 30/10, Graph y `ig_posted.json`): la licencia de
+  conducir salió 4 veces en el feed desde 4 medios. Gemini la reconoció como el
+  mismo hecho, pero el ancla ("licencias de conducir") no es un nombre ni un
+  número y `valid_anchor` la rechazó (53 rechazos así desde el 20/10). En 72 h,
+  unas 105 notas locales salieron en Facebook y no en Instagram (política,
+  economía, educación, salud, cultura: fuera de `IG_LOCAL_CATEGORIES`). El 29/10
+  el tope de 30 se llenó a las 19:37 y el resto de la noche sólo salieron Reels.
+  Las historias nativas, de a 2 por ciclo, dejaron 34 de 59 posts sin historia en
+  48 h. El tope de Meta iba en 81/100 publicaciones cada 24 h.
+- Decisión del operador: ampliar sociedad y sumar las notas de La Rioja.
+  - `IG_LOCAL_CATEGORIES=policiales,sociedad,salud,educacion`;
+    `IG_LOCAL_FILL_RIOJAN=true`: cualquier nota local con vínculo riojano
+    (`detect_riojan_link`) entra como relleno.
+  - `IG_LOCAL_DAILY_MAX=40` repartido: a cada hora sólo puede llevar publicada
+    la parte proporcional del día activo (7–24 h) + `IG_LOCAL_PACING_SLACK` (4).
+    Lo que excede el reparto queda pendiente sin `claim`; con más de
+    `IG_LOCAL_PACING_MAX_AGE_HOURS` (6) se descarta para Instagram.
+  - `IG_STATIC_QUOTA_CEILING=88`: con `content_publishing_limit` (lectura, no
+    consume el tope) en 88 o más, las imágenes esperan y los Reels siguen. Si no
+    se puede leer, no frena nada.
+  - Mismo hecho sin ancla: `assess_same_event` lo marca `event_related` (la nota
+    sigue saliendo en Web y Facebook, nunca se descarta la reescritura). Con
+    `SAME_EVENT_SOCIAL_SKIP=instagram`, no se repite en Instagram si la anterior
+    (o la anterior de esa, hasta 3 saltos) ya salió ahí
+    (`policy_same_event_already_posted`).
+  - `IG_NATIVE_STORY_MAX_PER_CYCLE=4` (antes 2; el tope diario sigue en 40).
+- Alternativas descartadas: aflojar `valid_anchor` (un falso "mismo hecho"
+  descarta la nota también de la Web); carrusel local (más desarrollo, el
+  operador eligió posts individuales).
+- Fuera de alcance: los Reels de Infobae, paparazzi y X no pasan por el control
+  del mismo hecho (Nancy Godoy: 6 Reels y 5 posts en 3 días).
+- Rollback: en `scripts/start_24x7_production.ps1`,
+  `IG_LOCAL_CATEGORIES=policiales,sociedad`, `IG_LOCAL_FILL_RIOJAN=false`,
+  `IG_LOCAL_DAILY_MAX=30`, `IG_LOCAL_PACING_SLACK=0`,
+  `IG_STATIC_QUOTA_CEILING=0`, `SAME_EVENT_SOCIAL_SKIP=""`,
+  `IG_NATIVE_STORY_MAX_PER_CYCLE=2`; reiniciar el supervisor.
+
+## 2026-10-30 — WhatsApp (canal y grupo) con Baileys e historia "Sumate"
+
+- Pedido del operador: publicar en un canal y un grupo propios, lo más liviano
+  posible y sin abrir navegador; el grupo recibe lo mismo que Facebook (los
+  Reels como link a la nota con "VIDEO") y el canal las alertas apenas salen;
+  una historia para sumarse, 3 veces por semana a las 20.
+- Decisión: Baileys 6.7.24 en un proceso Node de una sola corrida
+  (`whatsapp/wa.mjs`), invocado por la etapa `meta/run_whatsapp.py`. Sin
+  servicio residente, sin Chromium, sin IA. Vinculación por QR publicado como
+  artefacto privado (el operador trabaja por SSH). Detalle: `docs/WHATSAPP.md`.
+- Alternativas descartadas: API oficial de WhatsApp Business (no publica en
+  grupos ni canales); `whatsapp-web.js` (abre Chromium); servicio HTTP
+  residente como el de HolaSalta (más piezas para un envío por ciclo).
+- Grupos de Facebook: ver la entrada siguiente.
+- Rollback: `WHATSAPP_ENABLED=false`, `WA_JOIN_STORY_ENABLED=false`.
+
+## 2026-10-30 — Grupos de Facebook por localidad (navegador con la sesión del operador)
+
+- Pedido del operador, sabiendo el riesgo: compartir automáticamente las notas
+  locales en los grupos de su localidad (lo de Chilecito en Chilecito), 1–2
+  grupos por ciudad, sin semana de ensayo.
+- Decisión: Chrome sin ventana (Playwright 1.58.0) con la sesión importada del
+  navegador del operador, publicando como la página; 1 publicación cada 12–25 min
+  en un proceso aparte, 1 por grupo por ciclo (pedido del operador; techo de
+  seguridad 12 por día), de 9 a 21 h, freno de 48 h ante cualquier aviso. Detalle: `docs/FB_GROUPS.md`.
+- Contexto de riesgo: Facebook pidió captcha al iniciar sesión desde esta PC y
+  la página tiene un video eliminado el 28/10 (seguridad de menores). Por eso el
+  ritmo es bajo y la mayoría de los grupos de Capital no se usan.
+- Alternativas descartadas: resolver el captcha (es el control anti-bots);
+  publicar como perfil personal; grupos de compra-venta de Capital (las
+  noticias se borran o se denuncian).
+- Rollback: `FB_GROUPS_ENABLED=false`.
+
+### 2026-10-30 — Noticiero de la Noche: Reel locutado con IA, prueba de 3 noches
+
+**Decisión**: formato fijo diario a las 21 (`docs/NIGHTLY_NEWSCAST.md`):
+notas propias del día, policiales primero, hechos del mismo tema agrupados,
+guion de Gemini con control factual de cifras/nombres/días contra cada nota,
+voz Gemini Pro TTS Orus con ritmo 0.97 y dirección de tonada riojana (elegida por el operador tras escuchar la edición del 30/10), render
+`NightlyNewscastV2` con sirena, música y cortinas de Pixabay (licencia libre,
+`remotion/public/newscast/CREDITS.md`). Tarea programada propia
+(`LaVozRiojana-Noticiero`, 20:30) en vez de una etapa del supervisor, porque
+los ciclos no caen a hora fija. Tres noches sólo genera; el operador revisa y
+sube a mano; luego `NIGHTLY_NEWSCAST_PUBLISH=true`.
+**Motivo**: pedido del responsable del medio; los Reels tienen ~20 veces la
+mediana de interacción de los posts de imagen.
+**Alternativas rechazadas**: Chirp 3 HD (sin voz es-AR y sin control de
+estilo); Gemini Flash TTS (sonó más plano en la edición completa; su cupo es de 100 pedidos por día);
+Azure es-AR (no hay clave); ElevenLabs (pago, queda como mejora si la voz no
+convence); sonidos sintetizados (menos reales).
+**Consecuencias**: una llamada de guion (hasta 3 reintentos), ~10 de control
+visual y ~6 de TTS por edición, unos US$0,06; 2 publicaciones de la cuota diaria de Meta cuando se
+active. Si el guion no pasa el control factual, no hay noticiero ese día.
+**Revisar nuevamente cuando**: termine la prueba de 3 noches o la voz genere
+quejas.
+
+### 2026-10-31 — Noticiero V3: plan audiovisual por hechos y subtítulos alineados
+
+**Decisión**: reconstruir el render del noticiero sin reescribir el sistema:
+mismo orquestador, selección, control factual, voz Orus, entregables y
+publicación por ID. Se agregan `utils/newscast_v3.py` (guion por tramos,
+puertas de recursos, cartera, plan determinista en ms→frames, validación,
+inspección), `utils/newscast_align.py` y `NightlyNewscastV3`, detrás de
+`NIGHTLY_NEWSCAST_VISUAL=v3`. Plan interno en `visual_plan.json` en vez de
+cambiar la forma de `guion.json` (sólo se agregan claves).
+**Motivo**: auditoría externa del Reel V2 (apertura de ~18 s con sirena y
+flash, cierre de 13 s, una sola plantilla, sin subtítulos, riesgo de imágenes
+de otro hecho). Verificado en el fixture del 30/10: el video de la nota del
+penal mostraba "allanamientos en zona norte"; el CTA decía `@lavozriojana`
+pero la cuenta es `@lavozriojana.ok`.
+**Alineador**: whisper.cpp CPU (9 MB + modelo de 190 MB, MIT, versión y
+SHA-256 fijos). El host no tiene torch ni GPU: WhisperX/CTC sumaría ~2 GB de
+dependencias. stable-ts descartado (archivado). Medido: ~26 s por edición en
+12 núcleos, US$0 de API.
+**Alternativas rechazadas**: TTS por tramo (más llamadas y cupo; se alinea el
+bloque), segundo orquestador, base de datos, generación de imágenes, APIs
+pagas nuevas, migración de Remotion, Barlow/Source Sans (Archivo variable ya
+cubre condensada + lectura y se carga localmente).
+**Editorial**: el tope policial rígido del guion se reemplaza por cartera de
+importancia + revisión trazable (>65 % del tiempo o 3 seguidas); temas
+sensibles incluidos por pedido del responsable con reglas reforzadas.
+**Revisar nuevamente cuando**: haya escucha humana de la mezcla y anotación
+de tiempos para medir error de subtítulos, o métricas reales de Meta.
+
+### 2026-10-31 — Noticiero V4: formato policial de 24 h y motor de animación
+
+**Decisión**: el noticiero pasa a ser policial de 24 h con 8–12 hechos y
+≈1:45, apertura de 5–7 s con gancho determinista (títulos cortos validados de
+los hechos con imagen), titulares con revelado por máscara que se contraen en
+regleta, datos que aparecen cuando la voz los dice, cuatro transiciones
+propias, música con presencia y efectos, cierre de 3–4 s. Biblioteca de notas
+propias (`data/newscast_library.json`) para reutilizar fotos ya procesadas,
+videos y controles visuales; incluye política para una próxima integración.
+**Motivo**: el responsable rechazó la V3 (estática, voz lenta, pocas
+policiales: eligió 2 de ~13 hechos locales del día).
+**Alternativas rechazadas**: gancho escrito por el modelo (frases de 8 palabras,
+apertura de 11,5 s y hechos sin imagen); acelerar toda la voz con ffmpeg (sólo
+se corrige la toma lenta, hasta 1,12×); cortina negra con logo (se leía como
+un corte vacío); términos clave sobre cualquier foto (el sello "ROBO" junto a la
+foto del juez sugería culpa).
+**Revisar nuevamente cuando**: haya escucha humana y métricas de retención.
+
+### 2026-10-31 — Noticiero: ningún hecho sin imagen propia
+
+**Contexto**: en la V4 dos hechos salieron sólo con tipografía (la foto del penal
+mostraba otro hecho y el retrato de Chilecito era de un juez). El responsable no
+quiere noticias sin imagen en el Reel.
+**Decisión**: prefiltro de imágenes antes del guion (`prescreen_media`) con las
+mismas puertas del armado; sólo las notas con foto o video propio elegible llegan
+al guion, y el armado descarta cualquier bloque sin imagen. Bandera
+`NIGHTLY_NEWSCAST_REQUIRE_MEDIA` (default `true`). Con pocos hechos con imagen la
+edición queda `no_work`, no se rellena.
+**Evidencia**: fixture real del 31/10: 13 de 16 notas pasan; el guion pasó de 10
+hechos (2 tipográficos) a 11 con imagen, e incluyó tres que antes quedaban afuera.
+**Costo**: 4 llamadas de control visual nuevas (el resto vino de la biblioteca).
+
+### 2026-10-31 — Noticiero: apertura con video y publicación diaria
+
+**Contexto**: en la edición con prefiltro la apertura arrancaba con una gráfica,
+duraba 7,6 s y decía "Juicio por tentativa femicidio".
+**Decisión**: el gancho abre con un hecho con video, tope de 10 palabras y de 7 s
+(si se pasa, sale la última frase); los títulos cortos recuperan preposiciones
+desde el título o la locución. El responsable activó la publicación diaria a las
+21 en Instagram y Facebook (tarea `LaVozRiojana-Noticiero` a las 20:15).
+**Rollback**: `NIGHTLY_NEWSCAST_PUBLISH = "false"` (sólo genera) o deshabilitar
+la tarea; `NIGHTLY_NEWSCAST_VISUAL = "v2"` vuelve al formato anterior.
+**Pendiente**: la corrección de la apertura no se renderizó antes de activar
+(decisión del responsable); se verifica con la primera edición real.
+
+### 2026-11-01 — Noticiero: situación procesal exacta y hechos del día
+
+**Contexto**: la primera edición publicada (31/10) abrió con "Detenido por
+intento de robo" para un menor que la nota daba como *demorado*, e incluyó dos
+notas republicadas el viernes que contaban hechos "de este miércoles".
+**Decisión**: `status_drift` descarta título corto o frase del gancho (y marca
+el título para reintento) si afirman una familia procesal o de desenlace que
+las notas no mencionan; `stale_weekday` saca de las candidatas las notas cuyo
+comienzo ubica el hecho dos o más días antes de la edición.
+**Evidencia**: sobre la biblioteca real, ventana de 24 h: salen exactamente las
+dos notas del miércoles (moto en el centro e incendio en Santa Rosa 2), ninguna
+del viernes o sábado.
+**Rollback**: revertir el cambio en `utils/newscast_v3.py`; no hay bandera.
+
+### 2026-11-01 — Noticiero V5: apertura en frío, edición por frases, portada y caption
+
+**Contexto**: el Reel del 31/10 (V4) midió, ~85 min después de publicado,
+186 reproducciones, 152 cuentas, 6,7 s de visualización promedio sobre 118,9 s
+(5,6 %), 1 me gusta y 0 comentarios/compartidos/guardados (Graph API, lectura).
+Instagram mostró 50 % de retención a 1 s y 18 % a 3 s. Auditoría cuadro a
+cuadro del MP4 publicado: frame 0 sin texto ni marca; titular genérico
+("Incendios en la provincia") legible recién a los 0,25 s; 45 % inferior de
+pantalla vacío; placa de marca a los 4,3–5,5 s que interrumpe; la primera
+noticia repite la foto del gancho; 9 de 10 historias con una sola foto durante
+8–13 s (8 tramos estáticos ≥ 2,5 s, ~24 s en total); "Detenido" para un menor
+*demorado*; dos notas del miércoles como "últimas 24 h"; una contravención sin
+interés público; caption con dos bloques de hashtags y la lista de fuentes;
+portada = cuadro de los 6 s. Hipótesis principal del abandono: en el primer
+segundo no se entiende qué pasó ni dónde (titular genérico, nada de La Rioja
+legible) y el primer cambio de imagen llega a los 2,4 s.
+**Decisión**: V5 detrás de `NIGHTLY_NEWSCAST_VISUAL=v5` reutilizando la cadena
+de V4: guion directo (140–210 palabras, primero qué pasó), apertura en frío con
+la noticia principal y la marca integrada (sin locución de gancho aparte),
+voz con pausas medidas acortadas y ritmo ≤ 1,08× (Rubber Band local), tomas de
+~2,6 s cortadas en pausas reales (general/detalle/contraplano; franja, tarjeta
+o pantalla completa según resolución), mapa con contorno y nomenclador
+oficiales sólo para localidades exactas, subtítulos cinéticos de 1–4 palabras,
+datos sincronizados que no se pisan con titular ni mapa, transiciones que
+dibujan la toma entrante, portada 1080×1920 como `cover_url`, caption
+informativo sin fuentes con 4 hashtags y `location_id` de La Rioja.
+Se compararon tres aperturas sobre el mismo material y audio (titular directo,
+resumen de tres titulares, mapa del día); ganó el titular directo por claridad
+en 1 s, legibilidad en teléfono y coincidencia voz/imagen; las otras quedan
+como `NIGHTLY_NEWSCAST_OPENING` para pruebas A/B.
+**Evidencia**: demo con el material real del 31/10 (misma locución de Orus,
+sin TTS; mismas fotos; títulos reescritos con las reglas nuevas y pasados por
+las barreras factuales): 74,7 s en vez de 118,9 s con los 7 hechos válidos;
+0 tramos estáticos (el original: 8); 4–5 tomas por historia (el original: 1);
+voz de 139–158 a 154–168 ppm con factor ≤ 1,08; −14,2 LUFS, pico −1,9 dBFS;
+caption de 942 caracteres. Revisión visual en 4 rondas (render → inspección →
+corrección): ver `docs/NIGHTLY_NEWSCAST.md` § V5 y la skill `lvr-video-qa`.
+**Pendiente**: la retención real sólo se sabrá con ediciones publicadas; las
+hipótesis medibles están en `docs/NIGHTLY_NEWSCAST.md` § V5 → Métricas.
+**Rollback**: `NIGHTLY_NEWSCAST_VISUAL = "v3"` en `scripts/run_nightly_newscast.ps1`.
+
+### 2026-10-31 — Videos de X: fuera los de Salta
+
+**Contexto**: el backend de HolaSalta comparte con LVR todos los videos de X que
+procesa; desde el 2/10 salieron 278 Reels, 7 de @QuePasaSalta (Orán, plaza 9 de
+Julio, Jujuy, etc.). El responsable pidió no publicar los que digan ser de Salta.
+**Decisión**: `salta_reason` descarta, antes de la IA y del render, el post de
+una cuenta salteña (`QuePasaSalta`) o cuyo texto menciona Salta (con mayúscula,
+para no tomar el verbo), salteño/a o localidades salteñas (Orán, Tartagal,
+Metán, Cafayate, etc.). Queda `skipped` con `reason=region_salta`, terminal, y
+bloquea la URL. `X_VIDEO_EXCLUDE_SALTA=false` lo desactiva (default activo, sin
+reiniciar el 24/7: cada ciclo lanza la etapa de nuevo).
+**Evidencia**: sobre los 278 publicados, el filtro habría sacado exactamente los
+7 de @QuePasaSalta y ninguno más.
+
+### 2026-11-13 — Render server sin arranques en frío e Instagram hasta 12 por ciclo
+
+**Contexto**: el render server de Remotion tarda ~95-100 s en bundlear y Python
+lo esperaba 90 s; además se apagaba a los 20 min de inactividad, y los ciclos
+están separados ~90-100 min. Casi todos los ciclos arrancaban en frío y caían al
+`npx remotion still` viejo (~5-7 min por imagen). Con el host cargado, cada
+intento lanzaba otro servidor más (13/11 14:04-15:00: 8 intentos seguidos sin
+servidor y la etapa de Instagram cortada por timeout con 2 publicadas). Aparte,
+`IG_MAX_PER_RUN` se aplicaba antes de sacar actualizaciones y mismo hecho: en 107
+ciclos (8-13/11) nunca salieron 8, había 46 ciclos con 0, y el relleno local
+casi no entraba (31 pendientes, muchas con 20-45 h).
+**Decisión**:
+- `REMOTION_RENDER_SERVER_STARTUP_TIMEOUT` pasa de 90 a 240 s por defecto.
+- El servidor recibe `RENDER_SERVER_IDLE_MS` desde
+  `REMOTION_RENDER_SERVER_IDLE_SECONDS` (default 4 h) y queda tibio entre ciclos.
+- `remotion/.render-server.starting` (pid + hora): mientras el proceso lanzado
+  siga vivo y arrancando, otro proceso espera en vez de lanzar un segundo bundle.
+- `meta/run_ig.py` toma una ventana de candidatas de 3× el tope, aplica los
+  filtros (actualización, mismo hecho, horario silencioso, reparto local,
+  cuota) y recorta al tope al final.
+- El tope por ciclo de Instagram es configurable con `PIPELINE_IG_MAX_PER_CYCLE`
+  (default 8, acotado a 1-20). Producción usa 12. El timeout de la etapa
+  `meta/run_ig.py` pasa de 1200 a 1800 s.
+**Evidencia**: el render server levantado a mano bundleó en 97,4 s; los logs de
+`remotion_renderer` muestran 4/4/13/20 fallos de `/health` el 9, 11, 12 y 13/11.
+Uso de la API de Meta: 48-72 publicaciones por día, sin rate limits en el período.
+**Consecuencia**: las locales viejas (> `IG_LOCAL_PACING_MAX_AGE_HOURS`) que
+exceden el reparto de la hora se descartan para Instagram apenas entran en la
+ventana, tal como ya decía la política de 2026-10-30.
+**Rollback**: `PIPELINE_IG_MAX_PER_CYCLE = "8"` en
+`scripts/start_24x7_production.ps1` y reiniciar el supervisor;
+`REMOTION_RENDER_SERVER_STARTUP_TIMEOUT=90` y
+`REMOTION_RENDER_SERVER_IDLE_SECONDS=1200` para el comportamiento anterior del
+render server.
+
+### 2026-11-13 — Vínculo riojano por referentes e instituciones
+
+**Contexto**: `detect_riojan_link` sólo miraba localidades, la fuente y la
+categoría. Las notas de Quintela, Braida, Luna Corzo o del MPF que no dicen "La
+Rioja" en el título quedaban "sin vínculo": no entraban a Instagram como
+relleno riojano (`IG_LOCAL_FILL_RIOJAN`) y, por lo tanto, tampoco recibían las
+etiquetas del Gobierno. El usuario pidió poder etiquetarlos para que compartan
+las publicaciones.
+**Decisión**: además del criterio de localidad (`_locality_link`, sin cambios),
+cuentan como vínculo las fuentes `judicial_mpf` y `judicial_justicia`, y los
+referentes de `RIOJAN_ENTITY_TERMS` (Quintela, Luna Corzo, Teresita Madera,
+Braida, Martín Menem, Vera Barros, Función Judicial, UNLaR, EDELaR) como palabra
+completa. Los nombres de `config/gov_directory.json` también cuentan, si tienen
+dos palabras o más y el texto nombra un cargo. `compute_topic_key` sigue usando
+sólo la localidad. No se agregó ningún bloqueo de notas ajenas: el usuario
+pidió sólo esta parte.
+**Evidencia**: sobre las 625 notas "sin vínculo" de los últimos 14 días, 13
+pasan a riojanas y las 13 lo son (11 por referente y 2 del MPF); ningún falso
+positivo. Tests en `tests/test_riojan_entities.py`.
+**Rollback**: vaciar `RIOJAN_ENTITY_TERMS` y `RIOJAN_INSTITUTIONAL_SOURCES` en
+`utils/editorial_router.py`.

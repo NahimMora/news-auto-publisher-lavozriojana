@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 REMOTION_SRC = Path(__file__).resolve().parents[1] / "remotion" / "src"
 
@@ -268,6 +268,25 @@ class RemotionEngineDispatchTests(unittest.TestCase):
             },
             clear=False,
         )
+
+    def test_availability_uses_healthy_render_server_without_npx(self):
+        from utils import remotion_renderer
+
+        with patch.object(remotion_renderer, "_read_server_info", return_value={"port": 4321}), patch.object(
+            remotion_renderer, "_server_health_check", return_value=True
+        ) as health, patch.object(remotion_renderer.subprocess, "run") as run:
+            self.assertTrue(remotion_renderer.remotion_available(force_recheck=True))
+        health.assert_called_once_with(4321)
+        run.assert_not_called()
+
+    def test_availability_falls_back_to_npx_without_render_server(self):
+        from utils import remotion_renderer
+
+        with patch.object(remotion_renderer, "_read_server_info", return_value=None), patch.object(
+            remotion_renderer.subprocess, "run", return_value=MagicMock(returncode=0)
+        ) as run:
+            self.assertTrue(remotion_renderer.remotion_available(force_recheck=True))
+        run.assert_called_once()
 
     def test_automatic_uses_auto_by_default_and_prefers_remotion_when_available(self):
         from utils.remotion_renderer import resolve_engine

@@ -1,0 +1,13 @@
+{
+  "_doc": "Cinco casos reales del plan maestro (sección 9.4) y casos de estrés. Los títulos y secciones son los del OG publicado; las fotos se leen de --media-dir (output/web_media del host) y NO se versionan. Los casos 'stress' usan una foto sintética generada por el script.",
+  "cases": [
+    {"id": "c1_carnet", "kind": "real", "titulo": "El carnet de conducir común habilita a manejar autos automáticos", "seccion": "locales", "photo": "62023722057fe756c4d2.webp", "published_og": "og_el-carnet-de-conducir-comun-habilita-a-manejar-autos-automaticos_6202372205.jpg"},
+    {"id": "c2_undec", "kind": "real", "titulo": "La UNdeC lanzó el programa de becas de comedor para estudiantes", "seccion": "interior", "photo": "3f7a3d4e54d6b1077516.webp", "published_og": "og_la-undec-lanzo-el-programa-de-becas-de-comedor-para-estudiantes_3f7a3d4e54.jpg"},
+    {"id": "c3_yanina", "kind": "real", "titulo": "Yanina Latorre analiza su futuro tras la venta de Mandarina", "seccion": "Paparazzi", "photo": "923f4f13b7b158c4f891.webp", "published_og": "og_yanina-latorre-analiza-su-futuro-tras-la-venta-de-mandarina_923f4f13b7.jpg"},
+    {"id": "c4_lali_tini", "kind": "real", "titulo": "Lali Espósito y Tini Stoessel confirmaron invitaciones mutuas a sus casamientos", "seccion": "Paparazzi", "photo": "b65760748a5e11829d91.webp", "published_og": "og_lali-esposito-y-tini-stoessel-confirmaron-invitaciones-mutuas-a-sus-casa_b65760748a.jpg"},
+    {"id": "c5_cigarrillos", "kind": "real", "titulo": "Incautaron un cargamento de cigarrillos de contrabando valuado en 428 mil dólares", "seccion": "Policiales", "photo": "6b0baaf73665ebc7ff84.webp", "published_og": "og_incautaron-un-cargamento-de-cigarrillos-de-contrabando-valuado-en-428-mi_6b0baaf736.jpg"},
+    {"id": "s1_largo", "kind": "stress", "titulo": "El Concejo Deliberante de Ángel Vicente Peñaloza aprobó por unanimidad la ordenanza que regula el uso de motos en el casco céntrico y fija multas de hasta $1.535.000", "seccion": "politica", "locality": "Ángel Vicente Peñaloza", "deck": "La norma entra en vigencia el 1 de diciembre y prevé un período de 30 días de advertencias antes de aplicar sanciones."},
+    {"id": "s2_localidades", "kind": "stress", "titulo": "¿Qué pasará con el agua en Coronel Felipe Varela y General Lamadrid? «Hay reservas», aseguró Aguas Riojanas", "seccion": "sociedad", "locality": "Coronel Felipe Varela · General Lamadrid", "deck": ""},
+    {"id": "s3_mayusculas", "kind": "stress", "titulo": "URGENTE: CHOQUE FRONTAL EN LA RUTA 38 DEJÓ DOS HERIDOS GRAVES Y UN 100% DE DEMORAS", "seccion": "policiales", "breaking": true, "locality": "", "deck": ""}
+  ]
+}

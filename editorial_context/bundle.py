@@ -69,6 +69,10 @@ class EditorialContextBundle:
     story_key: str = ""
     timeline: list[dict] = field(default_factory=list)
     factual_basis_text: str = ""
+    # Nota anterior que hay que pasar a la misma historia verificada en el CMS
+    # (el archivo no siempre tiene su post_id: el publicador lo busca por URL).
+    link_previous_post_id: str = ""
+    link_previous_url: str = ""
 
     def archive_context_text(self) -> str:
         if self.context_depth == "NONE" or not self.archive_snippets:
@@ -264,6 +268,36 @@ def _gather_official_snippets(
     return snippets, len(sources)
 
 
+VERIFIED_STORY_PREFIX = "event:"
+
+
+def story_engine_auto_enabled() -> bool:
+    return os.getenv("STORY_ENGINE_AUTO_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _story_for_update(article_id: str, previous_url: str, *, title: str, category: str, path) -> tuple[str, str]:
+    """(story_key, post_id de la nota anterior a enlazar en el CMS o "").
+
+    Sólo reutiliza una historia verificada (``event:``): una clave del
+    agrupamiento automático no se hereda, porque puede mezclar hechos."""
+    previous = ai.get_by_canonical_url(previous_url, path=path)
+    if previous is None:
+        return "", ""
+    verified = previous.story_key if previous.story_key.startswith(VERIFIED_STORY_PREFIX) else ""
+    story_key = verified or VERIFIED_STORY_PREFIX + story_engine.story_key_from_seed(previous.article_id).split(":", 1)[1]
+    link_post = ""
+    if not verified:
+        ai.set_story_key(previous.article_id, story_key, path=path)
+        link_post = previous.post_id or previous.canonical_url
+    ai.upsert_story(story_key, category=category, title_hint=title, path=path)
+    for linked in (previous.article_id, article_id):
+        ai.add_story_relation(
+            linked, story_key, relation_score=1.0, relation_reason="same_event_update",
+            matched_entities=[], matched_terms=[], time_distance_days=None, confidence="high", path=path,
+        )
+    return story_key, link_post
+
+
 def build_context_bundle(
     *,
     article_id: str,
@@ -274,6 +308,7 @@ def build_context_bundle(
     official_snippets: list[ContextSnippet] | None = None,
     official_source_lookup_count: int = 0,
     riojan_source: bool = False,
+    update_of_url: str = "",
     path: Path | str | None = None,
 ) -> EditorialContextBundle:
     """Punto de entrada único. Nunca lanza: una falla acá degrada a NONE
@@ -293,6 +328,7 @@ def build_context_bundle(
             official_snippets=official_snippets,
             official_source_lookup_count=official_source_lookup_count,
             riojan_source=riojan_source,
+            update_of_url=update_of_url,
             path=path,
         )
     except Exception:
@@ -311,6 +347,7 @@ def _build_context_bundle(
     official_source_lookup_count: int,
     path: Path | str | None,
     riojan_source: bool = False,
+    update_of_url: str = "",
 ) -> EditorialContextBundle:
     entities_found = ec_entities.extract_entities(title, excerpt)
     localities_found = ec_entities.extract_localities(title, excerpt)
@@ -352,7 +389,12 @@ def _build_context_bundle(
     relevant = [item for item in ranked if item.meets_category_bar(category)]
 
     story_assignment = None
-    if candidates:
+    # El agrupamiento automático juntaba hechos distintos que sólo compartían
+    # una localidad y una palabra ("Chilecito" + "joven", "Córdoba" +
+    # "trasladar") y la web los mostraba como cronología (2026-10-23). Queda
+    # apagado: las historias salen sólo de actualizaciones verificadas del
+    # mismo hecho (utils/same_event.py, ``update_of_url``).
+    if candidates and story_engine_auto_enabled():
         story_assignment = story_engine.assign_story(
             article_id=article_id,
             title=title,
@@ -366,6 +408,12 @@ def _build_context_bundle(
         )
 
     story_key = story_assignment.story_key if story_assignment else ""
+    link_previous_post_id = ""
+    if update_of_url:
+        # Actualización del mismo hecho (utils/same_event.py): misma historia
+        # que la nota anterior, aunque las palabras no alcancen para agruparlas.
+        linked_key, link_previous_post_id = _story_for_update(article_id, update_of_url, title=title, category=category, path=path)
+        story_key = linked_key or story_key
     timeline_items = tl.build_timeline(story_key, exclude_article_id=article_id, path=path) if story_key else []
     has_strong_story = bool(timeline_items)
 
@@ -416,6 +464,8 @@ def _build_context_bundle(
             for item in relevant[:RELATED_ARTICLES_MAX_ITEMS]
         ],
         story_key=story_key,
+        link_previous_post_id="" if link_previous_post_id.startswith("http") else link_previous_post_id,
+        link_previous_url=link_previous_post_id if link_previous_post_id.startswith("http") else "",
         timeline=[
             {"article_id": i.article_id, "title": i.title, "published_at": i.published_at, "url": i.url}
             for i in timeline_items[:TIMELINE_MAX_ITEMS]

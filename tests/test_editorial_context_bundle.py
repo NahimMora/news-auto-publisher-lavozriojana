@@ -52,6 +52,62 @@ class BuildContextBundleTests(unittest.TestCase):
         self.assertIn("archive_context", fragment)
         self.assertIn("context_depth", fragment)
 
+    def _two_chilecito_notes(self):
+        # Dos hechos distintos que comparten localidad y palabras: el
+        # agrupamiento automático los juntaba como "historia".
+        for article_id, title in (("a1", "Joven grave en Chilecito tras ser encerrado por un conductor"),
+                                  ("a2", "Siniestro vial en Chilecito dejó un joven con fractura")):
+            ai.upsert_article(ai.ArchiveArticle(article_id=article_id, post_id=f"p-{article_id}", title=title, category="policiales",
+                                                published_at="2026-10-08T10:00:00Z", canonical_url=f"https://lavozriojana.com/{article_id}"),
+                              path=self.db_path)
+
+    def test_automatic_grouping_is_off_by_default(self):
+        self._two_chilecito_notes()
+        with patch.dict("os.environ", {"STORY_ENGINE_AUTO_ENABLED": "false"}):
+            result = eb.build_context_bundle(article_id="new1", title="Hallaron sano y salvo a un joven en Chilecito tras ser encerrado",
+                                             category="policiales", published_at="2026-10-23T10:00:00Z", path=self.db_path)
+        self.assertEqual(result.story_key, "")
+        self.assertEqual(ai.get_by_article_id("a1", path=self.db_path).story_key, "")
+
+    def test_update_gets_a_verified_story_and_links_the_previous_post(self):
+        self._two_chilecito_notes()
+        ai.set_story_key("a1", "story:automatica", path=self.db_path)
+        result = eb.build_context_bundle(article_id="new1", title="Murió el joven que había sido encerrado en Chilecito",
+                                         category="policiales", published_at="2026-10-23T10:00:00Z",
+                                         update_of_url="https://lavozriojana.com/a1", path=self.db_path)
+        # No hereda la clave automática (puede mezclar hechos): crea una verificada.
+        self.assertTrue(result.story_key.startswith("event:"))
+        self.assertEqual(result.link_previous_post_id, "p-a1")
+        self.assertEqual(ai.get_by_article_id("a1", path=self.db_path).story_key, result.story_key)
+        # Una segunda actualización reutiliza la verificada y no vuelve a enlazar.
+        again = eb.build_context_bundle(article_id="new2", title="Detuvieron al conductor que encerró al joven en Chilecito",
+                                        category="policiales", published_at="2026-10-24T10:00:00Z",
+                                        update_of_url="https://lavozriojana.com/a1", path=self.db_path)
+        self.assertEqual((again.story_key, again.link_previous_post_id), (result.story_key, ""))
+
+    def test_previous_without_post_id_is_linked_by_url(self):
+        # Las notas propias llegan al archivo sin post_id: el publicador busca
+        # el post del CMS por la URL en la cola Meta.
+        ai.upsert_article(ai.ArchiveArticle(article_id="b1", title="Vuelco en la Ruta 75 cerca de Sanagasta", category="policiales",
+                                            published_at="2026-10-22T10:00:00Z", canonical_url="https://lavozriojana.com/b1"),
+                          path=self.db_path)
+        result = eb.build_context_bundle(article_id="new3", title="Murió el joven que volcó en la Ruta 75", category="policiales",
+                                         published_at="2026-10-23T10:00:00Z", update_of_url="https://lavozriojana.com/b1", path=self.db_path)
+        self.assertTrue(result.story_key.startswith("event:"))
+        self.assertEqual((result.link_previous_post_id, result.link_previous_url), ("", "https://lavozriojana.com/b1"))
+
+        import json
+        import os
+
+        from pipeline.node_webapp import publisher
+
+        meta = os.path.join(self._tmpdir.name, "meta.json")
+        with open(meta, "w", encoding="utf-8") as handle:
+            json.dump([{"web_url": "https://lavozriojana.com/b1", "web_post_id": 6300}], handle)
+        with patch.object(publisher, "META_OUTPUT", meta):
+            self.assertEqual(publisher.web_post_id_for("https://lavozriojana.com/b1"), "6300")
+            self.assertEqual(publisher.web_post_id_for("https://lavozriojana.com/otra"), "")
+
     def test_official_snippet_alone_without_archive_gives_light(self):
         result = eb.build_context_bundle(
             article_id="new1",

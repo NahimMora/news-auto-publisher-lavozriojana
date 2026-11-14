@@ -9,12 +9,13 @@ from urllib.parse import urlparse
 
 import requests
 
-from utils import r2_storage
+from utils import gov_tags, ig_location, r2_storage
 from utils.file_manager import JsonStateError, load_json, update_json
 from utils.logging_setup import setup_logger
-from utils.news_dedup import duplicate_reason
+from utils.news_dedup import find_duplicate
 from utils.operation_result import OperationResult
 from utils.paths import data_dir
+from utils.same_event import original_published
 from utils.social_caption import build_instagram_caption
 from utils.stage_result import StageStatus
 from utils.url_normalization import url_hash
@@ -44,6 +45,8 @@ IG_POSTED_DEDUP_THRESHOLD = float(
         os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.5"),
     )
 )
+# 0 = sin ventana (comportamiento histórico: compara contra todo ig_posted.json).
+IG_POSTED_DEDUP_WINDOW_HOURS = float(os.getenv("IG_POSTED_DEDUP_WINDOW_HOURS", "0"))
 
 
 class IGRateLimitError(Exception):
@@ -67,7 +70,7 @@ def is_rate_limited() -> bool:
     return False
 
 
-def _set_rate_limit_backoff() -> int:
+def _set_rate_limit_backoff(data: dict | None = None, status_code: int | None = None) -> int:
     blocked_until = int(time.time()) + IG_RATE_LIMIT_BACKOFF_SECONDS
     update_json(
         IG_RATE_LIMIT_PATH,
@@ -82,7 +85,16 @@ def _set_rate_limit_backoff() -> int:
         {},
         expected_type=dict,
     )
-    logger.error("IG rate limit detectado; backoff hasta %s", blocked_until)
+    error = (data or {}).get("error") if isinstance((data or {}).get("error"), dict) else {}
+    # code 9/2207042 = tope de 100 publicaciones por 24 h; 4/32/613 = límite de
+    # llamadas de la app o de la cuenta (lecturas incluidas).
+    logger.error(
+        "IG rate limit detectado (http=%s code=%s subcode=%s); backoff hasta %s",
+        status_code,
+        error.get("code"),
+        error.get("error_subcode"),
+        blocked_until,
+    )
     return blocked_until
 
 
@@ -125,6 +137,9 @@ def _mark_posted(dedup_key: str, noticia: dict, external_id: str) -> None:
             "seccion",
             "source",
             "media_type",
+            "gov_tags",
+            # T01: motor/plantilla del render, sólo con GROWTH_METRICS_ENABLED.
+            "growth_render",
         ):
             if noticia.get(field):
                 record[field] = noticia[field]
@@ -147,8 +162,22 @@ def _posted_records(state: dict) -> list[dict]:
     return records
 
 
+def _within_dedup_window(record: dict) -> bool:
+    if IG_POSTED_DEDUP_WINDOW_HOURS <= 0:
+        return True
+    try:
+        posted_at = float(record.get("posted_at"))
+    except (TypeError, ValueError):
+        # Sin fecha durable no se puede descartar: se sigue comparando.
+        return True
+    return posted_at >= time.time() - IG_POSTED_DEDUP_WINDOW_HOURS * 3600
+
+
 def _posted_duplicate_reason(state: dict, noticia: dict) -> str | None:
-    return duplicate_reason(
+    # La similitud de título sólo se compara dentro de la ventana: temas
+    # recurrentes (cortes de luz, fechas deportivas) no son la misma noticia
+    # semanas después. La coincidencia exacta por clave/URL no tiene ventana.
+    match = find_duplicate(
         noticia,
         _posted_records(state),
         key_fields=(
@@ -159,7 +188,19 @@ def _posted_duplicate_reason(state: dict, noticia: dict) -> str | None:
             "url",
         ),
         threshold=IG_POSTED_DEDUP_THRESHOLD,
+        similarity_filter=_within_dedup_window,
     )
+    if not match:
+        return None
+    reason, existing = match
+    logger.info(
+        "Duplicado de Instagram (%s): '%s' coincide con '%s' (posted_at=%s)",
+        reason,
+        str(noticia.get("titulo") or "")[:90],
+        str(existing.get("titulo") or existing.get("titulo_instagram") or "")[:90],
+        existing.get("posted_at"),
+    )
+    return reason
 
 
 def _is_http_url(value: object) -> bool:
@@ -182,7 +223,47 @@ def _video_url(noticia: dict) -> str:
 
 
 def _build_caption(noticia: dict) -> str:
-    return build_instagram_caption(noticia)
+    caption = build_instagram_caption(noticia)
+    tags = noticia.get("gov_tags") or []
+    if not tags:
+        return caption
+    # Menciones sólo en Instagram: Facebook arma su texto sin ellas.
+    line = gov_tags.caption_line(tags)
+    return f"{caption[: 2200 - len(line) - 2]}\n\n{line}"
+
+
+def _gov_tags_for(noticia: dict, state: dict | None = None) -> list[str]:
+    """Etiquetas del Gobierno para la nota (ver ``utils/gov_tags.py``)."""
+    if not gov_tags.enabled():
+        return []
+    try:
+        state = state if state is not None else _load_state()
+    except JsonStateError:
+        return []  # sin poder contar el tope diario, no se etiqueta
+    used = gov_tags.tags_used_last_24h(_posted_records(state))
+    tags = gov_tags.select_tags(noticia, used_last_24h=used)
+    if tags:
+        logger.info("Etiquetas del Gobierno: %s", gov_tags.caption_line(tags))
+    return tags
+
+
+def _create_container_with_extras(payload: dict, extras: dict) -> tuple[OperationResult, dict]:
+    """Crea el contenedor con etiquetas/ubicación; si Meta rechaza el pedido
+    (cuenta que no se puede etiquetar, ubicación inválida) reintenta una vez
+    sin ellas. Es seguro: un contenedor rechazado no se publicó."""
+    if not extras:
+        return _create_container(payload), {}
+    created = _create_container({**payload, **extras})
+    if created.ok or created.error_type != "request_rejected":
+        return created, extras if created.ok else {}
+    error = (created.response or {}).get("error") or {}
+    logger.warning(
+        "Meta rechazó etiquetas/ubicación (code=%s subcode=%s %s); se publica sin ellas",
+        error.get("code"),
+        error.get("error_subcode"),
+        sorted(extras),
+    )
+    return _create_container(payload), {}
 
 
 def _safe_json(response) -> dict:
@@ -203,7 +284,7 @@ def _error_result(response, *, outcome: str = "not_published") -> OperationResul
             response=data or None,
         )
     if _is_rate_limit_error(data, response.status_code):
-        until = _set_rate_limit_backoff()
+        until = _set_rate_limit_backoff(data, response.status_code)
         return OperationResult(
             StageStatus.DEGRADED,
             error_type="rate_limit",
@@ -248,7 +329,7 @@ def _wait_video_container(container_id: str) -> OperationResult:
             continue
         data = _safe_json(response)
         if _is_rate_limit_error(data, response.status_code):
-            until = _set_rate_limit_backoff()
+            until = _set_rate_limit_backoff(data, response.status_code)
             return OperationResult(
                 StageStatus.DEGRADED,
                 error_type="rate_limit",
@@ -359,8 +440,18 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         )
 
     tmp_path = ""
+    step = "render"
     try:
         from layout.image_generator import generate_instagram_with_engine
+
+        # Localidad/bajada diferidas por LOCALITY_DECK_LAZY_ENABLED: se piden
+        # recién acá, sólo para notas que efectivamente renderizan la card.
+        try:
+            from openIA.caption_generator import ensure_locality_and_deck
+
+            ensure_locality_and_deck(noticia)
+        except Exception as exc:
+            logger.warning("Localidad/bajada diferidas no disponibles (%s); card sin bajada", type(exc).__name__)
 
         local_image = str(noticia.get("imagen") or noticia.get("imagen_optimizada") or "")
         if local_image and os.path.isfile(local_image):
@@ -375,6 +466,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
             tmp_path = handle.name
             handle.write(jpeg_bytes)
+        step = "r2"
         public_url, key = r2_storage.upload_temp(tmp_path, ttl_hint="ig")
         return (
             OperationResult(
@@ -386,12 +478,20 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
             key,
         )
     except Exception as exc:
+        # Antes todo se informaba como falla de R2 aunque fallara el render.
+        error_type = "r2_upload_error" if step == "r2" else "image_render_error"
+        logger.error(
+            "Imagen de Instagram no disponible (%s): %s: %s",
+            "falló la subida a R2" if step == "r2" else "falló el render de la placa",
+            type(exc).__name__,
+            str(exc)[:300],
+        )
         allow = str(os.getenv("IG_ALLOW_ORIGINAL_IMAGE_FALLBACK", "false")).lower() in {
             "1", "true", "yes", "si", "sí",
         }
         if allow and _is_http_url(original_url):
             logger.warning(
-                "R2 falló (%s); fallback original habilitado explícitamente",
+                "Imagen propia no disponible (%s); fallback original habilitado explícitamente",
                 type(exc).__name__,
             )
             return (
@@ -401,7 +501,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
                     details={
                         "image_source": "original",
                         "fallback_used": True,
-                        "fallback_reason": "r2_error",
+                        "fallback_reason": "r2_error" if step == "r2" else "render_error",
                     },
                 ),
                 original_url,
@@ -410,7 +510,7 @@ def _prepare_image(noticia: dict) -> tuple[OperationResult, str, str | None]:
         return (
             OperationResult(
                 StageStatus.FAILED,
-                error_type="r2_upload_error",
+                error_type=error_type,
                 details={"fallback_allowed": allow},
             ),
             "",
@@ -466,6 +566,12 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             details={"duplicate_reason": duplicate},
         )
 
+    if original_published(noticia, "instagram"):
+        noticia = {**noticia, "show_update": True}
+    tags = _gov_tags_for(noticia, state)
+    if tags:
+        noticia = {**noticia, "gov_tags": tags}
+
     r2_key: str | None = None
     image_details: dict = {}
     if _is_video_item(noticia):
@@ -485,6 +591,7 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
         cover_url = str(noticia.get("cover_url") or noticia.get("imagen_url") or "").strip()
         if _is_http_url(cover_url):
             payload["cover_url"] = cover_url
+        extras = {"user_tags": gov_tags.reel_user_tags(tags)} if tags else {}
     else:
         prepared, image_url, r2_key = _prepare_image(noticia)
         if not prepared.ok:
@@ -495,8 +602,13 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             "caption": _build_caption(noticia),
             "access_token": IG_ACCESS_TOKEN,
         }
+        extras = {"user_tags": gov_tags.image_user_tags(tags)} if tags else {}
+    # La localidad puede completarse recién al preparar la imagen.
+    location_id = ig_location.location_id_for(noticia)
+    if location_id:
+        extras["location_id"] = location_id
 
-    created = _create_container(payload)
+    created, applied = _create_container_with_extras(payload, extras)
     if not created.ok:
         if r2_key:
             r2_storage.delete(r2_key)
@@ -530,6 +642,7 @@ def post_to_instagram_detailed(noticia: dict) -> OperationResult:
             details={"publication_outcome": "confirmed", "container_id": container_id},
         )
     published.details.update(image_details)
+    published.details.update({"gov_tags": tags, "user_tags_applied": "user_tags" in applied, "location_id": applied.get("location_id", "")})
     logger.info("Publicado en Instagram: %s", str(noticia.get("titulo") or "")[:70])
     return published
 
@@ -571,6 +684,9 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
     video_url = _video_url(item)
     if not video_url:
         return OperationResult(StageStatus.FAILED, error_type="invalid_video_url")
+    tags = _gov_tags_for(item)
+    if tags:
+        item = {**item, "gov_tags": tags}
     payload = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -593,7 +709,11 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
         if _is_http_url(fallback_cover):
             payload["cover_url"] = fallback_cover
 
-    created = _create_container(payload)
+    extras = {"user_tags": gov_tags.reel_user_tags(tags)} if tags else {}
+    location_id = ig_location.location_id_for(item)
+    if location_id:
+        extras["location_id"] = location_id
+    created, applied = _create_container_with_extras(payload, extras)
     if not created.ok:
         return created
     ready = _wait_video_container(created.external_id)
@@ -601,6 +721,7 @@ def post_reel_video_to_instagram(item: dict) -> OperationResult:
         return ready
     published = _publish_container(created.external_id)
     if published.ok:
+        published.details.update({"gov_tags": tags, "user_tags_applied": "user_tags" in applied, "location_id": applied.get("location_id", "")})
         logger.info(
             "Reel de paparazzi publicado en Instagram: %s",
             str(item.get("titulo_reel") or item.get("titulo") or "")[:70],
@@ -622,6 +743,7 @@ def _premium_failure_context(
     *,
     stage: str,
     container_index: int | None = None,
+    label: str = "premium",
 ) -> OperationResult:
     """Agrega contexto seguro y logueable a un fallo del carrusel."""
     if result.ok:
@@ -629,11 +751,18 @@ def _premium_failure_context(
     result.details.setdefault("stage", stage)
     if container_index is not None:
         result.details.setdefault("container_index", container_index)
+    # message/fbtrace_id de Graph no traen secretos y son lo único que explica
+    # un rechazo (relación de aspecto, descarga fallida, etc.).
+    error = (result.response or {}).get("error") if isinstance(result.response, dict) else None
+    error = error if isinstance(error, dict) else {}
     logger.error(
-        "Carrusel premium de Instagram rechazado stage=%s item=%s metadata=%s",
+        "Carrusel %s de Instagram rechazado stage=%s item=%s metadata=%s message=%r fbtrace_id=%s",
+        label,
         stage,
         container_index if container_index is not None else "-",
         result.failure_metadata(),
+        str(error.get("error_user_msg") or error.get("message") or "")[:200],
+        str(error.get("fbtrace_id") or "-")[:40],
     )
     return result
 
@@ -643,6 +772,7 @@ def _wait_premium_container(
     *,
     stage: str,
     container_index: int | None = None,
+    label: str = "premium",
 ) -> OperationResult:
     """Espera que Meta termine de procesar un contenedor del carrusel."""
     timeout_seconds = max(1, PREMIUM_IG_CONTAINER_PROCESSING_TIMEOUT_SECONDS)
@@ -671,6 +801,7 @@ def _wait_premium_container(
                 _error_result(response, outcome="not_published"),
                 stage=stage,
                 container_index=container_index,
+                label=label,
             )
         status = str(data.get("status_code") or "").upper()
         if status in {"FINISHED", "PUBLISHED"}:
@@ -693,6 +824,7 @@ def _wait_premium_container(
                 ),
                 stage=stage,
                 container_index=container_index,
+                label=label,
             )
         time.sleep(poll_seconds)
 
@@ -706,6 +838,7 @@ def _wait_premium_container(
         ),
         stage=stage,
         container_index=container_index,
+        label=label,
     )
 
 
@@ -1054,3 +1187,160 @@ def post_paparazzi_carousel_to_instagram(noticia: dict) -> OperationResult:
                 os.unlink(clip_path)
             except OSError:
                 pass
+
+
+# ── Formatos sociales: historias, carrusel diario, comentarios ────────────
+# Sin dedup propio: cada llamador (utils/story_publisher.py,
+# utils/morning_brief.py, utils/comment_replies.py, ...) es dueño de su
+# estado e idempotencia. Comparten el backoff de rate limit de la cuenta.
+def _guard() -> OperationResult | None:
+    if not IG_ACCOUNT_ID or IG_ACCOUNT_ID == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="missing_configuration")
+    if not IG_ACCESS_TOKEN or IG_ACCESS_TOKEN == "PENDIENTE":
+        return OperationResult(StageStatus.FAILED, error_type="invalid_credential")
+    try:
+        until = rate_limit_until()
+    except JsonStateError:
+        return OperationResult(StageStatus.FAILED, error_type="state_read_error")
+    if time.time() < until:
+        return OperationResult(StageStatus.DEGRADED, error_type="rate_limit", retryable=True, next_retry_at=until)
+    return None
+
+
+def post_story_image(image_url: str) -> OperationResult:
+    """Historia de imagen (``media_type=STORIES``). La API no admite stickers
+    de link ni compartir un post propio: la pieza lleva su propio llamado."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not _is_http_url(image_url):
+        return OperationResult(StageStatus.FAILED, error_type="missing_public_image")
+    created = _create_container({"image_url": image_url, "media_type": "STORIES", "access_token": IG_ACCESS_TOKEN})
+    if not created.ok:
+        return created
+    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
+    if delay > 0:
+        time.sleep(delay)
+    published = _publish_container(created.external_id)
+    if published.ok:
+        logger.info("Historia publicada en Instagram: %s", published.external_id)
+    return published
+
+
+def post_single_image(image_url: str, caption: str) -> OperationResult:
+    """Post de una imagen ya hosteada con su caption (placas de servicio)."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not _is_http_url(image_url):
+        return OperationResult(StageStatus.FAILED, error_type="missing_public_image")
+    created = _create_container({"image_url": image_url, "caption": caption, "access_token": IG_ACCESS_TOKEN})
+    if not created.ok:
+        return created
+    delay = float(os.getenv("IG_IMAGE_CONTAINER_WAIT_SECONDS", "5"))
+    if delay > 0:
+        time.sleep(delay)
+    published = _publish_container(created.external_id)
+    if published.ok:
+        logger.info("Placa publicada en Instagram: %s", published.external_id)
+    return published
+
+
+def post_image_carousel(image_urls: list[str], caption: str) -> OperationResult:
+    """Carrusel de 2 a 10 imágenes ya hosteadas (carrusel de la mañana)."""
+    blocked = _guard()
+    if blocked:
+        return blocked
+    if not 2 <= len(image_urls) <= 10 or not all(_is_http_url(u) for u in image_urls):
+        return OperationResult(StageStatus.FAILED, error_type="invalid_slide_count")
+    # Cada lámina tiene que quedar FINISHED antes de armar el padre: con una
+    # espera fija, Meta rechaza el carrusel si todavía procesa alguna imagen.
+    children: list[str] = []
+    for index, url in enumerate(image_urls, start=1):
+        child = _create_container({"image_url": url, "is_carousel_item": "true", "access_token": IG_ACCESS_TOKEN})
+        if not child.ok:
+            return _premium_failure_context(child, stage="carousel_child_create", container_index=index, label="de la mañana")
+        ready = _wait_premium_container(
+            child.external_id, stage="carousel_child_processing", container_index=index, label="de la mañana"
+        )
+        if not ready.ok:
+            return ready
+        children.append(child.external_id)
+    parent = _create_container({
+        "media_type": "CAROUSEL",
+        "children": ",".join(children),
+        "caption": caption,
+        "access_token": IG_ACCESS_TOKEN,
+    })
+    if not parent.ok:
+        return _premium_failure_context(parent, stage="carousel_parent_create", label="de la mañana")
+    ready = _wait_premium_container(parent.external_id, stage="carousel_parent_processing", label="de la mañana")
+    if not ready.ok:
+        return ready
+    published = _publish_container(parent.external_id)
+    if not published.ok:
+        return _premium_failure_context(published, stage="carousel_publish", label="de la mañana")
+    logger.info("Carrusel publicado en Instagram: %s (%s láminas)", published.external_id, len(children))
+    return published
+
+
+def _graph_post(path: str, data: dict) -> OperationResult:
+    blocked = _guard()
+    if blocked:
+        return blocked
+    try:
+        response = requests.post(
+            f"{GRAPH_API}/{path}",
+            data={**data, "access_token": IG_ACCESS_TOKEN},
+            timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        return OperationResult(StageStatus.DEGRADED, error_type="network_error", error_code=type(exc).__name__, retryable=True, details={"publication_outcome": "unknown"})
+    payload = _safe_json(response)
+    external_id = str(payload.get("id") or "")
+    if response.status_code in {200, 201} and external_id:
+        return OperationResult(StageStatus.SUCCESS, external_id=external_id, response=payload)
+    return _error_result(response, outcome="unknown")
+
+
+def comment_on_media(media_id: str, message: str) -> OperationResult:
+    """Comentario de la cuenta en una publicación propia (actualizaciones)."""
+    return _graph_post(f"{media_id}/comments", {"message": message})
+
+
+def reply_to_comment(comment_id: str, message: str) -> OperationResult:
+    return _graph_post(f"{comment_id}/replies", {"message": message})
+
+
+def graph_get(path: str, params: dict) -> dict | None:
+    """Lectura simple (sin efectos). ``None`` si falla."""
+    try:
+        response = requests.get(
+            f"{GRAPH_API}/{path}",
+            params={**params, "access_token": IG_ACCESS_TOKEN},
+            timeout=int(os.getenv("IG_REQUEST_TIMEOUT_SECONDS", "30")),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Lectura de Instagram fallida: %s", type(exc).__name__)
+        return None
+    data = _safe_json(response)
+    if response.status_code != 200:
+        if _is_rate_limit_error(data, response.status_code):
+            _set_rate_limit_backoff(data, response.status_code)
+        logger.warning("Lectura de Instagram rechazada: http %s", response.status_code)
+        return None
+    return data
+
+
+def media_info(media_id: str) -> dict | None:
+    return graph_get(media_id, {"fields": "id,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp"})
+
+
+def media_comments(media_id: str, limit: int = 50) -> list[dict]:
+    data = graph_get(f"{media_id}/comments", {"fields": "id,text,timestamp,username,like_count,replies{id,username}", "limit": limit})
+    return list((data or {}).get("data") or [])
+
+
+def account_username() -> str:
+    data = graph_get(IG_ACCOUNT_ID, {"fields": "username"}) if IG_ACCOUNT_ID else None
+    return str((data or {}).get("username") or "")
