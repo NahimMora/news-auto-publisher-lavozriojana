@@ -128,7 +128,7 @@ class DeploymentModeTests(unittest.TestCase):
             # Al final, el feed de datos para la web (meta/run_web_feed.py).
             ["scraping_rewrite", "scraping_rewrite", "web", "facebook"] + ["instagram"] * 3
             # WhatsApp copia lo de Facebook: sigue su interruptor.
-            + ["facebook"] * 2 + ["instagram"] * 6 + ["web"],
+            + ["facebook"] * 2 + ["instagram"] * 7 + ["web"],
             [item["stage"] for item in children],
         )
         self.assertTrue(all(item["status"] == "no_work" for item in children))
