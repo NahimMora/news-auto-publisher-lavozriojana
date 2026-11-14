@@ -263,7 +263,9 @@ class MediaPrescreenTests(unittest.TestCase):
             return (1080, 1920)
 
         with mock.patch("utils.remotion_renderer.REMOTION_DIR", tmp), mock.patch.object(v3, "_load_library", return_value={}), \
-             mock.patch.object(nn, "media_duration", return_value=20.0), mock.patch.dict(os.environ, {"NIGHTLY_NEWSCAST_REQUIRE_MEDIA": "true"}):
+             mock.patch.object(nn, "media_duration", return_value=20.0), mock.patch.dict(os.environ, {"NIGHTLY_NEWSCAST_REQUIRE_MEDIA": "true"}), \
+             mock.patch.object(v3, "video_frames", return_value=[]):
+            # Sin ffmpeg real: el runner de CI no lo tiene y el "video" del test es texto.
             kept, report = v3.prescreen_media(cands, providers={"vision": vision, "video": video, "no_library": True})
         return kept, report, seen
 
