@@ -3148,3 +3148,24 @@ dirección propia (narrador firme y cálido, sobrio en tragedias). Costo estimad
 **Evidencia**: `tests/test_efemerides_auto.py`; pruebas reales sin publicar del
 15/11 (ARA San Juan), 20/11 (Vuelta de Obligado) y 27/11 (Facundo Quiroga).
 **Rollback**: `FORMAT_REELS_EF_AUTO=false` (vuelve a la lista fija).
+**Ajustes del mismo día** (pedido del responsable): retrato de EF en duotono
+rojo/bordó en vez del gris pálido; la voz 3.x termina con un "psh" de ~150 ms
+tras un silencio corto (estaba en todas las locuciones): `trim_tail_noise` lo
+corta antes de alinear (UM/DU/EF). El alineador separa palabras que whisper
+funde ("Arasanjuan", "Bosriojana") y corre hacia atrás el redondeo del último
+segmento (hasta 1,5 s); subtítulo marker con más separación.
+
+## 2026-11-15 — Limpieza automática de disco
+
+**Contexto**: el disco C: quedó con 0,5 GB libres y el render de Remotion falló
+con ENOSPC. `output/web_media` tenía 19 GB de videos bajados por el publicador
+web que nunca se borraban, `output/renders` 5 GB de videos ya publicados y
+`remotion/public/tmp` 3 GB de restos que además Remotion copiaba en cada render.
+**Decisión**: etapa `pipeline/run_disk_cleanup.py` al final del ciclo que borra
+sólo por antigüedad y sólo en esas carpetas (más los bundles de Remotion en
+`%TEMP%`); nunca estado, logs ni FotosLVR. Ninguna cola apunta a archivos de
+`web_media` (sólo el journal histórico); el noticiero reusa fotos de 72 h y
+vuelve a bajar lo que falta. Limpieza manual inicial con autorización del
+responsable: 22,8 GB.
+**Evidencia**: `tests/test_disk_cleanup.py`; simulación sobre producción.
+**Rollback**: `DISK_CLEANUP_ENABLED=false`.

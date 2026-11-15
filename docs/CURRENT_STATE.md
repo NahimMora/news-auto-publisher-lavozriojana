@@ -3,6 +3,15 @@
 Última actualización: 2026-11-15 (Reel "Un día como hoy"; el resto del
 documento describe el estado previo y sigue vigente).
 
+## Limpieza automática de disco (2026-11-15)
+
+Etapa `pipeline/run_disk_cleanup.py` al final del ciclo (`DISK_CLEANUP_ENABLED`,
+apagada por defecto): borra por antigüedad los videos bajados de
+`output/web_media` (7 días), sus fotos (30), `output/renders` (14), restos de
+`remotion/public/tmp` y de `.render-cache/public/tmp` (7) y los bundles de
+Remotion en `%TEMP%` (2). Nunca toca `data/`, `logs/` ni `FotosLVR/`; avisa en
+`logs/disk_cleanup.log` si quedan menos de `DISK_CLEANUP_WARN_FREE_GB` (5).
+
 ## Reel de efemérides "Un día como hoy" (EF, 2026-11-15)
 
 Misma etapa `meta/run_format_reels.py`, interruptor `FORMAT_REELS_EF_ENABLED`,

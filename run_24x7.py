@@ -69,6 +69,9 @@ CYCLE_STEPS = [
     # Datos para la web en R2 (lo más visto, servicios, actualizaciones,
     # videos): después de las métricas para tomarlas frescas.
     ("meta/run_web_feed.py", "web"),
+    # Borra copias de trabajo viejas (videos bajados, renders, restos de
+    # Remotion): el 15/11 el disco llegó a 0,5 GB libres. Apagado por defecto.
+    ("pipeline/run_disk_cleanup.py", None),
 ]
 _STEP_TIMEOUTS = {
     "run_all.py": 3600,
