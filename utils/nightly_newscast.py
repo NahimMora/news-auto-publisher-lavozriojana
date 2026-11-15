@@ -619,18 +619,26 @@ def trim_spoken_preamble(wav: str, text: str, *, asr=None) -> float:
     script = [na.fold(w) for w in text.split()[:3] if na.fold(w)]
     if not script or (asr is None and not na.aligner_status()["ok"]):
         return 0.0
-    try:
-        words = (asr or na._asr_words)(wav, na._hint(text) or "La Rioja")
-    except (subprocess.SubprocessError, OSError, ValueError) as exc:
-        logger.warning("No se pudo revisar el comienzo de la locución: %s", type(exc).__name__)
+    words = None
+    for attempt in (1, 2):  # whisper.cpp a veces escribe un JSON roto: un reintento
+        try:
+            words = (asr or na._asr_words)(wav, na._hint(text) or "La Rioja")
+            break
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            logger.warning("No se pudo revisar el comienzo de la locución (intento %s): %s", attempt, type(exc).__name__)
+    if words is None:
         return 0.0
     limit = max(4, len(words) - int(len(text.split()) * 0.6))
     start_ms = None
     heard = [na.fold(w[0]) for w in words]
     # Última aparición (en la primera mitad) de las primeras palabras del texto:
     # el modelo a veces arranca con el texto, se va al preámbulo y vuelve.
+    # Las cifras se oyen en letras ("12" → "doce"): valen como comodín.
+    def same(heard_word: str, script_word: str) -> bool:
+        return any(ch.isdigit() for ch in script_word) or heard_word[:4] == script_word[:4]
+
     for i in range(min(limit, len(words))):
-        if all(i + k < len(heard) and heard[i + k][:4] == script[k][:4] for k in range(len(script))):
+        if all(i + k < len(heard) and same(heard[i + k], script[k]) for k in range(len(script))):
             start_ms = int(words[i][1])
     if start_ms is None or start_ms < 500:
         return 0.0

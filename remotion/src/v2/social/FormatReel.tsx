@@ -1,4 +1,4 @@
-// Reels de formato propio: Último momento (UM) y Datos útiles (DU).
+// Reels de formato propio: Último momento (UM), Datos útiles (DU) y Efemérides (EF).
 //
 // Traslado FIEL de los prototipos aprobados en la mesa de formatos (UM-A4 y
 // DU-C4, ronda 4, 2026-11-14): mismos componentes, tamaños, colores,
@@ -33,7 +33,7 @@ const Item = z.object({ text: z.string(), at: z.number(), icon: z.string() });
 const Beat = z.object({
   from: z.number(),
   to: z.number(),
-  layout: z.enum(["hook", "mapchips", "stamps", "number", "check", "card", "outro"]),
+  layout: z.enum(["hook", "mapchips", "stamps", "number", "check", "card", "who", "efmap", "years", "calendar", "outro"]),
   card: z.enum(["fecha", "lista", "monto", "cifra", "texto", ""]),
   cap: z.enum(["title", "callout", "marker", "pill", "chunk", "pop", "none"]),
   capY: z.number(),
@@ -51,7 +51,7 @@ const Beat = z.object({
 });
 
 export const FormatReelSchema = z.object({
-  kind: z.enum(["um", "du"]),
+  kind: z.enum(["um", "du", "ef"]),
   badge: z.string(),
   accent: z.string(),
   media: z.object({ type: z.enum(["video", "photo"]), file: z.string(), width: z.number(), height: z.number() }),
@@ -62,6 +62,8 @@ export const FormatReelSchema = z.object({
   heads: z.array(z.string()),
   music: z.boolean(),
   beats: z.array(Beat),
+  // EF: fecha del hecho (día, mes abreviado, año) y apodo/nombre del protagonista.
+  ef: z.object({ day: z.string(), month: z.string(), year: z.string(), now: z.string() }).nullable(),
 });
 export type FormatReelProps = z.infer<typeof FormatReelSchema>;
 type BeatT = z.infer<typeof Beat>;
@@ -152,6 +154,10 @@ const VF: Record<BeatT["layout"], string> = {
   number: "blur(16px) brightness(.42)",
   check: "brightness(.62)",
   card: "blur(16px) brightness(.5) saturate(1.1)",
+  who: "brightness(.5)",
+  efmap: "blur(12px) brightness(.42)",
+  years: "brightness(.36)",
+  calendar: "blur(6px) brightness(.45)",
   outro: "blur(14px) brightness(.38)",
 };
 
@@ -567,6 +573,236 @@ const Card: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   );
 };
 
+// ── Efemérides (EF): archivo histórico ───────────────────────────────────
+// Misma estructura aprobada en EF-A4 (titular completo sobre el retrato,
+// apodo y cargos, mapa, contador de años, calendario con sello) con lo que se
+// sumó a UM/DU: titular con la palabra dicha marcada, subtítulos de cuatro
+// formas distintas, algo nuevo en pantalla a cada rato y más gráfica (retrato
+// de archivo con grano, medallón, mapa que se dibuja con mira, regla de años
+// que se llena y calendario que pasa las hojas).
+const BORDO = "#7A1426";
+// Filtro del retrato por tramo: el gancho luce la foto; el resto la baja para que lea el gráfico.
+const EF_VF: Record<BeatT["layout"], string> = { ...VF, hook: "brightness(1.18) contrast(1.05)", who: "brightness(.55)" };
+
+// Retrato continuo de punta a punta: blanco y negro, duotono navy/bordó, grano
+// de película que se mueve, rayas de proyector y viñeta. El filtro cambia por tramo.
+const ArchiveBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
+  const frame = useCurrentFrame();
+  const beat = p.beats.find((b) => frame >= b.from && frame < b.to) ?? p.beats[p.beats.length - 1];
+  const k = frame / Math.max(1, p.totalFrames);
+  const flicker = 1 + 0.035 * Math.sin(frame * 1.7) * Math.sin(frame * 0.53);
+  const scratch = frame % 11 < 2;
+  return (
+    <AbsoluteFill style={{ overflow: "hidden", background: "#000" }}>
+      <Img
+        src={staticFile(p.media.file)}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 30%", filter: `grayscale(1) contrast(1.15) ${EF_VF[beat.layout]} brightness(${flicker})`, transform: `scale(${1.08 + 0.16 * k}) translate(${-1.5 * k}%, ${-2 * k}%)` }}
+      />
+      <AbsoluteFill style={{ background: "linear-gradient(135deg,rgba(11,47,79,.55),rgba(110,15,26,.42))", mixBlendMode: "multiply", opacity: beat.layout === "hook" ? 0.55 : 1 }} />
+      <AbsoluteFill style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.07) 1px,transparent 1.4px)", backgroundSize: "7px 7px", backgroundPosition: `${(frame * 37) % 7}px ${(frame * 53) % 7}px` }} />
+      {scratch ? <div style={{ position: "absolute", left: (frame * 131) % 1080, top: 0, bottom: 0, width: 2, background: "rgba(255,255,255,.16)" }} /> : null}
+      <AbsoluteFill style={{ background: "radial-gradient(ellipse at 50% 45%,transparent 45%,rgba(0,0,0,.62))" }} />
+    </AbsoluteFill>
+  );
+};
+
+const EfHead: React.FC<{ p: FormatReelProps }> = ({ p }) => {
+  const frame = useCurrentFrame();
+  return (
+    <>
+      <div style={{ position: "absolute", left: 44, top: 120, display: "flex", alignItems: "center", ...wipeStyle(frame) }}>
+        <span style={{ background: "#fff", padding: "8px 16px 8px 8px", display: "flex", alignItems: "center", gap: 10, color: C.ink, fontWeight: 900, fontStretch: "72%", fontSize: 34 }}>
+          <Img src={staticFile("logo.png")} style={{ width: 48, height: 48, borderRadius: "50%" }} />
+          LA VOZ RIOJANA
+        </span>
+        <span style={{ background: p.accent, color: C.navy, fontWeight: 900, fontStretch: "72%", fontSize: 34, padding: "16px 20px" }}>UN DÍA COMO HOY</span>
+      </div>
+      {p.ef ? (
+        <div style={{ position: "absolute", right: 44, top: 108, width: 124, borderRadius: 16, overflow: "hidden", background: "#fff", color: C.ink, textAlign: "center", boxShadow: "0 10px 26px rgba(0,0,0,.45)", ...popStyle(frame - 6) }}>
+          <div style={{ background: C.red, color: "#fff", fontWeight: 900, fontStretch: "75%", fontSize: 28, letterSpacing: "0.12em", padding: "4px 0" }}>{p.ef.month}</div>
+          <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: 72, lineHeight: 1, padding: "2px 0 6px" }}>{p.ef.day}</div>
+        </div>
+      ) : null}
+    </>
+  );
+};
+
+const HookEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
+  const frame = useCurrentFrame();
+  const text = b.words.map((w) => w.t).join(" ").toUpperCase();
+  const box = fit({ text, maxWidth: 968, maxHeight: 560, min: 104, max: 160, weight: 900, lh: 0.96, stretch: "condensed", maxLines: 5, uppercase: true });
+  const r = prog(frame, 0.55);
+  const drift = prog(frame, 6, Easing.linear);
+  return (
+    <AbsoluteFill>
+      <AbsoluteFill style={{ background: "linear-gradient(rgba(10,13,18,.45),transparent 18%,transparent 40%,rgba(10,13,18,.94) 62%)" }} />
+      <EfHead p={p} />
+      {p.ef ? (
+        <div style={{ position: "absolute", left: 30, top: 620, fontWeight: 900, fontStretch: "62%", fontSize: 400, lineHeight: 0.8, color: "transparent", WebkitTextStroke: `5px ${p.accent}`, opacity: 0.7 * r, transform: `translate(${-40 * drift}px, ${(1 - r) * 70}px)` }}>
+          {p.ef.year}
+        </div>
+      ) : null}
+      <div style={{ position: "absolute", left: 56, right: 56, top: 960 }}>
+        <div style={{ width: 200, height: 18, background: p.accent, marginBottom: 30, ...wipeStyle(frame) }} />
+        <h2 style={{ margin: 0, fontWeight: 900, fontStretch: "72%", fontSize: box.fontSize, lineHeight: 0.96, textShadow: "0 6px 30px rgba(0,0,0,.55)", ...slamStyle(frame) }}>
+          <TitleWords words={b.words} from={0} to={b.words.length} abs={frame + b.from} acc={p.accent} upper />
+        </h2>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Quién era: medallón con el retrato y anillo que gira, apodo gigante, nombre y cargos.
+const WhoEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
+  const frame = useCurrentFrame();
+  const nick = fit({ text: b.value.toUpperCase(), maxWidth: 968, maxHeight: 200, min: 90, max: 180, weight: 900, lh: 0.9, stretch: "condensed", maxLines: 1, uppercase: true });
+  const nameTop = 790 + Math.round(nick.fontSize * 0.9) + 24;
+  return (
+    <AbsoluteFill>
+      <EfHead p={p} />
+      <div style={{ position: "absolute", left: 300, top: 270, width: 480, height: 480, ...popStyle(frame) }}>
+        <svg viewBox="0 0 480 480" style={{ position: "absolute", inset: 0, transform: `rotate(${frame * 0.6}deg)` }} aria-hidden>
+          <circle cx={240} cy={240} r={232} fill="none" stroke={p.accent} strokeWidth={8} strokeDasharray="18 14" />
+        </svg>
+        <div style={{ position: "absolute", inset: 26, borderRadius: "50%", overflow: "hidden", border: "8px solid #fff", boxShadow: "0 20px 50px rgba(0,0,0,.5)" }}>
+          <Img src={staticFile(p.media.file)} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 25%", filter: "grayscale(1) contrast(1.2) sepia(.25)" }} />
+        </div>
+      </div>
+      {b.value ? (
+        <div style={{ position: "absolute", left: 56, right: 56, top: 790, textAlign: "center", fontWeight: 900, fontStretch: "66%", fontSize: nick.fontSize, lineHeight: 0.9, color: p.accent, textShadow: "0 10px 30px rgba(0,0,0,.6)", ...slamStyle(frame - 4) }}>
+          {b.value.toUpperCase()}
+        </div>
+      ) : null}
+      {b.label ? (
+        <div style={{ position: "absolute", left: 0, right: 0, top: nameTop, display: "flex", justifyContent: "center" }}>
+          <span style={{ background: "#fff", color: C.navy, fontWeight: 900, fontStretch: "72%", fontSize: 58, padding: "12px 26px", ...wipeStyle(frame - 8) }}>{b.label.toUpperCase()}</span>
+        </div>
+      ) : null}
+      <div style={{ position: "absolute", left: 56, right: 56, top: nameTop + 120, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 18 }}>
+        {b.items.slice(0, 3).map((it, i) => {
+          const f = frame - (it.at - b.from);
+          return (
+            <span key={i} style={{ background: i % 2 ? C.navy : BORDO, color: "#fff", fontWeight: 900, fontStretch: "75%", fontSize: 50, padding: "12px 22px", border: i % 2 ? `4px solid ${p.accent}` : undefined, boxShadow: "0 12px 28px rgba(0,0,0,.35)", ...(f < 0 ? { opacity: 0 } : popStyle(f)) }}>
+              {it.text.toUpperCase()}
+            </span>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Dónde: mapa grande que se dibuja, mira que cruza al lugar, pulso y chips.
+const MapEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
+  const frame = useCurrentFrame();
+  const ping = ((frame / FORMAT_REEL_FPS) % 1.4) / 1.4;
+  const draw = prog(frame, 0.9);
+  const cross = prog(frame - 12, 0.5);
+  const pl = p.place;
+  const right = pl ? pl.x > 600 : false;
+  return (
+    <AbsoluteFill>
+      <EfHead p={p} />
+      {pl ? (
+        <div style={{ position: "absolute", left: 189, top: 230, width: 702, height: 820, ...popStyle(frame) }}>
+          <svg viewBox={`0 0 ${LA_RIOJA_VIEW.w} ${LA_RIOJA_VIEW.h}`} style={{ width: "100%", height: "100%", overflow: "visible" }} aria-hidden>
+            <path d={LA_RIOJA_PATH} pathLength={1} fill={`rgba(11,47,79,${0.6 * draw})`} stroke="#fff" strokeWidth={7} strokeDasharray={1} strokeDashoffset={1 - draw} />
+            <line x1={pl.x} y1={pl.y * (1 - cross)} x2={pl.x} y2={pl.y + (LA_RIOJA_VIEW.h - pl.y) * cross} stroke={p.accent} strokeWidth={4} strokeDasharray="14 10" opacity={0.75} />
+            <line x1={pl.x * (1 - cross)} y1={pl.y} x2={pl.x + (LA_RIOJA_VIEW.w - pl.x) * cross} y2={pl.y} stroke={p.accent} strokeWidth={4} strokeDasharray="14 10" opacity={0.75} />
+            {cross > 0.9 ? <circle cx={pl.x} cy={pl.y} r={34 * (0.6 + 2.2 * ping)} fill="none" stroke={p.accent} strokeWidth={10} opacity={0.9 * (1 - ping)} /> : null}
+            <circle cx={pl.x} cy={pl.y} r={28 * cross} fill={p.accent} stroke="#fff" strokeWidth={9} />
+            <text x={right ? pl.x - 52 : pl.x + 52} y={pl.y + 30} textAnchor={right ? "end" : "start"} fill="#fff" fontFamily={V2_FONT_SANS} fontWeight={900} fontStretch="72%" fontSize={110} opacity={cross} style={{ paintOrder: "stroke", stroke: C.ink, strokeWidth: 14 }}>
+              {pl.label.toUpperCase()}
+            </text>
+          </svg>
+        </div>
+      ) : null}
+      <div style={{ position: "absolute", left: 56, right: 56, top: pl ? 1090 : 600, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
+        {b.items.slice(0, 3).map((it, i) => {
+          const f = frame - (it.at - b.from);
+          return (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 10, background: i % 2 ? C.red : "#fff", color: i % 2 ? "#fff" : C.navy, fontWeight: 900, fontStretch: "72%", fontSize: pl ? 48 : 80, padding: "14px 22px", boxShadow: "0 12px 28px rgba(0,0,0,.35)", ...(f < 0 ? { opacity: 0 } : popStyle(f)) }}>
+              {i === 0 ? <Pin color={C.navy} size={pl ? 40 : 64} /> : null}
+              {it.text.toUpperCase()}
+            </span>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Cuántos años: regla de décadas que se llena del año del hecho al actual y contador gigante.
+const YearsEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
+  const frame = useCurrentFrame();
+  const valueAt = (b.items[0]?.at ?? b.from + 8) - b.from;
+  const y0 = Number(p.ef?.year ?? 0);
+  const y1 = Number(p.ef?.now ?? 0);
+  const n = Math.max(1, Math.floor((y1 - y0) / 10));
+  const fill = prog(frame - 4, 1.1, Easing.inOut(Easing.cubic));
+  const f = frame - Math.min(valueAt, 10);
+  const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
+  return (
+    <AbsoluteFill>
+      <EfHead p={p} />
+      {y0 && y1 ? (
+        <div style={{ position: "absolute", left: 90, right: 90, top: 330, height: 150, ...riseStyle(frame) }}>
+          <div style={{ position: "absolute", left: 0, top: 0, fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1 }}>{y0}</div>
+          <div style={{ position: "absolute", right: 0, top: 0, fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1, color: p.accent, opacity: fill > 0.95 ? 1 : 0.35 }}>{y1}</div>
+          <div style={{ position: "absolute", left: 0, right: 0, top: 100, height: 10, background: "rgba(255,255,255,.25)", borderRadius: 5 }} />
+          <div style={{ position: "absolute", left: 0, top: 100, height: 10, width: `${fill * 100}%`, background: `linear-gradient(90deg,#fff,${p.accent})`, borderRadius: 5 }} />
+          {Array.from({ length: n + 1 }).map((_, i) => (
+            <span key={i} style={{ position: "absolute", left: `${(i / n) * 100}%`, top: i % 5 === 0 ? 80 : 88, width: 4, height: i % 5 === 0 ? 50 : 34, marginLeft: -2, background: i / n <= fill ? "#fff" : "rgba(255,255,255,.25)" }} />
+          ))}
+          <span style={{ position: "absolute", left: `${fill * 100}%`, top: 89, width: 32, height: 32, marginLeft: -16, borderRadius: "50%", background: p.accent, boxShadow: "0 0 0 10px rgba(255,209,92,.3)" }} />
+        </div>
+      ) : null}
+      <div style={{ position: "absolute", left: 0, right: 0, top: 560, textAlign: "center", fontWeight: 900, fontStretch: "62%", fontSize: 400, lineHeight: 0.85, color: p.accent, textShadow: "0 18px 50px rgba(0,0,0,.5)", ...slamStyle(frame) }}>{shown}</div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 930, display: "flex", justifyContent: "center" }}>
+        <span style={{ background: "#fff", color: C.navy, fontWeight: 900, fontStretch: "70%", fontSize: 110, lineHeight: 1, padding: "8px 44px", borderRadius: 12, boxShadow: "0 14px 34px rgba(0,0,0,.4)", ...stampStyle(frame - Math.min(valueAt + 8, 20), -3) }}>
+          {(b.label || "años").toUpperCase()}
+        </span>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Por qué importa: hoja de calendario que cae y pasa los días hasta la fecha, sello y dato.
+const CalendarEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
+  const frame = useCurrentFrame();
+  const d = parseDate(b.value) ?? (p.ef ? { day: p.ef.day, month: p.ef.month } : null);
+  const target = Number(d?.day ?? 1);
+  const dropP = prog(frame, 0.45);
+  const flip = prog(frame - 6, 0.8, Easing.out(Easing.cubic));
+  const day = Math.max(1, Math.round(1 + (target - 1) * flip));
+  const sealAt = (b.items[0]?.at ?? b.from + 20) - b.from;
+  return (
+    <AbsoluteFill>
+      <EfHead p={p} />
+      <div style={{ position: "absolute", left: 310, top: 290, width: 460, transform: `translateY(${(1 - dropP) * -900}px)` }}>
+        <div style={{ position: "absolute", inset: 0, transform: "rotate(5deg) translate(16px,12px)", background: "#E9E2D0", borderRadius: 30, boxShadow: "0 20px 50px rgba(0,0,0,.4)" }} />
+        <div style={{ position: "relative", borderRadius: 30, overflow: "hidden", background: "#fff", color: C.ink, textAlign: "center", boxShadow: "0 24px 60px rgba(0,0,0,.5)" }}>
+          <div style={{ background: C.red, color: "#fff", fontWeight: 900, fontStretch: "75%", fontSize: 80, letterSpacing: "0.14em", padding: "16px 0" }}>{d?.month ?? ""}</div>
+          <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: 290, lineHeight: 1, padding: "6px 0 18px" }}>{day}</div>
+        </div>
+        {[120, 316].map((x) => <span key={x} style={{ position: "absolute", left: x, top: -18, width: 24, height: 52, borderRadius: 12, background: C.ink, border: "4px solid #fff" }} />)}
+      </div>
+      {b.items[0] ? (
+        <div style={{ position: "absolute", left: 100, right: 100, top: 860, ...stampStyle(frame - sealAt, -6) }}>
+          <div style={{ border: `14px solid ${p.accent}`, color: p.accent, textAlign: "center", padding: "22px 20px", background: "rgba(10,13,18,.65)", fontWeight: 900, fontStretch: "70%", fontSize: 104, lineHeight: 0.95 }}>
+            {b.items[0].text.toUpperCase()}
+          </div>
+        </div>
+      ) : null}
+      {b.detail ? (
+        <div style={{ position: "absolute", left: 0, right: 0, top: 1150, display: "flex", justifyContent: "center", ...riseStyle(frame - (b.detailAt - b.from)) }}>
+          <span style={{ background: C.navy, color: "#fff", fontFamily: MONO, fontWeight: 700, fontSize: 40, letterSpacing: "0.06em", padding: "12px 24px", border: `3px solid ${p.accent}` }}>{b.detail.toUpperCase()}</span>
+        </div>
+      ) : null}
+    </AbsoluteFill>
+  );
+};
+
 // ── Cierre ───────────────────────────────────────────────────────────────
 const ActButton: React.FC<{ i: number; label: string; icon: ((c: string) => React.ReactNode) | null; frame: number }> = ({ i, label, icon, frame }) => {
   const f = frame - Math.round(i * 0.16 * FORMAT_REEL_FPS);
@@ -707,14 +943,18 @@ const Captions: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
 };
 
 // ── Escena ───────────────────────────────────────────────────────────────
-const TRANSITION: Record<BeatT["layout"], Tr> = { hook: "flash", mapchips: "whip", stamps: "zoom", number: "up", check: "zoom", card: "up", outro: "zoom" };
+const TRANSITION: Record<BeatT["layout"], Tr> = { hook: "flash", mapchips: "whip", stamps: "zoom", number: "up", check: "zoom", card: "up", who: "whip", efmap: "zoom", years: "up", calendar: "flash", outro: "zoom" };
 
 const Scene: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   const frame = useCurrentFrame();
   const tr = sceneTransition(frame, TRANSITION[b.layout]);
   return (
     <AbsoluteFill style={tr}>
-      {b.layout === "hook" ? (p.kind === "um" ? <HookUM p={p} b={b} /> : <HookDU p={p} b={b} />) : null}
+      {b.layout === "hook" ? (p.kind === "um" ? <HookUM p={p} b={b} /> : p.kind === "ef" ? <HookEF p={p} b={b} /> : <HookDU p={p} b={b} />) : null}
+      {b.layout === "who" ? <WhoEF p={p} b={b} /> : null}
+      {b.layout === "efmap" ? <MapEF p={p} b={b} /> : null}
+      {b.layout === "years" ? <YearsEF p={p} b={b} /> : null}
+      {b.layout === "calendar" ? <CalendarEF p={p} b={b} /> : null}
       {b.layout === "mapchips" ? <MapChips p={p} b={b} /> : null}
       {b.layout === "stamps" ? <Stamps p={p} b={b} /> : null}
       {b.layout === "number" ? <NumberBeat p={p} b={b} /> : null}
@@ -737,6 +977,7 @@ export const FormatReel: React.FC<FormatReelProps> = (p) => {
   return (
     <AbsoluteFill style={{ fontFamily: V2_FONT_SANS, background: C.ink, color: "#fff", overflow: "hidden" }}>
       {p.kind === "um" ? <VideoBackdrop p={p} /> : null}
+      {p.kind === "ef" ? <ArchiveBackdrop p={p} /> : null}
       {p.beats.map((b, i) => (
         <Sequence key={i} from={b.from} durationInFrames={Math.max(1, b.to - b.from)}>
           <Scene p={p} b={b} />
@@ -762,6 +1003,7 @@ export const FORMAT_REEL_DEFAULTS: FormatReelProps = {
   totalFrames: 120,
   heads: [],
   music: false,
+  ef: null,
   beats: [
     { from: 0, to: 60, layout: "hook", card: "", cap: "title", capY: 0, words: [{ t: "¿Vas", s: 0, e: 300 }, { t: "a", s: 300, e: 400 }, { t: "estudiar?", s: 400, e: 900 }, { t: "Anotá", s: 1000, e: 1400 }, { t: "esto.", s: 1400, e: 1800 }], keys: [], ctaFrom: 3, items: [], value: "", unit: "", label: "", pill: "", detail: "", detailAt: 0, index: 0 },
     { from: 60, to: 120, layout: "outro", card: "", cap: "none", capY: 0, words: [], keys: [], ctaFrom: -1, items: [], value: "", unit: "", label: "", pill: "", detail: "", detailAt: 0, index: 0 },

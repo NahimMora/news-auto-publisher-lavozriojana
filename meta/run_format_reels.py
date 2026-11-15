@@ -1,4 +1,4 @@
-"""Etapa estructurada: Reels de formato propio (Último momento y Datos útiles).
+"""Etapa estructurada: Reels de formato propio (Último momento, Datos útiles y Efemérides).
 
 Ver ``utils/format_reels.py`` para los criterios. Cada nota se evalúa una sola
 vez por formato (queda en ``data/format_reels.json`` con su motivo); como
@@ -173,9 +173,58 @@ def run_du(state: dict) -> tuple[str, dict]:
     return "no_work", {"du": "sin candidatas"}
 
 
+def run_ef(state: dict) -> tuple[str, dict]:
+    """Efeméride del día desde la lista fija (una por día, ventana de las 9 h)."""
+    today = now_ar().date()
+    day = today.isoformat()
+    if fr.published_today("ef", state, day) >= fr._int("FORMAT_REELS_EF_MAX_PER_DAY", 1):
+        return "no_work", {"ef": "tope diario"}
+    try:
+        rows = fr.efemerides_for(today, fr.load_efemerides())
+    except (OSError, ValueError) as exc:
+        logger.error("Lista de efemérides ilegible: %s", exc)
+        return "error", {"ef": "lista_ilegible"}
+    items = state.get("items") or {}
+    for entry in rows:
+        key = f"{entry.get('id') or entry.get('fecha')}:{today.year}"
+        if f"ef:{key}" in items:
+            continue
+        blockers = fr.ef_blockers(entry)
+        if blockers:
+            fr.mark("ef", key, status="rejected", reason="; ".join(blockers), day=day, title=str(entry.get("gancho") or "")[:90])
+            continue
+        note = fr.Note(url=entry["fuente_url"], title="", category="", localities=[], published_at=0.0, source="lavozriojana")
+        cand = _candidate(note)
+        if not cand:
+            return "error", {"ef": "fuente_ilegible"}  # sin marca: se reintenta en el próximo ciclo de la ventana
+        plan, warnings = fr.validate_ef(entry, cand, today)
+        if not plan or warnings:
+            fr.mark("ef", key, status="rejected", reason="guion sin datos verificables", warnings=warnings[:5], day=day,
+                    title=str(entry.get("gancho") or "")[:90])
+            continue
+        work = fr.new_workdir("ef")
+        try:
+            dest = os.path.join(work, "foto.jpg")
+            size = nn.prepare_photo(entry["foto_url"], dest)
+            if not size or min(size) < 360 or max(size) < 640:
+                fr.mark("ef", key, status="rejected", reason=f"foto: {'chica ' + str(size) if size else 'no se pudo bajar'}", day=day)
+                continue
+            media = {"type": "photo", "file": dest, "width": size[0], "height": size[1], "credit": str(entry.get("foto_credito") or "")}
+            rendered = fr.render(plan, cand, media, work)
+            caption = fr.caption_for(plan, cand)
+            return "done", {"ef": fr.publish("ef", key, rendered, caption, title=plan.beats[0].text, section="cultura", locality=plan.place)}
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.error("Efeméride falló para %s: %s", key, exc)
+            fr.mark("ef", key, status="failed", reason=str(exc)[:200], day=day)
+            return "error", {"ef": "render_failed"}
+        finally:
+            fr.cleanup(work)
+    return "no_work", {"ef": "sin efeméride hoy"}
+
+
 def main() -> StageResult:
     started = time.monotonic()
-    kinds = [k for k in ("um", "du") if fr.enabled(k)]
+    kinds = [k for k in ("um", "du", "ef") if fr.enabled(k)]
     if not kinds:
         return StageResult(STAGE, StageStatus.NO_WORK, details={"disabled": True})
     if not deployment_plan().channel_enabled("instagram"):
@@ -198,8 +247,14 @@ def main() -> StageResult:
         status, info = run_du(state)
         statuses.append(status)
         details.update(info)
+        state = fr.load_state()
+    if "ef" in kinds and _in_window("FORMAT_REELS_EF_HOURS", "9-12"):
+        status, info = run_ef(state)
+        statuses.append(status)
+        details.update(info)
     published = sum(1 for v in details.values() if isinstance(v, dict) and v.get("ig") == "success")
-    failed = sum(1 for v in details.values() if (isinstance(v, dict) and v.get("ig") not in {"success"}) or v == "render_failed")
+    failed = sum(1 for v in details.values() if (isinstance(v, dict) and v.get("ig") not in {"success"})
+                 or v in {"render_failed", "lista_ilegible", "fuente_ilegible"})
     if not published and not failed:
         return StageResult(STAGE, StageStatus.NO_WORK, details=details, duration_seconds=time.monotonic() - started)
     status = StageStatus.SUCCESS if not failed else StageStatus.DEGRADED

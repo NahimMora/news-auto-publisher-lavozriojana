@@ -8,6 +8,12 @@
   concretos (al menos ``FORMAT_REELS_DU_MIN_CARDS`` tarjetas verificadas) y
   alto interés probable para el público riojano (puntaje de la IA ≥
   ``FORMAT_REELS_DU_MIN_INTEREST``).
+* **Efemérides (EF, "Un día como hoy")**: a las 9 h, sólo los días que figuran
+  en la lista fija ``config/efemerides_riojanas.json``, que revisa el
+  responsable. El guion NO lo escribe la IA: sale de la lista (aprobada a mano)
+  y se vuelve a controlar contra la nota fuente de lavozriojana.com; los años
+  se calculan. Sólo salen las entradas con ``aprobada`` y
+  ``foto_licencia_verificada`` en ``true``. Una por día.
 
 El guion lo escribe Gemini y se controla contra la nota (cifras, nombres y
 días que no figuran → se reintenta con esa devolución; nunca se relaja). La
@@ -22,7 +28,7 @@ Voz: ``FORMAT_REELS_TTS_MODEL`` (default ``gemini-3.8-flash-tts``: los modelos d
 se dan de baja el 2026-11-17).
 
 Interruptores (apagados por defecto): ``FORMAT_REELS_UM_ENABLED``,
-``FORMAT_REELS_DU_ENABLED``; ``FORMAT_REELS_FACEBOOK`` (default ``true``).
+``FORMAT_REELS_DU_ENABLED``, ``FORMAT_REELS_EF_ENABLED``; ``FORMAT_REELS_FACEBOOK`` (default ``true``).
 """
 from __future__ import annotations
 
@@ -46,9 +52,11 @@ logger = setup_logger("format_reels", "format_reels.log")
 
 FPS = 30
 COMPOSITION = "FormatReel"
-CLOSING = {"um": "Seguí a La Voz Riojana.", "du": "Compartilo y guardalo."}
-BADGE = {"um": "ÚLTIMO MOMENTO", "du": "DATO ÚTIL"}
-ACCENT = {"um": "#FF7A1A", "du": "#FFD15C"}
+CLOSING = {"um": "Seguí a La Voz Riojana.", "du": "Compartilo y guardalo.", "ef": "Seguí a La Voz Riojana."}
+BADGE = {"um": "ÚLTIMO MOMENTO", "du": "DATO ÚTIL", "ef": "UN DÍA COMO HOY"}
+ACCENT = {"um": "#FF7A1A", "du": "#FFD15C", "ef": "#FFD15C"}
+# Ritmo de la voz por formato (atempo de ffmpeg sobre la locución 3.x).
+TEMPO_DEFAULT = {"um": "1.0", "du": "1.0", "ef": "1.12"}
 DIRECTION = (
     "Sos el locutor de último momento de un medio de La Rioja, Argentina. Voz potente, enérgica y urgente, "
     "que atrape desde la primera palabra, como un flash informativo de radio. Ritmo rápido y decidido, sin atropellarte "
@@ -274,7 +282,7 @@ def is_riojan(cand: nn.Candidate) -> bool:
 # ── Guion ────────────────────────────────────────────────────────────────
 @dataclass
 class Beat:
-    layout: str          # hook | mapchips | stamps | number | check | card | outro
+    layout: str          # hook | mapchips | stamps | number | check | card | who | efmap | years | calendar | outro
     cap: str             # title | callout | marker | pill | chunk | pop | none
     cap_y: int
     text: str            # locución del tramo (lo que se dice)
@@ -297,6 +305,7 @@ class Plan:
     beats: list[Beat]
     place: str = ""
     interest: int = 0
+    ef: dict | None = None  # EF: {"day", "month", "year", "now"}
 
     @property
     def text(self) -> str:
@@ -506,6 +515,132 @@ def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], 
         warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 36 y 60")
     beats.append(Beat("outro", "none", 0, CLOSING["du"]))
     return (Plan("du", beats, interest=interest) if cards else None), warnings, True
+
+
+# ── Efemérides (lista fija revisada por el responsable) ──────────────────
+MONTHS_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+EF_LAYOUT = {"quien": ("who", "marker", 1350), "donde": ("efmap", "callout", 1390), "anios": ("years", "pill", 1260),
+             "fecha_hoy": ("calendar", "chunk", 1300)}
+
+
+def ef_list_path() -> str:
+    return os.getenv("FORMAT_REELS_EF_LIST") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config",
+                                                               "efemerides_riojanas.json")
+
+
+def load_efemerides(path: str | None = None) -> list[dict]:
+    """Entradas de la lista fija. Un archivo ilegible es un error (no una lista vacía)."""
+    path = path or ef_list_path()
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    rows = data.get("efemerides") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("la lista de efemérides no tiene la clave 'efemerides'")
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def ef_month_day(entry: dict) -> tuple[int, int] | None:
+    m = re.fullmatch(r"(\d{2})-(\d{2})", str(entry.get("fecha") or ""))
+    if not m or not (1 <= int(m.group(1)) <= 12 and 1 <= int(m.group(2)) <= 31):
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def efemerides_for(day, rows: list[dict]) -> list[dict]:
+    """Entradas de la fecha ``day`` (un ``date``)."""
+    return [r for r in rows if ef_month_day(r) == (day.month, day.day)]
+
+
+def ef_blockers(entry: dict) -> list[str]:
+    """Lo que falta para que una entrada pueda salir (revisión humana y foto)."""
+    out = []
+    if entry.get("aprobada") is not True:
+        out.append("la entrada no está aprobada")
+    if entry.get("foto_licencia_verificada") is not True:
+        out.append("la licencia de la foto no está verificada")
+    if not str(entry.get("foto_url") or "").startswith("https://"):
+        out.append("sin foto")
+    if not str(entry.get("fuente_url") or "").startswith("https://lavozriojana.com/"):
+        out.append("la fuente tiene que ser una nota de lavozriojana.com")
+    if not ef_month_day(entry) or not isinstance(entry.get("anio"), int):
+        out.append("fecha o año inválidos")
+    return out
+
+
+def validate_ef(entry: dict, cand: nn.Candidate, today) -> tuple[Plan | None, list[str]]:
+    """Plan de la efeméride. Todo lo que se dice y se lee se controla contra la
+    nota fuente; los años se calculan (no se copian de la nota)."""
+    warnings: list[str] = []
+    md = ef_month_day(entry)
+    year = entry.get("anio")
+    if not md or not isinstance(year, int) or not 0 < year < today.year:
+        return None, ["fecha o año inválidos"]
+    years = today.year - year
+    hook = _sentence(_clean(entry.get("gancho"), 160))
+    if not 4 <= _words(hook) <= 16:
+        warnings.append("gancho: tiene que tener de 4 a 16 palabras")
+    if str(year) not in hook:
+        warnings.append("gancho: tiene que nombrar el año del hecho")
+    beats = [Beat("hook", "title", 0, hook)]
+    warnings += _fact_check([hook], cand, "gancho")
+    place = _clean(entry.get("lugar"), 40)
+    for kind in ("quien", "donde", "anios", "fecha_hoy"):
+        t = entry.get(kind)
+        if not isinstance(t, dict):
+            if kind == "anios":
+                warnings.append("anios: falta el tramo de los años")
+            continue
+        layout, cap, cap_y = EF_LAYOUT[kind]
+        raw = _clean(t.get("locucion"), 200)
+        if kind == "anios":
+            if "{anios}" not in raw:
+                warnings.append("anios: la locución tiene que llevar {anios}")
+                continue
+            speech = _sentence(raw.replace("{anios}", str(years)))
+            beat = Beat(layout, cap, cap_y, speech, keys=_items(t.get("claves"), 30, 3), value=str(years), label="años",
+                        items=[(str(years), "")])
+            beats.append(beat)  # cifra calculada: no se controla contra la nota (la nota es de otro año)
+            continue
+        speech = _sentence(raw) if raw else ""
+        if not speech:
+            warnings.append(f"{kind}: falta la locución")
+            continue
+        beat = Beat(layout, cap, cap_y, speech, keys=_items(t.get("claves"), 30, 3))
+        screen: list[str] = []
+        if kind == "quien":
+            beat.value, beat.label = _clean(t.get("apodo"), 24), _clean(t.get("nombre"), 40)
+            beat.items = [(c, "") for c in _items(t.get("chips"), 26, 3)]
+            screen = [beat.value, beat.label, *[c for c, _ in beat.items]]
+        elif kind == "donde":
+            beat.items = [(c, "") for c in _items(t.get("chips"), 28, 3)]
+            if not beat.items:
+                warnings.append("donde: hace falta al menos un chip")
+            screen = [c for c, _ in beat.items]
+        else:  # fecha_hoy
+            beat.value = f"{md[1]} de {MONTHS_ES[md[0] - 1]}"
+            beat.detail = _clean(t.get("detalle"), 30)
+            sello = _clean(t.get("sello"), 24)
+            if not sello:
+                warnings.append("fecha_hoy: falta el sello")
+            beat.items = [(sello, "")] if sello else []
+            screen = [sello, beat.detail]
+        plain = [_plain(x) for x in screen if x]
+        warnings += _fact_check([speech, *plain], cand, kind)
+        warnings += _screen_check(plain, cand, kind)
+        beats.append(beat)
+    if len(beats) < 3:
+        warnings.append("hacen falta al menos dos tramos además del gancho")
+    spoken = sum(_words(b.text) for b in beats)
+    if not 24 <= spoken <= 60:
+        warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 24 y 60")
+    beats.append(Beat("outro", "none", 0, CLOSING["ef"]))
+    if place and nn._fold(place) not in nn._fold(f"{cand.title} {cand.body}"):
+        warnings.append(f"lugar: '{place}' no está en la nota")
+        place = ""
+    ef = {"day": str(md[1]), "month": MONTHS_ES[md[0] - 1][:3].upper(), "year": str(year), "now": str(today.year)}
+    return Plan("ef", beats, place=place, ef=ef), warnings
 
 
 def write_plan(kind: str, cand: nn.Candidate, *, completion=None, attempts: int = 4) -> tuple[Plan | None, list[str], bool]:
@@ -732,6 +867,19 @@ def strong_photo(path: str, size: tuple[int, int], *, policial: bool, checker=No
 
 
 # ── Render ───────────────────────────────────────────────────────────────
+def opening_gap(tokens: list, *, max_start_ms: int = 900, max_gap_ms: int = 1200) -> None:
+    """La voz 3.x a veces lee en voz alta la etiqueta de estilo antes del texto.
+    Si después del recorte queda un arranque tardío o un hueco entre las
+    primeras palabras, la locución no sirve: ``RuntimeError`` (no se publica)."""
+    if not tokens:
+        return
+    if tokens[0].start_ms > max_start_ms:
+        raise RuntimeError(f"la locución arranca a los {tokens[0].start_ms} ms: texto de más al comienzo")
+    for a, b in zip(tokens[:4], tokens[1:5]):
+        if b.start_ms - a.end_ms > max_gap_ms:
+            raise RuntimeError(f"hueco de {b.start_ms - a.end_ms} ms al comienzo de la locución: la voz leyó texto de más")
+
+
 @dataclass
 class Rendered:
     video: str
@@ -750,11 +898,13 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     public = os.path.join(REMOTION_DIR, "public")
     rel = os.path.relpath(work, public).replace("\\", "/")
     wav = os.path.join(work, "voz.wav")
-    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=os.getenv("FORMAT_REELS_TEMPO", "1.0"), voice=voice(),
+    tempo = os.getenv(f"FORMAT_REELS_{plan.kind.upper()}_TEMPO") or os.getenv("FORMAT_REELS_TEMPO") or TEMPO_DEFAULT.get(plan.kind, "1.0")
+    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=tempo, voice=voice(),
                            model=os.getenv("FORMAT_REELS_TTS_MODEL", "gemini-3.8-flash-tts"))
     alignment = align_clip(wav, plan.text, int(seconds * 1000))
     if not alignment.ok:
         raise RuntimeError(f"la voz no alinea con el guion: {alignment.errors[:2]}")
+    opening_gap(alignment.tokens)
     beats, total = timeline(plan, alignment.tokens, int(seconds * 1000))
     place = locate(plan.place) if plan.place else None
     props = {
@@ -763,7 +913,7 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
         "credit": media.get("credit", ""),
         "place": {"label": place.get("label") or plan.place, "x": float(place["x"]), "y": float(place["y"])} if place and "x" in place else None,
         "voiceFile": f"{rel}/voz.wav", "totalFrames": total,
-        "heads": [b.head for b in plan.beats if b.layout == "card"], "music": True, "beats": beats,
+        "heads": [b.head for b in plan.beats if b.layout == "card"], "music": True, "beats": beats, "ef": plan.ef,
     }
     props_path = os.path.join(work, "props.json")
     with open(props_path, "w", encoding="utf-8") as fh:
@@ -801,6 +951,10 @@ def hashtag_place(place: str) -> str:
 
 def caption_for(plan: Plan, cand: nn.Candidate) -> str:
     hook = plan.beats[0].text.rstrip(".")
+    if plan.kind == "ef":
+        body = " ".join(b.text for b in plan.beats[1:-1])
+        tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#UnDíaComoHoy", "#HistoriaRiojana", "#LaVozRiojana") if t)
+        return f"📅 UN DÍA COMO HOY | {plan.beats[0].text}\n\n{body}\n\n{tags}"[:2200]
     if plan.kind == "um":
         body = " ".join(b.text for b in plan.beats[1:-1])
         tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#ÚltimoMomento", "#LaVozRiojana") if t)

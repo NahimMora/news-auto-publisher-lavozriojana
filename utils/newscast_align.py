@@ -309,7 +309,7 @@ def _asr_words(wav: str, hint: str) -> list[tuple[str, int, int, float]]:
             args += ["--prompt", hint[:200]]
         subprocess.run(args, check=True, capture_output=True, timeout=600)
         with open(base + ".json", encoding="utf-8", errors="replace") as fh:
-            data = json.load(fh)
+            data = json.loads(fh.read(), strict=False)  # tolera caracteres de control de tokens partidos
     words = []
     for seg in data.get("transcription") or []:
         text = str(seg.get("text") or "").strip()

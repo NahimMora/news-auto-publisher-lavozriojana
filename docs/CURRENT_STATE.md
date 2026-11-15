@@ -1,7 +1,17 @@
 # Estado actual
 
-Última actualización: 2026-11-14 (fuentes oficiales y fechas en la web; el
-resto del documento describe el estado previo y sigue vigente).
+Última actualización: 2026-11-15 (Reel "Un día como hoy"; el resto del
+documento describe el estado previo y sigue vigente).
+
+## Reel de efemérides "Un día como hoy" (EF, 2026-11-15)
+
+Misma etapa `meta/run_format_reels.py`, interruptor `FORMAT_REELS_EF_ENABLED`,
+ventana `FORMAT_REELS_EF_HOURS` (9–12 h), una por día. Sale sólo si el día está
+en `config/efemerides_riojanas.json` con `aprobada` y `foto_licencia_verificada`
+en `true` (hoy la única entrada, el Chacho, tiene la licencia sin verificar: no
+sale hasta que el responsable la marque). Guion de la lista (no de la IA),
+controlado contra la nota fuente; años calculados. Estado en
+`data/format_reels.json` con clave `ef:<id>:<año>`.
 
 ## Reels propios de Último momento y Datos útiles (2026-11-14)
 

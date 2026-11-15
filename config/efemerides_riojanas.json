@@ -1,0 +1,45 @@
+{
+  "_instrucciones": [
+    "Lista fija del Reel 'Un día como hoy' (EF). Sale a las 9 h del día indicado en 'fecha' (MM-DD), una por día.",
+    "Sólo sale una entrada con \"aprobada\": true y \"foto_licencia_verificada\": true, revisadas a mano por el responsable.",
+    "fuente_url: nota de lavozriojana.com con los datos. Todo lo que se dice y se lee (gancho, locuciones, chips, apodo, nombre, sello, detalle) se controla contra esa nota: si algo no figura, no sale.",
+    "anios.locucion lleva {anios}: los años se calculan con el año en curso (nunca se copian de la nota).",
+    "No inventar datos, armas, personas ni hechos que no estén en la nota fuente."
+  ],
+  "efemerides": [
+    {
+      "id": "chacho-penaloza",
+      "fecha": "11-12",
+      "anio": 1863,
+      "aprobada": true,
+      "foto_licencia_verificada": false,
+      "fuente_url": "https://lavozriojana.com/noticias/conmemoran-163-anos-del-asesinato-del-chacho-penaloza",
+      "foto_url": "https://media.lavozriojana.com/noticias/2026/11/83e6b995830f18b0984e.webp",
+      "foto_credito": "",
+      "lugar": "Olta",
+      "gancho": "Un 12 de noviembre de 1863, en Olta, asesinaban al Chacho Peñaloza.",
+      "quien": {
+        "locucion": "General federal, líder de las montoneras de los Llanos.",
+        "apodo": "«El Chacho»",
+        "nombre": "Ángel Vicente Peñaloza",
+        "chips": ["General federal", "Líder de los Llanos"],
+        "claves": ["general", "montoneras", "Llanos"]
+      },
+      "donde": {
+        "locucion": "Lo capturaron en Olta y, tras entregar las armas, lo asesinaron.",
+        "chips": ["Capturado en Olta", "Tras entregar las armas"],
+        "claves": ["capturaron", "armas", "asesinaron"]
+      },
+      "anios": {
+        "locucion": "Hoy se cumplen {anios} años.",
+        "claves": ["cumplen", "años"]
+      },
+      "fecha_hoy": {
+        "locucion": "Cada 12 de noviembre es feriado provincial.",
+        "sello": "Feriado provincial",
+        "detalle": "Ley 10.298",
+        "claves": ["feriado", "provincial"]
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""Reels de formato propio (Último momento y Datos útiles): sin red ni IA reales."""
+"""Reels de formato propio (Último momento, Datos útiles y Efemérides): sin red ni IA reales."""
 from __future__ import annotations
 
 import json
@@ -231,6 +231,147 @@ class StageTests(unittest.TestCase):
             self.assertEqual(state["items"][f"du:{note.url}"]["status"], "rejected")
             self.assertEqual(stage.run_du(state)[0], "no_work")
         self.assertEqual(plan.call_count, 1)
+
+
+EF_BODY = (
+    "El 12 de noviembre de 1863, el Chacho Peñaloza fue capturado en Olta y, tras entregar las armas, fue asesinado. "
+    "El general Ángel Vicente Peñaloza lideró las montoneras federales en los Llanos. "
+    "La fecha es feriado provincial por la Ley 10.298."
+)
+EF_ENTRY = {
+    "id": "chacho", "fecha": "11-12", "anio": 1863, "aprobada": True, "foto_licencia_verificada": True,
+    "fuente_url": "https://lavozriojana.com/noticias/chacho", "foto_url": "https://media.lavozriojana.com/x.webp", "lugar": "Olta",
+    "gancho": "Un 12 de noviembre de 1863, en Olta, asesinaban al Chacho Peñaloza.",
+    "quien": {"locucion": "General federal, líder de las montoneras de los Llanos.", "apodo": "El Chacho", "nombre": "Ángel Vicente Peñaloza",
+              "chips": ["General federal", "Líder de los Llanos"]},
+    "donde": {"locucion": "Lo capturaron en Olta y, tras entregar las armas, lo asesinaron.", "chips": ["Capturado en Olta"]},
+    "anios": {"locucion": "Hoy se cumplen {anios} años."},
+    "fecha_hoy": {"locucion": "Cada 12 de noviembre es feriado provincial.", "sello": "Feriado provincial", "detalle": "Ley 10.298"},
+}
+
+
+class EfemeridesTests(unittest.TestCase):
+    def ef_cand(self):
+        return cand(title="163 años del asesinato del Chacho Peñaloza", body=EF_BODY)
+
+    def test_valid_plan_computes_years(self):
+        import datetime
+
+        plan, warnings = fr.validate_ef(EF_ENTRY, self.ef_cand(), datetime.date(2027, 11, 12))
+        self.assertEqual(warnings, [])
+        self.assertEqual([b.layout for b in plan.beats], ["hook", "who", "efmap", "years", "calendar", "outro"])
+        years = plan.beats[3]
+        self.assertEqual((years.text, years.value), ("Hoy se cumplen 164 años.", "164"))
+        self.assertEqual(plan.beats[4].value, "12 de noviembre")
+        self.assertEqual(plan.ef, {"day": "12", "month": "NOV", "year": "1863", "now": "2027"})
+        self.assertEqual(plan.place, "Olta")
+        self.assertIn("#UnDíaComoHoy", fr.caption_for(plan, self.ef_cand()))
+
+    def test_invented_screen_text_or_name_is_rejected(self):
+        import copy
+        import datetime
+
+        entry = copy.deepcopy(EF_ENTRY)
+        entry["quien"]["chips"] = ["Caudillo federal"]
+        entry["donde"]["locucion"] = "Lo capturó el coronel Pablo Irrazábal en Olta."
+        _plan, warnings = fr.validate_ef(entry, self.ef_cand(), datetime.date(2027, 11, 12))
+        self.assertTrue(any("caudillo" in w for w in warnings), warnings)
+        self.assertTrue(any("Pablo Irrazábal" in w for w in warnings), warnings)
+
+    def test_blockers_and_dates(self):
+        import datetime
+
+        self.assertEqual(fr.ef_blockers(EF_ENTRY), [])
+        pending = dict(EF_ENTRY, foto_licencia_verificada=False, aprobada=False)
+        self.assertEqual(len(fr.ef_blockers(pending)), 2)
+        self.assertTrue(fr.ef_blockers(dict(EF_ENTRY, fuente_url="https://otro.com/x")))
+        rows = [EF_ENTRY, dict(EF_ENTRY, id="otro", fecha="03-01")]
+        self.assertEqual([r["id"] for r in fr.efemerides_for(datetime.date(2027, 11, 12), rows)], ["chacho"])
+
+    def test_repo_list_is_valid(self):
+        rows = fr.load_efemerides(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "efemerides_riojanas.json"))
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIsNotNone(fr.ef_month_day(row), row.get("id"))
+            self.assertIn("{anios}", row["anios"]["locucion"])
+
+    def test_corrupt_list_fails(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
+            fh.write("{roto")
+        self.addCleanup(os.remove, fh.name)
+        with self.assertRaises(ValueError):
+            fr.load_efemerides(fh.name)
+
+
+class EfStageTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"LVR_DATA_DIR": self.tmp.name, "LVR_LOGS_DIR": self.tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_unapproved_entry_is_recorded_once_without_fetching(self):
+        from meta import run_format_reels as stage
+
+        entry = dict(EF_ENTRY, foto_licencia_verificada=False)
+        with mock.patch.object(fr, "load_efemerides", return_value=[entry]), \
+                mock.patch.object(fr, "efemerides_for", return_value=[entry]), \
+                mock.patch.object(stage, "_candidate") as fetch:
+            self.assertEqual(stage.run_ef({})[0], "no_work")
+            state = fr.load_state()
+            key = f"ef:chacho:{fr.now_ar().year}"
+            self.assertEqual(state["items"][key]["status"], "rejected")
+            self.assertIn("licencia", state["items"][key]["reason"])
+            self.assertEqual(stage.run_ef(state)[0], "no_work")
+        fetch.assert_not_called()
+
+    def test_unreadable_source_is_retried_later(self):
+        from meta import run_format_reels as stage
+
+        with mock.patch.object(fr, "load_efemerides", return_value=[EF_ENTRY]), \
+                mock.patch.object(fr, "efemerides_for", return_value=[EF_ENTRY]), \
+                mock.patch.object(stage, "_candidate", return_value=None):
+            self.assertEqual(stage.run_ef({}), ("error", {"ef": "fuente_ilegible"}))
+        self.assertEqual(fr.load_state(), {})
+
+    def test_corrupt_list_is_an_error(self):
+        from meta import run_format_reels as stage
+
+        with mock.patch.object(fr, "load_efemerides", side_effect=ValueError("roto")), mock.patch.object(stage, "logger"):
+            self.assertEqual(stage.run_ef({}), ("error", {"ef": "lista_ilegible"}))
+
+
+class OpeningGapTests(unittest.TestCase):
+    def test_late_start_or_gap_rejects_voice(self):
+        ok = [Tok("Un", 0, 200), Tok("12", 220, 500), Tok("de", 520, 600)]
+        fr.opening_gap(ok)
+        with self.assertRaises(RuntimeError):
+            fr.opening_gap([Tok("Un", 0, 260), Tok("12", 3240, 3360), Tok("de", 3360, 3480)])
+        with self.assertRaises(RuntimeError):
+            fr.opening_gap([Tok("Un", 2900, 3100), Tok("12", 3200, 3300)])
+
+    def test_trim_matches_numbers_heard_as_words(self):
+        words = [("Un", 0, 260, 0.9), ("doce", 260, 390, 0.9), ("de", 390, 520, 0.9), ("noroeste", 520, 1030, 0.9),
+                 ("urgente", 2490, 2900, 0.9), ("Un", 3000, 3240, 0.9), ("doce", 3240, 3360, 0.9), ("de", 3360, 3480, 0.9),
+                 ("noviembre", 3480, 4040, 0.9)] + [(f"w{i}", 4100 + i * 300, 4300 + i * 300, 0.9) for i in range(20)]
+        text = "Un 12 de noviembre " + " ".join(f"w{i}" for i in range(20))
+        with mock.patch("utils.nightly_newscast.subprocess.run"), mock.patch("utils.nightly_newscast.os.replace"):
+            cut = nn.trim_spoken_preamble("x.wav", text, asr=lambda wav, hint: words)
+        self.assertAlmostEqual(cut, 2.88, places=2)
+
+    def test_trim_retries_broken_whisper_json(self):
+        calls = []
+
+        def asr(wav, hint):
+            calls.append(1)
+            if len(calls) == 1:
+                raise json.JSONDecodeError("roto", "", 0)
+            return [("Controlaron", 100, 400, 0.9), ("un", 400, 500, 0.9), ("incendio", 500, 900, 0.9)]
+
+        with mock.patch("utils.nightly_newscast.subprocess.run"):
+            self.assertEqual(nn.trim_spoken_preamble("x.wav", "Controlaron un incendio en ATUR.", asr=asr), 0.0)
+        self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

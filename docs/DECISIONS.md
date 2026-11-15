@@ -3097,3 +3097,30 @@ dicho antes de la primera palabra del texto. El noticiero sigue con
 **Evidencia**: `tests/test_format_reels.py`; renders reales de UM (ATUR, video
 de Fénix) y DU (Rioja Bus).
 **Rollback**: `FORMAT_REELS_UM_ENABLED=false` / `FORMAT_REELS_DU_ENABLED=false`.
+
+## 2026-11-15 — Reel "Un día como hoy" (EF) y recorte de preámbulo con cifras
+
+**Contexto**: el responsable vio en la mesa que UM y DU ya tenían voz más rápida,
+subtítulos integrados y más gráfica, y que Efemérides seguía con el prototipo
+anterior (EF-A4, voz 2.5, 21 s). Criterio de la ronda 5: EF a las 9 h, sólo días
+con fecha riojana, desde una lista fija que revisa él.
+**Decisión**: `FormatReel` gana `kind: "ef"` con las tomas aprobadas de EF-A4
+(titular completo sobre el retrato con la palabra dicha marcada, apodo/nombre y
+cargos con medallón, mapa que se dibuja con mira, regla de décadas + contador de
+años, calendario que pasa las hojas + sello) sobre un retrato de archivo
+continuo (duotono, grano, viñeta). Subtítulos marker/callout/pill/chunk, voz
+`gemini-3.8-flash-tts` con `FORMAT_REELS_EF_TEMPO=1.12` (≈18,6 s en vez de 21).
+El guion NO lo escribe la IA: sale de `config/efemerides_riojanas.json`, se
+controla contra la nota fuente de lavozriojana.com (mismos controles de UM/DU)
+y los años se calculan con el año en curso. Sin `aprobada` y
+`foto_licencia_verificada` en `true` no sale; la entrada queda rechazada en el
+estado con el motivo y no se vuelve a evaluar ese año.
+**Voz 3.x**: el recorte de preámbulo buscaba las primeras palabras literales y
+whisper oye las cifras en letras ("12" → "doce"): no lo ubicaba y la etiqueta de
+estilo quedaba leída al comienzo. Ahora las cifras valen como comodín, un JSON
+roto de whisper.cpp se reintenta (y se lee con `strict=False`), y
+`format_reels.opening_gap` rechaza la locución (no se publica) si arranca tarde
+o tiene un hueco entre las primeras palabras. Vale para UM, DU y EF.
+**Evidencia**: `tests/test_format_reels.py` (EF, recorte con cifras, hueco
+inicial); render real del Chacho Peñaloza sin publicar.
+**Rollback**: `FORMAT_REELS_EF_ENABLED=false`.
