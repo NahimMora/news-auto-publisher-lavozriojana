@@ -3124,3 +3124,27 @@ o tiene un hueco entre las primeras palabras. Vale para UM, DU y EF.
 **Evidencia**: `tests/test_format_reels.py` (EF, recorte con cifras, hueco
 inicial); render real del Chacho Peñaloza sin publicar.
 **Rollback**: `FORMAT_REELS_EF_ENABLED=false`.
+
+## 2026-11-15 — Efemérides automáticas desde Wikipedia (EF)
+
+**Contexto**: con la lista fija sólo había una fecha (el Chacho). El responsable
+pidió ampliar a efemérides más generales "sin dejar de ser de un medio de
+comunicación", desde un lugar fijo scrapeable, y que salgan automáticas. Sobre
+las fechas de noviembre eligió: sí La Rioja (Facundo Quiroga y todo lo riojano),
+ARA San Juan, Día de la Soberanía y 25N; quizá Día del Deportista y de la
+Música; no fundaciones de otras ciudades (Santa Fe, La Plata) ni Lola Mora.
+**Decisión**: fuente fija = página "<día> de <mes>" de Wikipedia en español (API
+`parse`/`query`): acontecimientos argentinos, natalicios y muertes sólo de
+riojanos (por categorías del artículo), celebraciones de Argentina y de la ONU.
+La IA sólo elige (hasta 3, con ese criterio) y redacta desde el texto del
+artículo enlazado + la línea del día + las conmemoraciones del mismo tema (p.
+ej. la ley del Día del ARA San Juan). Todo pasa por `validate_ef` (cifras con
+números: "cuarenta y cuatro" se leía como 40). Foto: imagen principal del
+artículo en Commons, sólo dominio público, CC0, CC BY o CC BY-SA (sin NC/ND,
+verificado por `extmetadata`), y la IA confirma que muestra el hecho; crédito y
+licencia en el posteo. La lista fija sigue teniendo prioridad. Voz EF con
+dirección propia (narrador firme y cálido, sobrio en tragedias). Costo estimado
+≈ USD 0,01 por video (elección + guion con flash-lite y ~20 s de TTS 3.8).
+**Evidencia**: `tests/test_efemerides_auto.py`; pruebas reales sin publicar del
+15/11 (ARA San Juan), 20/11 (Vuelta de Obligado) y 27/11 (Facundo Quiroga).
+**Rollback**: `FORMAT_REELS_EF_AUTO=false` (vuelve a la lista fija).

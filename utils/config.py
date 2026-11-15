@@ -721,6 +721,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "FORMAT_REELS_EF_MAX_PER_DAY",
                 "FORMAT_REELS_EF_TEMPO",
                 "FORMAT_REELS_EF_LIST",
+                "FORMAT_REELS_EF_AUTO",
                 "FORMAT_REELS_FACEBOOK",
                 "FORMAT_REELS_VOICE",
                 "FORMAT_REELS_TTS_MODEL",

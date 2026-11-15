@@ -202,24 +202,62 @@ def run_ef(state: dict) -> tuple[str, dict]:
             fr.mark("ef", key, status="rejected", reason="guion sin datos verificables", warnings=warnings[:5], day=day,
                     title=str(entry.get("gancho") or "")[:90])
             continue
-        work = fr.new_workdir("ef")
-        try:
-            dest = os.path.join(work, "foto.jpg")
-            size = nn.prepare_photo(entry["foto_url"], dest)
-            if not size or min(size) < 360 or max(size) < 640:
-                fr.mark("ef", key, status="rejected", reason=f"foto: {'chica ' + str(size) if size else 'no se pudo bajar'}", day=day)
-                continue
-            media = {"type": "photo", "file": dest, "width": size[0], "height": size[1], "credit": str(entry.get("foto_credito") or "")}
-            rendered = fr.render(plan, cand, media, work)
-            caption = fr.caption_for(plan, cand)
-            return "done", {"ef": fr.publish("ef", key, rendered, caption, title=plan.beats[0].text, section="cultura", locality=plan.place)}
-        except (RuntimeError, ValueError, OSError) as exc:
-            logger.error("Efeméride falló para %s: %s", key, exc)
-            fr.mark("ef", key, status="failed", reason=str(exc)[:200], day=day)
-            return "error", {"ef": "render_failed"}
-        finally:
-            fr.cleanup(work)
+        plan.credit = str(entry.get("foto_credito") or "")
+        result = _render_ef(key, plan, cand, entry["foto_url"], day, min_side=640)
+        if result is None:
+            continue
+        return result
+    if fr._flag("FORMAT_REELS_EF_AUTO"):
+        return run_ef_auto(state, today)
     return "no_work", {"ef": "sin efeméride hoy"}
+
+
+def _render_ef(key: str, plan: fr.Plan, cand: nn.Candidate, photo_url: str, day: str, *, min_side: int) -> tuple[str, dict] | None:
+    """Foto, render y publicación de una efeméride. ``None`` si la foto no sirve (queda marcada)."""
+    work = fr.new_workdir("ef")
+    try:
+        dest = os.path.join(work, "foto.jpg")
+        size = nn.prepare_photo(photo_url, dest)
+        if not size or min(size) < 360 or max(size) < min_side:
+            fr.mark("ef", key, status="rejected", reason=f"foto: {'chica ' + str(size) if size else 'no se pudo bajar'}", day=day)
+            return None
+        media = {"type": "photo", "file": dest, "width": size[0], "height": size[1]}
+        rendered = fr.render(plan, cand, media, work)
+        caption = fr.caption_for(plan, cand)
+        return "done", {"ef": fr.publish("ef", key, rendered, caption, title=plan.beats[0].text, section="cultura", locality=plan.place)}
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.error("Efeméride falló para %s: %s", key, exc)
+        fr.mark("ef", key, status="failed", reason=str(exc)[:200], day=day)
+        return "error", {"ef": "render_failed"}
+    finally:
+        fr.cleanup(work)
+
+
+def run_ef_auto(state: dict, today) -> tuple[str, dict]:
+    """Efeméride automática desde la página de la fecha en Wikipedia (una por día)."""
+    from utils import efemerides_auto as ea
+
+    day = today.isoformat()
+    key = f"auto:{day}"
+    if f"ef:{key}" in (state.get("items") or {}):
+        return "no_work", {"ef": "automática ya evaluada hoy"}
+    try:
+        auto = ea.prepare(today)
+    except ea.NoEfemeride as exc:
+        fr.mark("ef", key, status="rejected", reason=str(exc)[:200], day=day)
+        return "no_work", {"ef": "sin efeméride automática"}
+    except Exception as exc:  # noqa: BLE001 — red, Wikipedia o IA: sin marca, se reintenta en el próximo ciclo
+        logger.error("Efeméride automática: falló la preparación: %s: %s", type(exc).__name__, exc)
+        return "error", {"ef": "fuente_ilegible"}
+    plan, warnings = fr.validate_ef(auto.entry, auto.cand, today)
+    if not plan or warnings:
+        fr.mark("ef", key, status="rejected", reason="guion sin datos verificables", warnings=warnings[:5], day=day)
+        return "no_work", {"ef": "sin efeméride automática"}
+    plan.scope, plan.credit = auto.scope, auto.photo.credit
+    fr.mark("ef", key, status="selected", day=day, title=plan.beats[0].text[:90], fuente=auto.article_url, foto=auto.photo.file_page,
+            alcance=auto.scope)
+    result = _render_ef(key, plan, auto.cand, auto.photo.url, day, min_side=560)
+    return result or ("no_work", {"ef": "foto inservible"})
 
 
 def main() -> StageResult:

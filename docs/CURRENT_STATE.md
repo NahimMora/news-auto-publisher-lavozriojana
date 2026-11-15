@@ -13,6 +13,15 @@ sale hasta que el responsable la marque). Guion de la lista (no de la IA),
 controlado contra la nota fuente; años calculados. Estado en
 `data/format_reels.json` con clave `ef:<id>:<año>`.
 
+Efeméride automática (`FORMAT_REELS_EF_AUTO`, desde el 2026-11-15): si la lista
+no tiene nada para el día, `utils/efemerides_auto.py` lee la página de la fecha
+en Wikipedia en español, la IA elige con el criterio del responsable (La Rioja >
+fechas patrias y memoria > jornadas de servicio > cultura popular; nunca
+fundaciones de otras ciudades, natalicios no riojanos, crímenes ni fechas
+partidarias) y redacta desde el artículo; el guion pasa por `validate_ef`. Foto
+de Commons sólo con licencia libre verificada por API y pertinente; crédito en
+el posteo. Clave de estado `ef:auto:<fecha>`.
+
 ## Reels propios de Último momento y Datos útiles (2026-11-14)
 
 `meta/run_format_reels.py`, interruptores `FORMAT_REELS_UM_ENABLED` y

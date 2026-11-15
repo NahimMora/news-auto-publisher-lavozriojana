@@ -13,7 +13,11 @@
   responsable. El guion NO lo escribe la IA: sale de la lista (aprobada a mano)
   y se vuelve a controlar contra la nota fuente de lavozriojana.com; los años
   se calculan. Sólo salen las entradas con ``aprobada`` y
-  ``foto_licencia_verificada`` en ``true``. Una por día.
+  ``foto_licencia_verificada`` en ``true``. Una por día. Si la lista no tiene
+  nada para el día y ``FORMAT_REELS_EF_AUTO`` está encendido, la efeméride sale
+  de la página de la fecha en Wikipedia (``utils/efemerides_auto.py``): la IA
+  elige con el criterio editorial y redacta desde el artículo, y el guion pasa
+  por el mismo control contra la fuente; la foto, sólo con licencia libre.
 
 El guion lo escribe Gemini y se controla contra la nota (cifras, nombres y
 días que no figuran → se reintenta con esa devolución; nunca se relaja). La
@@ -64,6 +68,13 @@ DIRECTION = (
     "natural: seseo, voseo, la 'll' y la 'y' como una 'ye' suave, nunca la 'sh' porteña. Golpeá la primera frase y "
     "remarcá cifras, lugares y lo que pasó. Nada de tono solemne, cansino ni de asistente virtual. Leé exactamente este "
     "texto, sin agregar, quitar ni cambiar palabras:\n\n"
+)
+EF_DIRECTION = (
+    "Sos el locutor de efemérides de un medio de La Rioja, Argentina. Voz firme, clara y cálida, de narrador de historia "
+    "que atrapa desde la primera palabra. Ritmo ágil, sin atropellarte ni comerte sílabas, con pausas mínimas entre frases. "
+    "Si el hecho es una tragedia, tono respetuoso y sobrio, sin dramatizar. Español argentino con tonada riojana natural: "
+    "seseo, voseo, la 'll' y la 'y' como una 'ye' suave, nunca la 'sh' porteña. Remarcá fechas, años, nombres y lugares. "
+    "Leé exactamente este texto, sin agregar, quitar ni cambiar palabras:\n\n"
 )
 NO_INVENT = (
     "Usá SOLO datos que estén escritos en la nota: no inventes cifras, fechas, días, horarios, lugares, personas, "
@@ -306,6 +317,8 @@ class Plan:
     place: str = ""
     interest: int = 0
     ef: dict | None = None  # EF: {"day", "month", "year", "now"}
+    scope: str = "riojana"  # EF: riojana | nacional | internacional (cambia las etiquetas del posteo)
+    credit: str = ""        # EF: crédito de la foto (licencia libre), va en el posteo
 
     @property
     def text(self) -> str:
@@ -899,7 +912,7 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     rel = os.path.relpath(work, public).replace("\\", "/")
     wav = os.path.join(work, "voz.wav")
     tempo = os.getenv(f"FORMAT_REELS_{plan.kind.upper()}_TEMPO") or os.getenv("FORMAT_REELS_TEMPO") or TEMPO_DEFAULT.get(plan.kind, "1.0")
-    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=tempo, voice=voice(),
+    seconds = nn.synthesize(plan.text, wav, direction=EF_DIRECTION if plan.kind == "ef" else DIRECTION, tempo=tempo, voice=voice(),
                            model=os.getenv("FORMAT_REELS_TTS_MODEL", "gemini-3.8-flash-tts"))
     alignment = align_clip(wav, plan.text, int(seconds * 1000))
     if not alignment.ok:
@@ -953,8 +966,14 @@ def caption_for(plan: Plan, cand: nn.Candidate) -> str:
     hook = plan.beats[0].text.rstrip(".")
     if plan.kind == "ef":
         body = " ".join(b.text for b in plan.beats[1:-1])
-        tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#UnDíaComoHoy", "#HistoriaRiojana", "#LaVozRiojana") if t)
-        return f"📅 UN DÍA COMO HOY | {plan.beats[0].text}\n\n{body}\n\n{tags}"[:2200]
+        if plan.scope == "riojana":
+            tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#UnDíaComoHoy", "#HistoriaRiojana", "#LaVozRiojana") if t)
+        elif plan.scope == "nacional":
+            tags = "#UnDíaComoHoy #Efemérides #Argentina #LaRioja #LaVozRiojana"
+        else:
+            tags = "#UnDíaComoHoy #Efemérides #LaRioja #LaVozRiojana"
+        credit = f"\n\n📷 Foto: {plan.credit}" if plan.credit else ""
+        return f"📅 UN DÍA COMO HOY | {plan.beats[0].text}\n\n{body}{credit}\n\n{tags}"[:2200]
     if plan.kind == "um":
         body = " ".join(b.text for b in plan.beats[1:-1])
         tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#ÚltimoMomento", "#LaVozRiojana") if t)
