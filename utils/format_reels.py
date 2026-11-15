@@ -621,6 +621,14 @@ def validate_ef(entry: dict, cand: nn.Candidate, today) -> tuple[Plan | None, li
             warnings.append(f"{kind}: falta la locución")
             continue
         beat = Beat(layout, cap, cap_y, speech, keys=_items(t.get("claves"), 30, 3))
+        # Texto de pantalla más largo que su lugar: se pide de nuevo (cortarlo deja "DIÉSEL-ELÉCTRIC").
+        limits = {"quien": [("apodo", 24), ("nombre", 40), ("chips", 26)], "donde": [("chips", 28)],
+                  "fecha_hoy": [("sello", 24), ("detalle", 30)]}[kind]
+        for field_name, limit in limits:
+            values = t.get(field_name) if field_name == "chips" else [t.get(field_name)]
+            for value in values if isinstance(values, list) else []:
+                if len(_clean(value, 999)) > limit:
+                    warnings.append(f"{kind}: '{_clean(value, 60)}' tiene más de {limit} caracteres")
         screen: list[str] = []
         if kind == "quien":
             beat.value, beat.label = _clean(t.get("apodo"), 24), _clean(t.get("nombre"), 40)

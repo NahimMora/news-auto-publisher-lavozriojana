@@ -937,7 +937,8 @@ const Captions: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   }
   return (
     <div style={base}>
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "4px 16px", maxWidth: "100%", ...fresh }}>{cue.map(word)}</div>
+      {/* marker agranda la palabra dicha (scale 1.08): con 16 px se pegaba a la vecina ("Elsubmarino") */}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: b.cap === "marker" ? "4px 30px" : "4px 16px", maxWidth: "100%", ...fresh }}>{cue.map(word)}</div>
     </div>
   );
 };

@@ -278,6 +278,15 @@ class EfemeridesTests(unittest.TestCase):
         self.assertTrue(any("caudillo" in w for w in warnings), warnings)
         self.assertTrue(any("Pablo Irrazábal" in w for w in warnings), warnings)
 
+    def test_screen_text_longer_than_its_slot_is_asked_again(self):
+        import copy
+        import datetime
+
+        entry = copy.deepcopy(EF_ENTRY)
+        entry["quien"]["chips"] = ["General federal de los Llanos riojanos"]
+        _plan, warnings = fr.validate_ef(entry, self.ef_cand(), datetime.date(2027, 11, 12))
+        self.assertTrue(any("más de 26 caracteres" in w for w in warnings), warnings)
+
     def test_blockers_and_dates(self):
         import datetime
 
