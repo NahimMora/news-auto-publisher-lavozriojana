@@ -84,7 +84,8 @@ const Media: React.FC<{ p: FormatReelProps; layout: BeatT["layout"] }> = ({ p, l
   return (
     <AbsoluteFill style={{ background: C.ink, overflow: "hidden" }}>
       {p.media.type === "video" ? (
-        <OffthreadVideo src={staticFile(p.media.file)} muted style={style} />
+        // Acercado y anclado arriba: deja afuera el zócalo del medio de origen (abajo).
+        <OffthreadVideo src={staticFile(p.media.file)} muted style={{ ...style, transform: `scale(${kb * 1.22})`, transformOrigin: "50% 22%" }} />
       ) : (
         <Img src={staticFile(p.media.file)} style={style} />
       )}
@@ -286,7 +287,7 @@ const Card: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   const k = spring({ frame, fps, config: { damping: 14, stiffness: 150 } });
   const prev = p.cards.slice(0, Math.max(0, b.index - 1));
   const top = 360 + prev.length * 120;
-  const valueAt = (b.items[0]?.at ?? b.from + 8) - b.from;
+  const valueAt = Math.min(12, (b.items[0]?.at ?? b.from + 8) - b.from);
   const lit = interpolate(frame, [valueAt, valueAt + 8], [0, 1], clamp);
   const valueBox = fit({ text: b.value.toUpperCase(), maxWidth: 820, maxHeight: 240, min: 70, max: 170, weight: 900, lh: 0.92, stretch: "condensed", maxLines: 2, uppercase: true });
   return (

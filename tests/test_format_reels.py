@@ -28,8 +28,8 @@ UM_OK = {
     "gancho": "Fuego en el camping de ATUR",
     "lugar": "",
     "tramos": [
-        {"tipo": "chips", "locucion": "Se quemaron pastizales el viernes en el camping de ATUR, sobre la avenida Santa Rosa.", "items": ["pastizales", "viernes", "avenida Santa Rosa"]},
-        {"tipo": "cifra", "locucion": "Dos dotaciones de bomberos controlaron las llamas y no hubo heridos.", "items": [],
+        {"tipo": "chips", "locucion": "Un incendio de pastizales se registró el viernes en el camping de ATUR, sobre la avenida Santa Rosa.", "items": ["pastizales", "viernes", "avenida Santa Rosa"]},
+        {"tipo": "cifra", "locucion": "Dos dotaciones de bomberos controlaron las llamas en el camping de ATUR y no hubo heridos.", "items": [],
          "valor": "2", "etiqueta": "dotaciones de bomberos", "detalle": "sin heridos"},
     ],
 }
@@ -57,11 +57,18 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(any("'5'" in w for w in warnings), warnings)
         self.assertTrue(any("Juan Pérez" in w for w in warnings), warnings)
 
-    def test_um_requires_distinct_layouts(self):
+    def test_um_repeated_layout_becomes_stamps(self):
         raw = json.loads(json.dumps(UM_OK))
         raw["tramos"][1] = dict(raw["tramos"][0])
-        _plan, warnings = fr.validate_um(raw, cand())
-        self.assertTrue(any("tipo distinto" in w for w in warnings))
+        plan, warnings = fr.validate_um(raw, cand())
+        self.assertFalse(any("tipo distinto" in w for w in warnings))
+        self.assertEqual([b.layout for b in plan.beats[1:3]], ["chips", "stamps"])
+
+    def test_screen_text_cannot_invent_causes_or_relative_days(self):
+        c = cand(body="La línea 6 desvía por calle Vilcapugio por las calles dañadas tras el temporal.")
+        self.assertTrue(fr._screen_check(["Desvío por obras"], c, "t"))
+        self.assertEqual(fr._screen_check(["Calles dañadas", "Calle Vilcapugio"], c, "t"), [])
+        self.assertTrue(fr._fact_check(["La línea 6 desvía hoy."], c, "t"))
 
     def test_question_opening_capital_is_not_a_proper_noun(self):
         c = cand(body="Se pagan los Chachos desde el lunes 16 de noviembre en Chilecito.")
@@ -144,6 +151,13 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(clip, "")
         self.assertIn("estudio", why)
 
+    def test_scene_clip_rejects_unverified_frames(self):
+        with tempfile.TemporaryDirectory() as work,                 mock.patch.object(fr, "_duration", return_value=20.0),                 mock.patch.object(fr, "shot_cuts", return_value=[5.0, 12.0]),                 mock.patch.object(fr, "_frame_at", side_effect=lambda v, t, d: d),                 mock.patch.object(fr, "classify_frames", side_effect=[["estudio", "lugar", "lugar"], ["lugar"] * 5 + ["?"]]),                 mock.patch("utils.format_reels.subprocess.run") as run,                 mock.patch("utils.format_reels.os.path.isfile", return_value=True):
+            run.return_value = mock.Mock(returncode=0, stderr="")
+            clip, why = fr.scene_clip("v.mp4", work)
+        self.assertEqual(clip, "")
+        self.assertIn("sin verificar", why)
+
     def test_scene_clip_needs_enough_scene_seconds(self):
         with tempfile.TemporaryDirectory() as work, \
                 mock.patch.object(fr, "_duration", return_value=20.0), \
@@ -200,3 +214,27 @@ class StageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TtsPreambleTests(unittest.TestCase):
+    TEXT = "Controlaron un incendio en el camping de ATUR."
+
+    def test_tts3_uses_short_tag_and_2_5_keeps_direction(self):
+        self.assertTrue(nn._tts_prompt("gemini-3.8-flash-tts", "Hola.", None).startswith("[tonada"))
+        self.assertTrue(nn._tts_prompt("gemini-2.5-pro-preview-tts", "Hola.", None).startswith(nn.VOICE_DIRECTION))
+
+    def test_no_trim_when_text_starts_right_away(self):
+        asr = lambda wav, hint: [("Controlaron", 120, 400, 0.9), ("un", 400, 500, 0.9), ("incendio", 500, 900, 0.9)]
+        with mock.patch("utils.nightly_newscast.subprocess.run") as run:
+            self.assertEqual(nn.trim_spoken_preamble("x.wav", self.TEXT, asr=asr), 0.0)
+        run.assert_not_called()
+
+    def test_trims_spoken_preamble_using_last_match(self):
+        words = [("Controlaron", 0, 300, 0.9), ("un", 300, 400, 0.9), ("incendio", 400, 800, 0.9), ("en", 800, 900, 0.9),
+                 ("una", 900, 1000, 0.9), ("radio", 1000, 1400, 0.9), ("enérgico", 1400, 2000, 0.9),
+                 ("Controlaron", 3000, 3300, 0.9), ("un", 3300, 3400, 0.9), ("incendio", 3400, 3800, 0.9),
+                 ("en", 3800, 3900, 0.9), ("el", 3900, 4000, 0.9), ("camping", 4000, 4400, 0.9), ("de", 4400, 4500, 0.9), ("ATUR", 4500, 5000, 0.9)]
+        with mock.patch("utils.nightly_newscast.subprocess.run") as run, mock.patch("utils.nightly_newscast.os.replace"):
+            cut = nn.trim_spoken_preamble("x.wav", self.TEXT, asr=lambda wav, hint: words)
+        self.assertAlmostEqual(cut, 2.88, places=2)
+        self.assertIn("-ss", run.call_args.args[0])

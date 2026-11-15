@@ -3,6 +3,18 @@
 Última actualización: 2026-11-14 (fuentes oficiales y fechas en la web; el
 resto del documento describe el estado previo y sigue vigente).
 
+## Reels propios de Último momento y Datos útiles (2026-11-14)
+
+`meta/run_format_reels.py`, interruptores `FORMAT_REELS_UM_ENABLED` y
+`FORMAT_REELS_DU_ENABLED`. Criterios y controles en `docs/DECISIONS.md`
+2026-11-14 y `docs/SOCIAL_FORMATS.md`. Estado por nota en `data/format_reels.json`.
+
+## Controles de costo de IA (2026-11-14)
+
+Medición de toda llamada (`python cli.py ai-usage --days 7`), caption bajo
+demanda, paparazzi por puntaje heurístico y llamada única de reescritura. Ver
+`docs/DECISIONS.md` 2026-11-14.
+
 ## Rotación de diseños de la placa de Instagram (2026-11-14, activa en producción)
 
 `T02_LAYOUT_ROTATION_ENABLED` (default `false`; producción `true` desde el

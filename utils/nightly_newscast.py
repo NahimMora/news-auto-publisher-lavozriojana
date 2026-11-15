@@ -558,7 +558,7 @@ def synthesize(text: str, dest_wav: str, *, retries: int = 3, direction: str | N
     for attempt in range(1, retries + 1):
         try:
             started_at = time.perf_counter()
-            response = client.models.generate_content(model=model, contents=(direction or VOICE_DIRECTION) + text, config=config)
+            response = client.models.generate_content(model=model, contents=_tts_prompt(model, text, direction), config=config)
             from utils.ai_client import record_usage
 
             record_usage(stage="tts", model=model, response=response, started_at=started_at, success=True, input_chars=len(text))
@@ -591,7 +591,56 @@ def synthesize(text: str, dest_wav: str, *, retries: int = 3, direction: str | N
         check=True, capture_output=True, timeout=120,
     )
     os.remove(raw)
+    if model.startswith("gemini-3"):
+        trim_spoken_preamble(dest_wav, text)
     return media_duration(dest_wav)
+
+
+# Los modelos de voz 3.x leen en voz alta la dirección larga que entendían los
+# 2.5 (y a veces también una etiqueta corta): se les manda sólo una etiqueta
+# entre corchetes y, por las dudas, se recorta todo lo que se dijo antes de la
+# primera palabra del texto (whisper.cpp local, sin costo).
+TTS3_TAG_NEWSCAST = "[tonada del noroeste argentino, locutor de radio cercano y con autoridad] "
+TTS3_TAG_URGENT = "[tonada del noroeste argentino, enérgico, urgente] "
+
+
+def _tts_prompt(model: str, text: str, direction: str | None) -> str:
+    if model.startswith("gemini-3"):
+        tag = os.getenv("TTS3_STYLE_TAG") or (TTS3_TAG_URGENT if direction else TTS3_TAG_NEWSCAST)
+        return tag + text
+    return (direction or VOICE_DIRECTION) + text
+
+
+def trim_spoken_preamble(wav: str, text: str, *, asr=None) -> float:
+    """Recorta lo que la voz dijo antes de la primera palabra del texto.
+    Devuelve los segundos recortados (0 si no hizo falta o no se pudo ubicar)."""
+    from utils import newscast_align as na
+
+    script = [na.fold(w) for w in text.split()[:3] if na.fold(w)]
+    if not script or (asr is None and not na.aligner_status()["ok"]):
+        return 0.0
+    try:
+        words = (asr or na._asr_words)(wav, na._hint(text) or "La Rioja")
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        logger.warning("No se pudo revisar el comienzo de la locución: %s", type(exc).__name__)
+        return 0.0
+    limit = max(4, len(words) - int(len(text.split()) * 0.6))
+    start_ms = None
+    heard = [na.fold(w[0]) for w in words]
+    # Última aparición (en la primera mitad) de las primeras palabras del texto:
+    # el modelo a veces arranca con el texto, se va al preámbulo y vuelve.
+    for i in range(min(limit, len(words))):
+        if all(i + k < len(heard) and heard[i + k][:4] == script[k][:4] for k in range(len(script))):
+            start_ms = int(words[i][1])
+    if start_ms is None or start_ms < 500:
+        return 0.0
+    cut = max(0.0, start_ms / 1000 - 0.12)
+    tmp = wav + ".trim.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{cut:.3f}", "-i", wav, "-c:a", "pcm_s16le", tmp],
+                   check=True, capture_output=True, timeout=120)
+    os.replace(tmp, wav)
+    logger.warning("La voz leyó %.1f s antes del texto: recortados", cut)
+    return cut
 
 
 def media_duration(path: str) -> float:

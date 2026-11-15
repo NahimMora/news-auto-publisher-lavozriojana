@@ -38,7 +38,9 @@ $env:NIGHTLY_NEWSCAST_VOICE = "Orus"
 # Voz aprobada el 2026-10-30: Orus, ritmo 0.97 (tonada riojana). Modelo: 2026-11-14 pasa de
 # gemini-2.5-pro-preview-tts (Google lo retira el 2026-11-17) a gemini-3.8-flash-tts, por
 # decisión del responsable. Rollback (sólo hasta el 17/11): volver a "gemini-2.5-pro-preview-tts".
-$env:NIGHTLY_NEWSCAST_TTS_MODEL = "gemini-3.8-flash-tts"
+# 2026-11-14 19:00: vuelve a 2.5 Pro TTS hasta corregir que el 3.8 lee en voz alta la
+# dirección de voz (VOICE_DIRECTION). El 2.5 se retira el 2026-11-17.
+$env:NIGHTLY_NEWSCAST_TTS_MODEL = "gemini-2.5-pro-preview-tts"
 $env:NIGHTLY_NEWSCAST_TEMPO = "0.97"
 # V3 (2026-10-31): plan audiovisual por hechos, subtítulos alineados con
 # whisper.cpp local (scripts/install_newscast_aligner.py).

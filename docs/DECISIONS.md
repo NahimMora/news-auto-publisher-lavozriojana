@@ -3069,3 +3069,31 @@ un volumen más local y sin sacar paparazzi de la web (sólo bajarle el volumen)
    dejan de salir en redes; activarlo es decisión del responsable.
 **Evidencia**: `tests/test_cost_controls.py`; reporte de uso sobre datos reales.
 **Rollback**: cada interruptor en `false`.
+
+## 2026-11-14 — Reels propios: Último momento y Datos útiles
+
+**Contexto**: criterios del responsable (mesa de formatos, ronda 5): Último
+momento sólo si es primicia, con foto fuerte y video, máximo 2 por día; Datos
+útiles sin tope, sólo notas con muchos datos y alto interés para La Rioja.
+**Decisión**: `meta/run_format_reels.py` (apagado por defecto). Una composición
+Remotion guiada por datos (`FormatReel`): gancho con el título completo que se
+enciende con la voz, chips/sellos/cifra (UM) o tarjetas apiladas (DU),
+subtítulos integrados con un modo distinto por tramo y cierre
+Compartí/Guardá/Seguí. Guion de Gemini controlado contra la nota: cifras,
+nombres, días y "hoy/mañana/ayer/anoche" que no figuran, y toda palabra con
+contenido de lo que se lee en pantalla tiene que estar en la nota (si no, se
+reintenta con la devolución; nunca se relaja). El cuerpo se lee sólo de
+`.article-lead/.lr-key-points/.lr-article` (las cajas de contexto traen datos
+de otras notas). Video de UM: detección de cortes, se usan sólo las tomas
+clasificadas como "lugar" y una revisión final cuadro a cuadro rechaza todo
+el video ante un cuadro de estudio, placa o sin verificar; se acerca el
+encuadre para dejar afuera el zócalo del medio de origen.
+**Voz 3.x**: los modelos de voz 3.x leen en voz alta la dirección larga de los
+2.5 (y a veces una etiqueta corta). `nightly_newscast.synthesize` les manda
+una etiqueta corta y `trim_spoken_preamble` recorta (whisper.cpp local) todo lo
+dicho antes de la primera palabra del texto. El noticiero sigue con
+`gemini-2.5-pro-preview-tts` hasta probar el 3.8 con su voz (retiro del 2.5:
+2026-11-17).
+**Evidencia**: `tests/test_format_reels.py`; renders reales de UM (ATUR, video
+de Fénix) y DU (Rioja Bus).
+**Rollback**: `FORMAT_REELS_UM_ENABLED=false` / `FORMAT_REELS_DU_ENABLED=false`.
