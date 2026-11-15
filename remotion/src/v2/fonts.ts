@@ -11,6 +11,8 @@ const FILES: { family: string; file: string; style: "normal" | "italic"; stretch
   { family: V2_FONT_SANS, file: "Archivo-Italic[wdth,wght].ttf", style: "italic", stretch: "62% 125%" },
   { family: V2_FONT_SERIF, file: "SourceSerif4[opsz,wght].ttf", style: "normal" },
   { family: V2_FONT_SERIF, file: "SourceSerif4-Italic[opsz,wght].ttf", style: "italic" },
+  // Rótulos de los Reels de formato (como el prototipo aprobado). OFL.
+  { family: "LVR Mono", file: "JetBrainsMono-Bold.ttf", style: "normal" },
 ];
 
 let promise: Promise<void> | null = null;

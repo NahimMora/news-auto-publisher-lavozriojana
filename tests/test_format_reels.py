@@ -25,12 +25,14 @@ def cand(**kw) -> nn.Candidate:
 
 
 UM_OK = {
-    "gancho": "Fuego en el camping de ATUR",
+    "gancho": "¡Incendio en el camping de ATUR!",
     "lugar": "",
     "tramos": [
-        {"tipo": "chips", "locucion": "Un incendio de pastizales se registró el viernes en el camping de ATUR, sobre la avenida Santa Rosa.", "items": ["pastizales", "viernes", "avenida Santa Rosa"]},
-        {"tipo": "cifra", "locucion": "Dos dotaciones de bomberos controlaron las llamas en el camping de ATUR y no hubo heridos.", "items": [],
-         "valor": "2", "etiqueta": "dotaciones de bomberos", "detalle": "sin heridos"},
+        {"tipo": "mapa", "locucion": "Un incendio de pastizales se registró el viernes sobre la avenida Santa Rosa.",
+         "chips": ["Incendio de pastizales", "Viernes", "Avenida Santa Rosa"], "claves": ["pastizales", "viernes"]},
+        {"tipo": "cifra", "locucion": "Dos dotaciones de bomberos controlaron las llamas en el camping de ATUR.",
+         "valor": "2", "etiqueta": "dotaciones de bomberos", "sello": "Llamas controladas", "claves": ["bomberos"]},
+        {"tipo": "balance", "locucion": "No hubo heridos según los bomberos en el camping de ATUR.", "claves": ["heridos"]},
     ],
 }
 
@@ -46,7 +48,8 @@ class ValidationTests(unittest.TestCase):
     def test_um_valid_plan(self):
         plan, warnings = fr.validate_um(UM_OK, cand())
         self.assertEqual(warnings, [])
-        self.assertEqual([b.layout for b in plan.beats], ["hook", "chips", "number", "outro"])
+        self.assertEqual([b.layout for b in plan.beats], ["hook", "mapchips", "number", "check", "outro"])
+        self.assertEqual(plan.beats[1].items[2], ("Avenida Santa Rosa", "pin"))
         self.assertEqual(plan.beats[-1].text, fr.CLOSING["um"])
 
     def test_um_rejects_invented_figure_and_name(self):
@@ -57,12 +60,11 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(any("'5'" in w for w in warnings), warnings)
         self.assertTrue(any("Juan Pérez" in w for w in warnings), warnings)
 
-    def test_um_repeated_layout_becomes_stamps(self):
+    def test_um_repeated_type_is_rejected(self):
         raw = json.loads(json.dumps(UM_OK))
-        raw["tramos"][1] = dict(raw["tramos"][0])
-        plan, warnings = fr.validate_um(raw, cand())
-        self.assertFalse(any("tipo distinto" in w for w in warnings))
-        self.assertEqual([b.layout for b in plan.beats[1:3]], ["chips", "stamps"])
+        raw["tramos"][2] = dict(raw["tramos"][0])
+        _plan, warnings = fr.validate_um(raw, cand())
+        self.assertTrue(any("ya se usó" in w for w in warnings))
 
     def test_screen_text_cannot_invent_causes_or_relative_days(self):
         c = cand(body="La línea 6 desvía por calle Vilcapugio por las calles dañadas tras el temporal.")
@@ -81,11 +83,28 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(qualifies)
         self.assertIn("no califica", warnings[0])
 
+    def test_du_valid_plan_with_card_kinds(self):
+        c = cand(body="Las inscripciones cierran el 27 de diciembre. Se puede anotar de forma presencial o virtual. "
+                      "Cuesta $20.000. Hay 106 carreras en la UNLaR.")
+        raw = {"apta": True, "interes": 9, "pregunta": "¿Vas a estudiar en la UNLaR?", "llamado": "Anotá esto.", "tarjetas": [
+            {"tipo": "fecha", "rotulo": "Inscripciones", "resumen": "27 de diciembre", "capsula": "Cierran el", "valor": "27 de diciembre",
+             "locucion": "Las inscripciones cierran el 27 de diciembre."},
+            {"tipo": "lista", "rotulo": "Cómo anotarte", "resumen": "Presencial o virtual", "opciones": [{"icono": "🏫", "texto": "Presencial"}, {"icono": "💻", "texto": "Virtual"}],
+             "locucion": "Te podés anotar de forma presencial o virtual."},
+            {"tipo": "monto", "rotulo": "Cuánto cuesta", "resumen": "$20.000", "valor": "$20.000", "locucion": "La inscripción cuesta $20.000 en la UNLaR."},
+            {"tipo": "cifra", "rotulo": "La oferta", "resumen": "106 carreras", "valor": "106", "unidad": "carreras", "locucion": "Hay 106 carreras para elegir en la UNLaR."},
+        ]}
+        plan, warnings, qualifies = fr.validate_du(raw, c)
+        self.assertTrue(qualifies)
+        self.assertEqual(warnings, [])
+        self.assertEqual([b.card for b in plan.beats if b.layout == "card"], ["fecha", "lista", "monto", "cifra"])
+        self.assertEqual(plan.beats[0].cta_from, 6)
+        self.assertEqual([b.head for b in plan.beats if b.layout == "card"][2], "$20.000")
+
     def test_du_needs_min_cards(self):
-        c = cand(body="Inscripciones hasta el 27 de diciembre. Cuesta $20.000. Hay 106 carreras. Modalidad presencial o virtual.")
-        raw = {"apta": True, "interes": 9, "gancho": "¿Vas a estudiar? Anotá esto.", "tarjetas": [
-            {"etiqueta": "Inscripciones", "valor": "27 de diciembre", "locucion": "Te anotás hasta el 27 de diciembre."},
-            {"etiqueta": "Costo", "valor": "$20.000", "locucion": "Cuesta $20.000."},
+        c = cand(body="Inscripciones hasta el 27 de diciembre. Cuesta $20.000.")
+        raw = {"apta": True, "interes": 9, "pregunta": "¿Vas a estudiar?", "llamado": "Anotá esto.", "tarjetas": [
+            {"tipo": "fecha", "rotulo": "Inscripciones", "resumen": "27 de diciembre", "valor": "27 de diciembre", "locucion": "Te anotás hasta el 27 de diciembre."},
         ]}
         _plan, warnings, qualifies = fr.validate_du(raw, c)
         self.assertTrue(qualifies)
@@ -130,6 +149,8 @@ class TimelineTests(unittest.TestCase):
         chips = beats[1]
         viernes = next(i for i, t in enumerate(tokens) if t.text.startswith("viernes"))
         self.assertEqual(chips["items"][1]["at"], round(tokens[viernes].start_ms / 1000 * fr.FPS))
+        self.assertEqual(chips["words"][0]["t"], "Un")
+        self.assertEqual(chips["items"][2]["icon"], "pin")
 
     def test_timeline_refuses_mismatched_alignment(self):
         plan, _ = fr.validate_um(UM_OK, cand())

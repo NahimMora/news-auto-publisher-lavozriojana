@@ -49,7 +49,6 @@ COMPOSITION = "FormatReel"
 CLOSING = {"um": "Seguí a La Voz Riojana.", "du": "Compartilo y guardalo."}
 BADGE = {"um": "ÚLTIMO MOMENTO", "du": "DATO ÚTIL"}
 ACCENT = {"um": "#FF7A1A", "du": "#FFD15C"}
-CARD_CAPTIONS = ("pill", "marker", "chunk", "callout", "pill")
 DIRECTION = (
     "Sos el locutor de último momento de un medio de La Rioja, Argentina. Voz potente, enérgica y urgente, "
     "que atrape desde la primera palabra, como un flash informativo de radio. Ritmo rápido y decidido, sin atropellarte "
@@ -65,39 +64,51 @@ NO_INVENT = (
 )
 
 UM_PROMPT = (
-    "Escribís el guion de un Reel vertical de ÚLTIMO MOMENTO de La Voz Riojana (15 a 20 segundos, voz en off). "
+    "Escribís el guion de un Reel vertical de ÚLTIMO MOMENTO de La Voz Riojana (15 a 22 segundos, voz en off). "
     + NO_INVENT
-    + " Respondé SOLO este JSON: {\"gancho\": str, \"lugar\": str, \"tramos\": [{\"tipo\": \"chips\"|\"sellos\"|\"cifra\", "
-    "\"locucion\": str, \"items\": [str], \"valor\": str, \"etiqueta\": str, \"detalle\": str}]}. "
-    "gancho: el titular hablado, completo, directo y con fuerza, de 4 a 10 palabras (se muestra entero y grande). "
+    + " Respondé SOLO este JSON: {\"gancho\": str, \"lugar\": str, \"tramos\": [{\"tipo\": \"mapa\"|\"sellos\"|\"cifra\"|\"balance\", "
+    "\"locucion\": str, \"chips\": [str], \"sellos\": [str], \"valor\": str, \"etiqueta\": str, \"sello\": str, \"claves\": [str]}]}. "
+    "gancho: titular hablado, corto y explosivo, de 3 a 7 palabras, puede ir entre signos de exclamación "
+    "(ej.: \"¡Fuego en el camping de ATUR!\"). Se muestra entero y gigante. "
     "lugar: la localidad riojana del hecho tal como figura en la nota (vacío si no la dice). "
-    "tramos: 2 o 3, cada uno con una locución de 10 a 18 palabras que cuenta qué pasó, dónde, cómo sigue. "
-    "chips: 2 o 3 items cortos (máx. 22 caracteres) con qué/cuándo/dónde, cada uno con una palabra que se dice en su locución. "
-    "Escribí items, etiqueta y detalle con mayúsculas y minúsculas normales (nada todo en mayúsculas): en pantalla se pasan a mayúsculas. "
-    "sellos: 2 o 3 palabras fuertes (máx. 22 caracteres) que se dicen en la locución. "
-    "cifra: sólo si la nota trae una cifra clave; valor = la cifra tal cual (p. ej. \"2\" o \"$20.000\"), etiqueta = qué cuenta "
-    "(máx. 26 caracteres), detalle = sello corto opcional (máx. 20). En cifra, items vacío. "
-    "Total de palabras habladas (gancho + locuciones) entre 40 y 58: contalas antes de responder; si sobran, acortá. "
-    "Copiá cifras, horarios y fechas EXACTAMENTE como están en la nota. Español rioplatense, voseo, frases cortas. "
+    "tramos: de 3 a 4, cada uno de un tipo distinto, en este orden si corresponden: mapa, sellos, cifra, balance. "
+    "Cada locución tiene de 7 a 14 palabras y cuenta una parte del hecho. "
+    "mapa: chips = exactamente 3 textos cortos: qué pasó (máx. 22 caracteres), cuándo (máx. 16, ej. \"Viernes\") y dónde "
+    "(máx. 22, ej. \"Av. Santa Rosa\"); cada chip tiene una palabra que se dice en su locución. "
+    "sellos: sellos = 2 o 3 palabras fuertes (máx. 20 caracteres) que se dicen en la locución (ej. \"Humo\", \"Vecinos alertados\"). "
+    "cifra: sólo si la nota trae una cifra clave: valor = la cifra tal cual (ej. \"2\"), etiqueta = qué cuenta (máx. 26, ej. "
+    "\"dotaciones de bomberos\"), sello = resultado corto (máx. 18, ej. \"Fuego controlado\") que se dice en la locución. "
+    "balance: el cierre del hecho en 5 a 8 palabras (heridos, daños, cómo sigue), ej. \"No hubo heridos ni daños.\" "
+    "claves: 2 o 3 palabras de la locución que se resaltan en el subtítulo. "
+    "Escribí con mayúsculas y minúsculas normales (nada todo en mayúsculas). "
+    "Total de palabras habladas (gancho + locuciones) entre 36 y 56: contalas antes de responder. "
+    "Copiá cifras, horarios y fechas EXACTAMENTE como están en la nota. Español rioplatense, voseo. "
     "No digas 'último momento' ni el nombre del medio: eso ya está en pantalla."
 )
 
 DU_PROMPT = (
     "Evaluás si una nota de La Voz Riojana sirve para un Reel de DATOS ÚTILES (tarjetas con datos concretos que la gente "
-    "guarda y comparte: fechas, plazos, montos, requisitos, horarios, lugares, cómo hacer un trámite, cronogramas). "
+    "guarda y comparte: fechas, plazos, montos, requisitos, modalidades, horarios, cantidades, cronogramas). "
     + NO_INVENT
-    + " Respondé SOLO este JSON: {\"apta\": bool, \"interes\": int, \"motivo\": str, \"gancho\": str, "
-    "\"tarjetas\": [{\"etiqueta\": str, \"valor\": str, \"detalle\": str, \"locucion\": str}]}. "
-    "apta: true sólo si la nota trae al menos 4 datos concretos y prácticos distintos. "
+    + " Respondé SOLO este JSON: {\"apta\": bool, \"interes\": int, \"motivo\": str, \"pregunta\": str, \"llamado\": str, "
+    "\"tarjetas\": [{\"tipo\": \"fecha\"|\"lista\"|\"monto\"|\"cifra\"|\"texto\", \"rotulo\": str, \"resumen\": str, \"capsula\": str, "
+    "\"valor\": str, \"unidad\": str, \"opciones\": [{\"icono\": str, \"texto\": str}], \"detalle\": str, \"locucion\": str, \"claves\": [str]}]}. "
+    "apta: true sólo si la nota trae al menos 4 datos concretos, cortos y prácticos distintos. "
     "interes: 0 a 10, qué tan probable es que le sirva a mucha gente de La Rioja (10 = trámite, pago, inscripción o "
     "servicio masivo en la provincia; 0 = no le sirve a nadie de La Rioja). "
-    "gancho: pregunta o llamado corto de 4 a 9 palabras que se dice primero y se muestra entero (p. ej. "
-    "\"¿Vas a estudiar en la UNLaR? Anotá esto.\"). "
-    "Escribí con mayúsculas y minúsculas normales (nombres propios con mayúscula; nada todo en mayúsculas). "
-    "tarjetas: 4 o 5; etiqueta = qué es (máx. 28 caracteres), valor = el dato tal cual figura (máx. 24 caracteres), "
-    "detalle = aclaración corta opcional (máx. 40), locucion = cómo se dice ese dato, de 6 a 11 palabras, que incluya el valor. "
+    "pregunta: de 3 a 7 palabras, a quién le sirve (ej. \"¿Vas a estudiar en la UNLaR?\"). llamado: 2 o 3 palabras (ej. \"Anotá esto.\"). "
+    "tarjetas: 4 (5 sólo si hay un quinto dato fuerte), cada una de un tipo que muestre el dato de la forma más visual: "
+    "fecha = una fecha o plazo (capsula opcional que la introduce, máx. 16, ej. \"Cierran el\"; valor = la fecha, ej. \"27 de diciembre\"); "
+    "lista = 2 o 3 opciones cortas (máx. 16 cada una) con un emoji de ícono (ej. 🏫 Presencial, 💻 Virtual); "
+    "monto = un precio o pago (valor con el signo, ej. \"$20.000\"); "
+    "cifra = una cantidad (valor = número, unidad = qué cuenta, máx. 12, ej. \"106\" + \"carreras\"; capsula opcional, máx. 26); "
+    "texto = un dato corto que no es nada de lo anterior (valor máx. 18). "
+    "rotulo: qué es el dato, máx. 28 (ej. \"Cuánto cuesta\"). resumen: el dato en máx. 20 caracteres para la pila de tarjetas "
+    "(ej. \"27 de diciembre\", \"Presencial o virtual\", \"$20.000\", \"106 carreras\"). detalle: aclaración opcional, máx. 40. "
+    "locucion: cómo se dice el dato, de 6 a 12 palabras, nombrando el valor o las opciones. claves: 2 o 3 palabras de la locución. "
+    "Escribí con mayúsculas y minúsculas normales (nada todo en mayúsculas). "
     "Copiá cifras, horarios y fechas EXACTAMENTE como están en la nota. "
-    "Total de palabras habladas (gancho + locuciones) entre 38 y 60: contalas antes de responder; si sobran, acortá. "
+    "Total de palabras habladas (pregunta + llamado + locuciones) entre 36 y 60: contalas antes de responder. "
     "Español rioplatense, voseo."
 )
 
@@ -263,15 +274,21 @@ def is_riojan(cand: nn.Candidate) -> bool:
 # ── Guion ────────────────────────────────────────────────────────────────
 @dataclass
 class Beat:
-    layout: str
-    caption: str
+    layout: str          # hook | mapchips | stamps | number | check | card | outro
+    cap: str             # title | callout | marker | pill | chunk | pop | none
+    cap_y: int
     text: str            # locución del tramo (lo que se dice)
-    title: str = ""
-    items: list[str] = field(default_factory=list)
+    card: str = ""       # fecha | lista | monto | cifra | texto (DU)
+    items: list[tuple[str, str]] = field(default_factory=list)  # (texto, ícono)
+    keys: list[str] = field(default_factory=list)
     value: str = ""
+    unit: str = ""
     label: str = ""
+    pill: str = ""
     detail: str = ""
+    head: str = ""
     index: int = 0
+    cta_from: int = -1
 
 
 @dataclass
@@ -302,7 +319,13 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
-_SCREEN_STOP = {"sobre", "desde", "hasta", "entre", "para", "porque", "donde", "cuando", "todos", "todas", "nuevo", "nueva",
+# Palabras de llamado y de rótulo (no son hechos): verbos en voseo, plazos y
+# fórmulas como "Cierran el", "Elegí la que prefieras", "Tenés tiempo hasta".
+_SCREEN_GENERIC = {"tenes", "podes", "elegi", "elegir", "elegis", "prefieras", "preferis", "opcion", "opciones", "plazo", "maximo",
+                   "minimo", "cierran", "cierra", "cierre", "abren", "vence", "vencen", "tiempo", "anotate", "inscribite", "consulta",
+                   "consultar", "recorda", "acordate", "importante", "atencion", "modalidad", "modalidades", "disponible", "disponibles",
+                   "podras", "podran", "tenes", "tendras", "queres", "necesitas", "sirve", "servicio", "valido", "valida", "vigente"}
+_SCREEN_STOP = _SCREEN_GENERIC | {"sobre", "desde", "hasta", "entre", "para", "porque", "donde", "cuando", "todos", "todas", "nuevo", "nueva",
                 "nuevos", "nuevas", "fecha", "horario", "horarios", "lugar", "inicio", "final", "comienzo", "ultimo", "ultima",
                 "datos", "costo", "precio", "como", "anotarte", "inscripcion", "inscripciones", "cabecera", "recorrido"}
 
@@ -353,61 +376,81 @@ def _fact_check(texts: list[str], cand: nn.Candidate, label: str) -> list[str]:
     return out
 
 
+def _items(raw: object, limit: int, n: int) -> list[str]:
+    return [_clean(x, limit) for x in (raw or []) if _clean(x)][:n]
+
+
+def _plain(x: str) -> str:
+    return x.lower() if x.isupper() else x
+
+
+UM_LAYOUT = {"mapa": ("mapchips", "callout", 1250), "sellos": ("stamps", "marker", 300), "cifra": ("number", "pill", 1300), "balance": ("check", "pop", 820)}
+
+
 def validate_um(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str]]:
     warnings: list[str] = []
-    hook = _clean(raw.get("gancho"), 120).rstrip(".")
-    if not 3 <= _words(hook) <= 11:
-        warnings.append("gancho: tiene que tener de 4 a 10 palabras")
-    beats = [Beat("hook", "title", hook + ".", title=hook)]
-    captions = {"chips": "callout", "sellos": "marker", "cifra": "pill"}
-    layouts = {"chips": "chips", "sellos": "stamps", "cifra": "number"}
-    for i, t in enumerate((raw.get("tramos") or [])[:3]):
+    hook = _clean(raw.get("gancho"), 90)
+    if not 2 <= _words(hook) <= 8:
+        warnings.append("gancho: tiene que tener de 3 a 7 palabras")
+    if not re.search(r"[.!?]$", hook):
+        hook += "."
+    beats = [Beat("hook", "title", 0, hook)]
+    used: set[str] = set()
+    for i, t in enumerate((raw.get("tramos") or [])[:4]):
         if not isinstance(t, dict):
             continue
         kind = str(t.get("tipo") or "")
-        speech = _clean(t.get("locucion"), 200)
-        if kind not in layouts or not speech:
-            warnings.append(f"tramo {i + 1}: incompleto")
+        speech = _sentence(_clean(t.get("locucion"), 200)) if _clean(t.get("locucion")) else ""
+        tag = f"tramo {i + 1}"
+        if kind not in UM_LAYOUT or not speech:
+            warnings.append(f"{tag}: incompleto")
             continue
-        items = [_clean(x, 26) for x in (t.get("items") or []) if _clean(x)][:3]
-        # En pantalla van en mayúsculas; el control se hace en minúscula si
-        # llegaron todo en mayúsculas (si no, cada palabra parece un nombre propio).
-        checked_items = [x.lower() if x.isupper() else x for x in items]
-        beat = Beat(layouts[kind], captions[kind], _sentence(speech), items=items)
-        if kind == "cifra":
-            beat.value, beat.label, beat.detail = _clean(t.get("valor"), 12), _clean(t.get("etiqueta"), 30), _clean(t.get("detalle"), 22)
+        if kind in used:
+            warnings.append(f"{tag}: el tipo {kind} ya se usó; cada tramo de un tipo distinto")
+            continue
+        used.add(kind)
+        layout, cap, cap_y = UM_LAYOUT[kind]
+        beat = Beat(layout, cap, cap_y, speech, keys=_items(t.get("claves"), 30, 3))
+        screen: list[str] = []
+        if kind == "mapa":
+            chips = _items(t.get("chips"), 24, 3)
+            if len(chips) < 3:
+                warnings.append(f"{tag}: el mapa necesita 3 chips (qué, cuándo, dónde)")
+            beat.items = [(c, "pin" if k == 2 else "") for k, c in enumerate(chips)]
+            screen = chips
+        elif kind == "sellos":
+            stamps = _items(t.get("sellos"), 22, 3)
+            if len(stamps) < 2:
+                warnings.append(f"{tag}: hacen falta 2 o 3 sellos")
+            beat.items = [(x, "") for x in stamps]
+            screen = stamps
+        elif kind == "cifra":
+            beat.value, beat.label, beat.detail = _clean(t.get("valor"), 10), _clean(t.get("etiqueta"), 28), _clean(t.get("sello"), 20)
             if not beat.value or not beat.label:
-                warnings.append(f"tramo {i + 1}: la cifra necesita valor y etiqueta")
-            beat.items = [beat.detail] if beat.detail else []
-        elif len(items) < (2 if kind == "chips" else 1):
-            warnings.append(f"tramo {i + 1}: necesita 2 o 3 items")
-        label_detail = [x.lower() if x.isupper() else x for x in (beat.label, beat.detail)]
-        warnings += _fact_check([speech, ". ".join(checked_items), beat.value, *label_detail], cand, f"tramo {i + 1}")
-        warnings += _screen_check([*checked_items, *label_detail], cand, f"tramo {i + 1}")
+                warnings.append(f"{tag}: la cifra necesita valor y etiqueta")
+            beat.items = [(beat.label, "")]
+            screen = [beat.label, beat.detail]
+        plain = [_plain(x) for x in screen]
+        warnings += _fact_check([speech, *plain, beat.value], cand, tag)
+        warnings += _screen_check(plain, cand, tag)
         beats.append(beat)
-    if len(beats) < 3:
-        warnings.append("hacen falta 2 o 3 tramos válidos")
-    # Variedad sin gastar reintentos: un tipo repetido pasa a otro diseño con
-    # los mismos ítems (chips ↔ sellos); la cifra necesita valor, no se inventa.
-    used: set[str] = set()
-    for beat in beats[1:]:
-        if beat.layout in used:
-            alt = next((x for x in ("stamps", "chips") if x not in used and beat.items), "")
-            if alt:
-                beat.layout, beat.caption = alt, {"stamps": "marker", "chips": "callout"}[alt]
-        used.add(beat.layout)
-    layouts_used = [b.layout for b in beats[1:]]
-    if len(layouts_used) != len(set(layouts_used)):
-        warnings.append("cada tramo tiene que usar un tipo distinto (chips, sellos, cifra)")
+    if len(beats) < 4:
+        warnings.append("hacen falta 3 o 4 tramos válidos")
     warnings += _fact_check([hook], cand, "gancho")
     spoken = sum(_words(b.text) for b in beats)
-    if not 36 <= spoken <= 62:
-        warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 40 y 58")
-    beats.append(Beat("outro", "none", CLOSING["um"]))
+    if not 32 <= spoken <= 60:
+        warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 36 y 56")
+    beats.append(Beat("outro", "none", 0, CLOSING["um"]))
     place = _clean(raw.get("lugar"), 40)
     if place and nn._fold(place) not in nn._fold(f"{cand.title} {cand.body} {' '.join(cand.localities)}"):
         place = ""
-    return (Plan("um", beats, place=place) if len(beats) >= 4 else None), warnings
+    # Sin lugar en el guion: la localidad que ya detectó el archivo editorial (nunca se adivina).
+    place = place or (cand.localities[0] if cand.localities else "")
+    return (Plan("um", beats, place=place) if len(beats) >= 5 else None), warnings
+
+
+DU_CAPS = (("pill", 1250), ("marker", 1270), ("chunk", 1330), ("callout", 1420), ("pill", 1420))
+DU_KINDS = {"fecha", "lista", "monto", "cifra", "texto"}
 
 
 def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], bool]:
@@ -416,31 +459,53 @@ def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], 
     if not raw.get("apta") or interest < _int("FORMAT_REELS_DU_MIN_INTEREST", 7):
         return None, [f"no califica: apta={bool(raw.get('apta'))} interés={interest} ({_clean(raw.get('motivo'), 120)})"], False
     warnings: list[str] = []
-    hook = _clean(raw.get("gancho"), 100)
-    if not 3 <= _words(hook) <= 10:
-        warnings.append("gancho: tiene que tener de 4 a 9 palabras")
-    beats = [Beat("hook", "title", hook if re.search(r"[.!?]$", hook) else hook + ".", title=hook)]
-    cards = []
+    question, call = _clean(raw.get("pregunta"), 80), _clean(raw.get("llamado"), 30)
+    if not 2 <= _words(question) <= 8 or not call or _words(call) > 4:
+        warnings.append("gancho: pregunta de 3 a 7 palabras y llamado de 2 o 3")
+    question = question if re.search(r"[.!?]$", question) else question + "?"
+    call = _sentence(call) if call else ""
+    hook = Beat("hook", "title", 0, f"{question} {call}".strip(), cta_from=_words(question) if call else -1)
+    beats = [hook]
+    cards: list[Beat] = []
     for i, t in enumerate((raw.get("tarjetas") or [])[:5]):
         if not isinstance(t, dict):
             continue
-        label, value, detail, speech = _clean(t.get("etiqueta"), 30), _clean(t.get("valor"), 26), _clean(t.get("detalle"), 44), _clean(t.get("locucion"), 140)
-        if not (label and value and speech):
-            warnings.append(f"tarjeta {i + 1}: incompleta")
+        tag = f"tarjeta {i + 1}"
+        kind = str(t.get("tipo") or "")
+        speech = _sentence(_clean(t.get("locucion"), 160)) if _clean(t.get("locucion")) else ""
+        label, head = _clean(t.get("rotulo"), 30), _clean(t.get("resumen"), 22)
+        if kind not in DU_KINDS or not speech or not label or not head:
+            warnings.append(f"{tag}: incompleta")
             continue
-        warnings += _fact_check([x.lower() if x.isupper() else x for x in (label, value, detail)] + [speech], cand, f"tarjeta {i + 1}")
-        warnings += _screen_check([label, value, detail], cand, f"tarjeta {i + 1}")
-        cards.append(Beat("card", CARD_CAPTIONS[len(cards) % len(CARD_CAPTIONS)], _sentence(speech),
-                          items=[value], value=value, label=label, detail=detail, index=len(cards) + 1))
+        cap, cap_y = DU_CAPS[len(cards) % len(DU_CAPS)]
+        beat = Beat("card", cap, cap_y, speech, card=kind, label=label, head=head, index=len(cards) + 1, keys=_items(t.get("claves"), 30, 3),
+                    pill=_clean(t.get("capsula"), 28), detail=_clean(t.get("detalle"), 44))
+        if kind == "lista":
+            opts = [(_clean(o.get("texto"), 18), _clean(o.get("icono"), 4)) for o in (t.get("opciones") or []) if isinstance(o, dict) and _clean(o.get("texto"))][:3]
+            if len(opts) < 2:
+                warnings.append(f"{tag}: la lista necesita 2 o 3 opciones")
+            beat.items = opts
+            screen = [o[0] for o in opts]
+        else:
+            beat.value, beat.unit = _clean(t.get("valor"), 20), _clean(t.get("unidad"), 14) if kind == "cifra" else ""
+            if not beat.value:
+                warnings.append(f"{tag}: falta el valor")
+            beat.items = [(beat.value, "")]
+            screen = [beat.value, beat.unit]
+        screen += [head, beat.pill, beat.detail]
+        plain = [_plain(x) for x in screen if x]
+        warnings += _fact_check([speech, *plain], cand, tag)
+        warnings += _screen_check(plain, cand, tag)
+        cards.append(beat)
     beats += cards
     if len(cards) < _int("FORMAT_REELS_DU_MIN_CARDS", 4):
         warnings.append(f"hay {len(cards)} tarjetas válidas; hacen falta al menos {_int('FORMAT_REELS_DU_MIN_CARDS', 4)}")
-    warnings += _fact_check([hook], cand, "gancho")
+    warnings += _fact_check([question], cand, "gancho")
     spoken = sum(_words(b.text) for b in beats)
-    if not 34 <= spoken <= 66:
-        warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 38 y 60")
-    beats.append(Beat("outro", "none", CLOSING["du"]))
-    return (Plan("du", beats, interest=interest) if len(cards) >= 1 else None), warnings, True
+    if not 32 <= spoken <= 64:
+        warnings.append(f"el guion tiene {spoken} palabras; tienen que ser entre 36 y 60")
+    beats.append(Beat("outro", "none", 0, CLOSING["du"]))
+    return (Plan("du", beats, interest=interest) if cards else None), warnings, True
 
 
 def write_plan(kind: str, cand: nn.Candidate, *, completion=None, attempts: int = 4) -> tuple[Plan | None, list[str], bool]:
@@ -496,7 +561,8 @@ def _key_time(item: str, tokens: list, start: int, end: int) -> int | None:
 
 
 def timeline(plan: Plan, tokens: list, voice_ms: int) -> tuple[list[dict], int]:
-    """Tramos con cuadros de inicio/fin según la locución real; ítems sincronizados."""
+    """Tramos con cuadros de inicio/fin según la locución real, palabras con
+    su tiempo, ítems sincronizados con la palabra que los nombra."""
     counts = [_words(b.text) for b in plan.beats]
     if sum(counts) != len(tokens):
         raise ValueError(f"el alineamiento tiene {len(tokens)} palabras y el guion {sum(counts)}")
@@ -505,20 +571,30 @@ def timeline(plan: Plan, tokens: list, voice_ms: int) -> tuple[list[dict], int]:
         starts.append(i)
         i += n
     frame = lambda ms: int(round(ms / 1000 * FPS))  # noqa: E731
-    froms = [0] + [frame(tokens[s].start_ms) - 3 for s in starts[1:]]
+    froms = [0] + [max(0, frame(tokens[s].start_ms) - 3) for s in starts[1:]]
     end_voice = frame(voice_ms)
     total = max(end_voice + 30, froms[-1] + 72)
     beats = []
     for k, b in enumerate(plan.beats):
         f0, f1 = froms[k], (froms[k + 1] if k + 1 < len(froms) else total)
         s0, s1 = starts[k], starts[k] + counts[k]
-        items = []
-        for j, text in enumerate(b.items):
+        words = [{"t": tok.text, "s": int(tok.start_ms), "e": int(tok.end_ms)} for tok in tokens[s0:s1]]
+
+        def when(text: str, j: int, n: int) -> int:
             ms = _key_time(text, tokens, s0, s1)
-            at = frame(ms) if ms is not None else f0 + int((j + 1) * (f1 - f0) / (len(b.items) + 1))
-            items.append({"text": text, "at": max(f0, min(at, f1 - 4))})
-        beats.append({"from": f0, "to": f1, "layout": b.layout, "caption": b.caption, "title": b.title, "items": items,
-                      "value": b.value, "label": b.label, "detail": b.detail, "index": b.index})
+            at = frame(ms) if ms is not None else f0 + int((j + 1) * (f1 - f0) / (n + 1))
+            return max(f0, min(at, f1 - 6))
+
+        items = [{"text": text, "at": when(text, j, len(b.items)), "icon": icon} for j, (text, icon) in enumerate(b.items)]
+        detail_at = when(b.detail or b.pill, 1, 2) if (b.detail or b.pill) else f0
+        if b.layout == "number" and b.detail:
+            detail_at = max(detail_at, items[0]["at"] + 8 if items else f0)
+        keys = list(b.keys)
+        for text, _icon in b.items:
+            keys += [w for w in text.split() if len(_fold_word(w)) >= 4][:1]
+        beats.append({"from": f0, "to": f1, "layout": b.layout, "card": b.card, "cap": b.cap, "capY": b.cap_y, "words": words,
+                      "keys": keys, "ctaFrom": b.cta_from, "items": items, "value": b.value, "unit": b.unit, "label": b.label,
+                      "pill": b.pill, "detail": b.detail, "detailAt": detail_at, "index": b.index})
     return beats, total
 
 
@@ -666,7 +742,7 @@ class Rendered:
 
 def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     """Voz, alineamiento, props y MP4 + portada. ``RuntimeError`` si algo falla."""
-    from utils.newscast_align import align_clip, build_cues
+    from utils.newscast_align import align_clip
     from utils.newscast_v5 import locate
     from utils.remotion_renderer import REMOTION_DIR
     from utils.video_renderer import _npx_args
@@ -680,7 +756,6 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     if not alignment.ok:
         raise RuntimeError(f"la voz no alinea con el guion: {alignment.errors[:2]}")
     beats, total = timeline(plan, alignment.tokens, int(seconds * 1000))
-    cues = build_cues(alignment.tokens, max_words=4, max_chars=26, min_ms=500)
     place = locate(plan.place) if plan.place else None
     props = {
         "kind": plan.kind, "badge": BADGE[plan.kind], "accent": ACCENT[plan.kind],
@@ -688,9 +763,7 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
         "credit": media.get("credit", ""),
         "place": {"label": place.get("label") or plan.place, "x": float(place["x"]), "y": float(place["y"])} if place and "x" in place else None,
         "voiceFile": f"{rel}/voz.wav", "totalFrames": total,
-        "cues": [{"text": c["text"], "startMs": c["startMs"], "endMs": c["endMs"],
-                  "words": [{"text": w["text"], "startMs": w["startMs"], "endMs": w["endMs"]} for w in c["words"]]} for c in cues],
-        "beats": beats, "cards": [b.value for b in plan.beats if b.layout == "card"], "music": True,
+        "heads": [b.head for b in plan.beats if b.layout == "card"], "music": True, "beats": beats,
     }
     props_path = os.path.join(work, "props.json")
     with open(props_path, "w", encoding="utf-8") as fh:
@@ -727,12 +800,17 @@ def hashtag_place(place: str) -> str:
 
 
 def caption_for(plan: Plan, cand: nn.Candidate) -> str:
-    hook = plan.beats[0].title
+    hook = plan.beats[0].text.rstrip(".")
     if plan.kind == "um":
         body = " ".join(b.text for b in plan.beats[1:-1])
         tags = " ".join(t for t in ("#LaRioja", hashtag_place(plan.place), "#ÚltimoMomento", "#LaVozRiojana") if t)
         return f"🔴 ÚLTIMO MOMENTO | {hook}\n\n{body}\n\n📲 La nota completa, en lavozriojana.com\n\n{tags}"[:2200]
-    lines = [f"• {b.label}: {b.value}" + (f" ({b.detail})" if b.detail else "") for b in plan.beats if b.layout == "card"]
+    lines = []
+    for b in plan.beats:
+        if b.layout != "card":
+            continue
+        shown = " / ".join(t for t, _ in b.items) if b.card == "lista" else " ".join(x for x in (b.pill, b.value, b.unit) if x)
+        lines.append(f"• {b.label}: {shown}" + (f" ({b.detail})" if b.detail else ""))
     tags = "#LaRioja #DatoÚtil #LaVozRiojana"
     return (f"📌 DATO ÚTIL | {cand.title}\n\n" + "\n".join(lines) + "\n\n🔁 Guardalo y compartilo con quien le sirva.\n"
             f"📲 La nota completa, en lavozriojana.com\n\n{tags}")[:2200]
