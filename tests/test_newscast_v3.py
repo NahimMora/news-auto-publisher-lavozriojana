@@ -81,6 +81,22 @@ class SpokenFormsAndMappingTests(unittest.TestCase):
         out = na._verdict(na.map_words("Fue procesado por robo en la obra".split(), asr, 1500))
         self.assertFalse(out.ok)
 
+    def test_merged_words_from_recognizer_are_split(self):
+        asr = [("El", 0, 200, 1), ("submarino", 200, 700, 1), ("Arasanjuan.", 700, 1700, 0.9)]
+        out = na.map_words("El submarino ARA San Juan.".split(), asr, 1800)
+        self.assertTrue(out.ok, out.errors)
+        self.assertTrue(out.critical_ok)
+        self.assertEqual([t.method for t in out.tokens], ["asr"] * 5)
+        self.assertEqual((out.tokens[2].start_ms, out.tokens[4].end_ms), (700, 1700))
+
+    def test_last_segment_past_the_clip_is_trimmed(self):
+        asr = [("Seguí", 0, 400, 1), ("a", 400, 500, 1), ("La", 500, 600, 1), ("Voz", 600, 900, 1), ("Riojana.", 900, 2000, 1)]
+        out = na.map_words("Seguí a La Voz Riojana.".split(), asr, 1700)
+        self.assertTrue(out.ok, out.errors)
+        self.assertEqual(out.tokens[-1].end_ms, 1700)
+        late = [("Seguí", 0, 400, 1), ("Riojana.", 2100, 2600, 1)]
+        self.assertIn("tiempos fuera del clip", na.map_words("Seguí Riojana.".split(), late, 1700).errors)
+
     def test_unanchored_negation_is_critical(self):
         asr = [("El", 0, 200, 1), ("acusado", 200, 700, 1), ("declaró", 1000, 1500, 1)]
         out = na.map_words("El acusado no declaró".split(), asr, 1600)

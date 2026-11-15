@@ -35,7 +35,7 @@ from utils.logging_setup import setup_logger
 
 logger = setup_logger("newscast_align", "nightly_newscast.log")
 
-ALIGNER_VERSION = "lvr-align-3"
+ALIGNER_VERSION = "lvr-align-4"
 WHISPER_RELEASE = "b5454"
 WHISPER_ZIP_URL = f"https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_RELEASE}/whisper-bin-x64.zip"
 WHISPER_ZIP_SHA256 = "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb"
@@ -191,12 +191,46 @@ def _is_critical(word: str, index: int) -> bool:
     return index > 0 and word[:1].isupper()
 
 
+def _split_merged(script_words: list[str], asr: list[tuple[str, int, int, float]], clip_ms: int) -> list[tuple[str, int, int, float]]:
+    """whisper a veces funde palabras del guion en una ("ARA San Juan" →
+    "Arasanjuan"): se separa en esas palabras, con tiempo proporcional a las
+    letras. Además, el último segmento puede terminar unos ms después del audio:
+    ese fin se recorta al clip (una palabra que EMPIEZA fuera sigue siendo error)."""
+    folded = [fold(re.sub(r"[^\w]", "", w)) for w in script_words]
+    singles = set(folded)
+    out: list[tuple[str, int, int, float]] = []
+    for w, start, end, prob in asr:
+        if start <= clip_ms < end:
+            end = clip_ms
+        key = fold(re.sub(r"[^\w]", "", w))
+        split: list[str] = []
+        if len(key) >= 6 and key not in singles:
+            for k in (2, 3, 4):
+                for i in range(len(folded) - k + 1):
+                    if all(folded[i:i + k]) and "".join(folded[i:i + k]) == key:
+                        split = script_words[i:i + k]
+                        break
+                if split:
+                    break
+        if not split:
+            out.append((w, start, end, prob))
+            continue
+        total = sum(len(p) for p in split) or 1
+        cursor = start
+        for n, part in enumerate(split):
+            seg_end = end if n == len(split) - 1 else cursor + (end - start) * len(part) // total
+            out.append((part, cursor, seg_end, prob))
+            cursor = seg_end
+    return out
+
+
 def map_words(script_words: list[str], asr: list[tuple[str, int, int, float]], clip_ms: int) -> Alignment:
     """Alineamiento monótono texto aprobado ↔ palabras reconocidas.
 
     ``asr``: (palabra, inicio_ms, fin_ms, probabilidad). Cada palabra del
     guion se expande a su forma hablada; la programación dinámica empareja
     unidades habladas con palabras ASR (sustitución por similitud ≥ 0,6)."""
+    asr = _split_merged(script_words, asr, clip_ms)
     units: list[tuple[int, str]] = []  # (índice de palabra del guion, unidad hablada)
     for i, word in enumerate(script_words):
         for unit in spoken_forms(word) or [fold(word)]:
