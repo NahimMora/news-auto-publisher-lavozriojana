@@ -449,7 +449,7 @@ def validate_um(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str]]:
     return (Plan("um", beats, place=place) if len(beats) >= 5 else None), warnings
 
 
-DU_CAPS = (("pill", 1250), ("marker", 1270), ("chunk", 1330), ("callout", 1420), ("pill", 1420))
+DU_CAPS = (("pill", 1330), ("marker", 1340), ("chunk", 1380), ("callout", 1440), ("pill", 1440))
 DU_KINDS = {"fecha", "lista", "monto", "cifra", "texto"}
 
 

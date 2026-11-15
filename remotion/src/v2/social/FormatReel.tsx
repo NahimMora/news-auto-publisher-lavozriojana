@@ -114,11 +114,6 @@ const slamStyle = (f: number): React.CSSProperties => {
     transform: `scale(${keyframes(p, [0, 0.55, 1], [1.5, 0.96, 1])}) rotate(${keyframes(p, [0, 0.55], [-3, 0])}deg)`,
   };
 };
-const springStyle = (f: number): React.CSSProperties => {
-  if (f < 0) return { opacity: 0 };
-  const p = prog(f, 0.6);
-  return { transform: `translateY(${keyframes(p, [0, 0.6, 0.8, 1], [120, -6, 2, 0])}%) rotate(${keyframes(p, [0, 0.6, 1], [6, -1, 0])}deg)` };
-};
 const wipeStyle = (f: number): React.CSSProperties => ({ clipPath: `inset(0 ${100 - prog(f, 0.5, Easing.bezier(0.6, 0, 0.2, 1)) * 100}% 0 0)` });
 
 // Transiciones de escena del prototipo.
@@ -400,80 +395,173 @@ const CheckBeat: React.FC = () => {
   );
 };
 
-// ── Datos útiles: tarjetas apiladas ──────────────────────────────────────
+// ── Datos útiles: cada dato con su forma propia, nada lineal ─────────────
+// Cada tarjeta entra desde un lado distinto y queda apenas inclinada; los
+// datos ya contados se achican a fichas arriba (no una pila que baja). Forma
+// por tipo: fecha = hoja de calendario, monto = ticket troquelado, cifra =
+// número gigante con sticker de unidad, lista = fichas grandes con ícono,
+// texto = nota adhesiva.
 const Badge: React.FC<{ n: number; size: number }> = ({ n, size }) => (
   <span style={{ width: size, height: size, borderRadius: "50%", background: C.gold, color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: size * 0.56, flex: "none" }}>{n}</span>
 );
 
 const lit = (f: number): React.CSSProperties => (f < 0 ? { opacity: 0.2, filter: "grayscale(1)" } : { opacity: 1, ...popStyle(f) });
 
-const CardBody: React.FC<{ b: BeatT; frame: number }> = ({ b, frame }) => {
-  const valueAt = (b.items[0]?.at ?? b.from + 6) - b.from;
-  const sub = b.detail ? (
-    <div style={{ fontSize: 40, fontWeight: 700, color: "#3D5A75", marginTop: 12, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.detail}</div>
-  ) : null;
-  if (b.card === "lista") {
-    const fills = [C.navy, C.blue, C.navy];
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 18, marginTop: 24 }}>
-        {b.items.slice(0, 3).map((it, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 20, background: fills[i], color: "#fff", borderRadius: 22, padding: "12px 28px", fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1.05, ...lit(frame - (it.at - b.from)) }}>
-            {it.icon ? <span>{it.icon}</span> : null}
-            <span>{it.text.toUpperCase()}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (b.card === "monto" || b.card === "cifra") {
-    const f = frame - Math.min(valueAt, 12);
-    const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
-    return (
-      <>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 22, marginTop: 22 }}>
-          <span style={{ fontWeight: 900, fontStretch: "66%", fontSize: 190, lineHeight: 0.9, color: C.navy }}>{shown}</span>
-          {b.unit ? <span style={{ fontWeight: 900, fontStretch: "70%", fontSize: 80 }}>{b.unit.toUpperCase()}</span> : null}
-        </div>
-        {b.card === "cifra" && b.pill ? (
-          <div style={{ display: "inline-block", marginTop: 10, background: C.gold, color: C.navy, borderRadius: 40, padding: "12px 26px", fontWeight: 900, fontStretch: "78%", fontSize: 44, ...popStyle(frame - (b.detailAt - b.from)) }}>{b.pill}</div>
-        ) : null}
-        {b.card === "cifra" && b.pill ? null : sub}
-      </>
-    );
-  }
-  const valueBox = fit({ text: b.value.toUpperCase(), maxWidth: 860, maxHeight: 240, min: 80, max: 118, weight: 900, lh: 0.95, stretch: "condensed", maxLines: 2, uppercase: true });
+const MONTHS: Record<string, string> = { enero: "ENE", febrero: "FEB", marzo: "MAR", abril: "ABR", mayo: "MAY", junio: "JUN", julio: "JUL", agosto: "AGO", septiembre: "SEP", setiembre: "SEP", octubre: "OCT", noviembre: "NOV", diciembre: "DIC" };
+const parseDate = (value: string): { day: string; month: string } | null => {
+  const m = value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").match(/(\d{1,2})\s*(?:de\s+)?([a-z]+)/);
+  if (!m || !MONTHS[m[2]]) return null;
+  return { day: m[1], month: MONTHS[m[2]] };
+};
+
+const Label: React.FC<{ text: string; color?: string }> = ({ text, color = C.blue }) => (
+  <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 30, lineHeight: 1.1, letterSpacing: "0.08em", textTransform: "uppercase", color }}>{text}</div>
+);
+
+const Detail: React.FC<{ b: BeatT; frame: number; color?: string }> = ({ b, frame, color = "#3D5A75" }) =>
+  b.detail ? <div style={{ fontSize: 40, fontWeight: 700, lineHeight: 1.15, color, marginTop: 16, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.detail}</div> : null;
+
+// Fecha: hoja de calendario con el día gigante; cápsula y rótulo al costado.
+const DateCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
+  const d = parseDate(b.value);
+  const tear = prog(frame - valueAt, 0.45);
   return (
-    <>
-      {b.pill ? (
-        <div style={{ display: "inline-block", marginTop: 22, background: C.navy, color: "#fff", borderRadius: 40, padding: "10px 26px", fontWeight: 900, fontStretch: "78%", fontSize: 44, ...popStyle(frame) }}>{b.pill.toUpperCase()}</div>
-      ) : null}
-      <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: valueBox.fontSize, lineHeight: 0.95, marginTop: 18, color: C.navy, ...lit(frame - valueAt) }}>
-        {valueBox.lines.map((l, i) => <div key={i}>{l}</div>)}
+    <div style={{ display: "flex", gap: 40, alignItems: "center" }}>
+      <div style={{ width: 420, flex: "none", borderRadius: 34, overflow: "hidden", background: "#fff", color: C.ink, textAlign: "center", boxShadow: "0 26px 60px rgba(0,0,0,.45)", transform: `rotate(${-4 + 4 * tear}deg)` }}>
+        <div style={{ background: C.red, color: "#fff", fontWeight: 900, fontStretch: "75%", fontSize: 86, letterSpacing: "0.14em", padding: "18px 0" }}>{d ? d.month : "FECHA"}</div>
+        <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: d ? 320 : 100, lineHeight: 1, padding: d ? "8px 0 22px" : "46px 20px", ...lit(frame - valueAt) }}>{d ? d.day : b.value.toUpperCase()}</div>
       </div>
-      {sub}
-    </>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Label text={b.label} color={C.gold} />
+        {b.pill ? <div style={{ display: "inline-block", marginTop: 20, background: C.gold, color: C.navy, borderRadius: 40, padding: "10px 24px", fontWeight: 900, fontStretch: "78%", fontSize: 46, ...popStyle(frame - 4) }}>{b.pill.toUpperCase()}</div> : null}
+        <div style={{ fontWeight: 900, fontStretch: "70%", fontSize: 72, lineHeight: 0.95, marginTop: 16, color: "#fff", ...lit(frame - valueAt) }}>{b.value.toUpperCase()}</div>
+        <Detail b={b} frame={frame} color="rgba(255,255,255,.85)" />
+      </div>
+    </div>
   );
 };
+
+// Monto: ticket navy troquelado, cifra dorada con contador.
+const AmountCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
+  const f = frame - Math.min(valueAt, 12);
+  const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
+  const notch = (side: "left" | "right"): React.CSSProperties => ({ position: "absolute", top: 232, [side]: -34, width: 68, height: 68, borderRadius: "50%", background: "rgba(11,47,79,.95)" });
+  return (
+    <div style={{ position: "relative", background: C.navy, borderRadius: 34, padding: "40px 50px 44px", boxShadow: "0 26px 60px rgba(0,0,0,.45)", border: `5px solid ${C.gold}` }}>
+      <Label text={b.label} color={C.gold} />
+      <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: 250, lineHeight: 0.95, color: C.gold, marginTop: 20 }}>{shown}</div>
+      <div style={{ borderTop: "6px dashed rgba(255,209,92,.6)", margin: "22px -50px 0" }} />
+      <span style={notch("left")} />
+      <span style={notch("right")} />
+      {b.detail || b.pill ? <div style={{ fontSize: 42, fontWeight: 800, color: "#fff", marginTop: 22, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.detail || b.pill}</div> : null}
+    </div>
+  );
+};
+
+// Cifra: número gigante con la unidad como sticker girado.
+const NumberCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
+  const f = frame - Math.min(valueAt, 12);
+  const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
+  return (
+    <div style={{ position: "relative", textAlign: "center", paddingTop: 10 }}>
+      <Label text={b.label} color={C.gold} />
+      <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: 420, lineHeight: 0.85, color: "#fff", textShadow: "0 18px 50px rgba(0,0,0,.5)", marginTop: 18 }}>{shown}</div>
+      {b.unit ? (
+        <div style={{ display: "inline-block", marginTop: 6, background: C.gold, color: C.navy, fontWeight: 900, fontStretch: "70%", fontSize: 92, padding: "8px 34px", borderRadius: 14, boxShadow: "0 14px 34px rgba(0,0,0,.4)", ...stampStyle(frame - Math.min(valueAt + 10, 22), -4) }}>{b.unit.toUpperCase()}</div>
+      ) : null}
+      {b.pill || b.detail ? <div style={{ fontSize: 42, fontWeight: 800, color: "#fff", marginTop: 26, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.pill || b.detail}</div> : null}
+    </div>
+  );
+};
+
+// Lista: fichas grandes, alternadas, con el ícono enorme.
+const ListCard: React.FC<{ b: BeatT; frame: number }> = ({ b, frame }) => {
+  const opts = b.items.slice(0, 3);
+  const two = opts.length === 2;
+  return (
+    <div>
+      <Label text={b.label} color={C.gold} />
+      <div style={{ display: "flex", flexDirection: two ? "row" : "column", gap: 28, marginTop: 26 }}>
+        {opts.map((it, i) => {
+          const f = frame - (it.at - b.from);
+          return (
+            <div key={i} style={{ flex: 1, background: i % 2 ? C.blue : "#fff", color: i % 2 ? "#fff" : C.navy, borderRadius: 34, padding: two ? "54px 20px" : "26px 34px", display: "flex", flexDirection: two ? "column" : "row", alignItems: "center", gap: two ? 14 : 26, boxShadow: "0 22px 50px rgba(0,0,0,.4)", transform: `rotate(${i % 2 ? 2.5 : -2.5}deg)`, ...lit(f) }}>
+              {it.icon ? <span style={{ fontSize: two ? 190 : 104, lineHeight: 1 }}>{it.icon}</span> : null}
+              <span style={{ fontWeight: 900, fontStretch: "70%", fontSize: two ? 84 : 80, lineHeight: 1, textAlign: "center" }}>{it.text.toUpperCase()}</span>
+            </div>
+          );
+        })}
+      </div>
+      <Detail b={b} frame={frame} color="rgba(255,255,255,.85)" />
+    </div>
+  );
+};
+
+// Texto: nota adhesiva dorada.
+const NoteCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
+  const box = fit({ text: b.value.toUpperCase(), maxWidth: 780, maxHeight: 300, min: 80, max: 140, weight: 900, lh: 0.95, stretch: "condensed", maxLines: 3, uppercase: true });
+  return (
+    <div style={{ position: "relative", background: C.gold, color: C.navy, borderRadius: 8, padding: "56px 54px 48px", boxShadow: "0 30px 60px rgba(0,0,0,.45)" }}>
+      <span style={{ position: "absolute", top: -26, left: "50%", width: 180, height: 52, marginLeft: -90, background: "rgba(255,255,255,.55)", transform: "rotate(-3deg)" }} />
+      <Label text={b.label} color={C.navy} />
+      {b.pill ? <div style={{ fontWeight: 900, fontStretch: "78%", fontSize: 46, marginTop: 14 }}>{b.pill.toUpperCase()}</div> : null}
+      <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: box.fontSize, lineHeight: 0.95, marginTop: 14, ...lit(frame - valueAt) }}>
+        {box.lines.map((l, i) => <div key={i}>{l}</div>)}
+      </div>
+      <Detail b={b} frame={frame} color={C.navy} />
+    </div>
+  );
+};
+
+// Entrada distinta para cada tarjeta y una leve inclinación final.
+const ENTRIES: { dx: number; dy: number; tilt: number }[] = [
+  { dx: -1, dy: 0, tilt: -2 },
+  { dx: 1, dy: 0, tilt: 2 },
+  { dx: 0, dy: 1, tilt: -1.5 },
+  { dx: -1, dy: -0.4, tilt: 2.5 },
+  { dx: 1, dy: 0.4, tilt: -1 },
+];
+
+const Collected: React.FC<{ heads: string[]; frame: number }> = ({ heads, frame }) => (
+  <>
+    {heads.map((h, j) => {
+      const last = j === heads.length - 1;
+      const f = last ? frame : 99;
+      const k = prog(f, 0.45);
+      return (
+        <div key={j} style={{ position: "absolute", left: 56 + (j % 2) * 490, top: 214 + Math.floor(j / 2) * 86, width: 478, height: 72, boxSizing: "border-box", background: "rgba(255,255,255,.95)", color: C.navy, borderRadius: 40, padding: "0 14px 0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, boxShadow: "0 10px 24px rgba(0,0,0,.3)", opacity: last ? k : 1, transform: last ? `translateY(${(1 - k) * 260}px) scale(${1.6 - 0.6 * k})` : undefined }}>
+          <span style={{ fontWeight: 900, fontStretch: "70%", fontSize: 40, lineHeight: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{h.toUpperCase()}</span>
+          <Badge n={j + 1} size={46} />
+        </div>
+      );
+    })}
+  </>
+);
 
 const Card: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   const frame = useCurrentFrame();
   const n = b.index;
   const heads = p.heads.slice(0, Math.max(0, n - 1));
+  const e = ENTRIES[(n - 1) % ENTRIES.length];
+  const k = prog(frame, 0.65);
+  const settle = keyframes(k, [0, 0.7, 1], [1, -0.04, 0]);
+  const valueAt = (b.items[0]?.at ?? b.from + 6) - b.from;
+  const top = 214 + Math.ceil(heads.length / 2) * 86 + 70;
+  const body =
+    b.card === "fecha" ? <DateCard b={b} frame={frame} valueAt={valueAt} />
+      : b.card === "monto" ? <AmountCard b={b} frame={frame} valueAt={valueAt} />
+        : b.card === "cifra" ? <NumberCard b={b} frame={frame} valueAt={valueAt} />
+          : b.card === "lista" ? <ListCard b={b} frame={frame} />
+            : <NoteCard b={b} frame={frame} valueAt={valueAt} />;
   return (
     <AbsoluteFill>
       <Photo p={p} filter={VF.card} />
-      <AbsoluteFill style={{ background: "linear-gradient(rgba(11,47,79,.3),rgba(11,47,79,.78))" }} />
+      <AbsoluteFill style={{ background: "linear-gradient(rgba(11,47,79,.35),rgba(11,47,79,.85))" }} />
       <DuHead />
-      {heads.map((h, j) => (
-        <div key={j} style={{ position: "absolute", left: 84 + j * 6, right: 84 + j * 6, top: 360 + j * 120, height: 150, boxSizing: "border-box", background: "#fff", color: C.navy, borderRadius: 26, boxShadow: "0 18px 40px rgba(0,0,0,.3)", padding: "26px 40px", opacity: 0.94, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <span style={{ fontWeight: 900, fontStretch: "70%", fontSize: 60, lineHeight: 1, color: j % 2 ? C.blue : C.navy, whiteSpace: "nowrap", overflow: "hidden", maxWidth: 760 }}>{h.toUpperCase()}</span>
-          <Badge n={j + 1} size={52} />
-        </div>
-      ))}
-      <div style={{ position: "absolute", left: 70, right: 70, top: 360 + (n - 1) * 120, height: 420, boxSizing: "border-box", background: "#fff", color: C.navy, borderRadius: 30, boxShadow: "0 26px 60px rgba(0,0,0,.4)", padding: "40px 46px", overflow: "hidden", ...springStyle(frame) }}>
-        <div style={{ position: "absolute", right: 34, top: 30 }}><Badge n={n} size={76} /></div>
-        <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 30, lineHeight: 1, letterSpacing: "0.08em", textTransform: "uppercase", color: C.blue, maxWidth: 760 }}>{b.label}</div>
-        <CardBody b={b} frame={frame} />
+      <Collected heads={heads} frame={frame} />
+      <div style={{ position: "absolute", left: 70, right: 70, top: Math.max(top, 560), transform: `translate(${e.dx * settle * 1000}px, ${e.dy * settle * 1400}px) rotate(${e.tilt + (e.dx || e.dy) * settle * 14}deg)` }}>
+        <div style={{ position: "absolute", right: -18, top: -30, zIndex: 2 }}><Badge n={n} size={76} /></div>
+        {body}
       </div>
     </AbsoluteFill>
   );
