@@ -596,11 +596,11 @@ const Card: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
 // que se llena y calendario que pasa las hojas).
 const BORDO = "#7A1426";
 // Filtro del retrato por tramo: el gancho luce la foto; el resto la baja para que lea el gráfico.
-const EF_VF: Record<BeatT["layout"], string> = { ...VF, hook: "brightness(1.12) contrast(1.1)", who: "brightness(.55)" };
+const EF_VF: Record<BeatT["layout"], string> = { ...VF, hook: "brightness(1.18) contrast(1.05)", who: "brightness(.55)" };
 
-// Retrato continuo de punta a punta: blanco y negro teñido de ROJO (duotono rojo
-// LVR / bordó; el responsable lo pidió rojo en vez del gris pálido, 2026-11-15),
-// grano de película que se mueve, rayas de proyector y viñeta. El filtro cambia por tramo.
+// Retrato continuo de punta a punta: blanco y negro, duotono navy/bordó, grano
+// de película que se mueve, rayas de proyector y viñeta. El filtro cambia por tramo.
+// (El 15/11 el responsable aclaró que lo que quería en rojo eran los resaltados, no el fondo.)
 const ArchiveBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
   const frame = useCurrentFrame();
   const beat = p.beats.find((b) => frame >= b.from && frame < b.to) ?? p.beats[p.beats.length - 1];
@@ -613,8 +613,7 @@ const ArchiveBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
         src={staticFile(p.media.file)}
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 30%", filter: `grayscale(1) contrast(1.15) ${EF_VF[beat.layout]} brightness(${flicker})`, transform: `scale(${1.08 + 0.16 * k}) translate(${-1.5 * k}%, ${-2 * k}%)` }}
       />
-      <AbsoluteFill style={{ background: `linear-gradient(160deg,#E0303F,${BORDO})`, mixBlendMode: "multiply", opacity: beat.layout === "hook" ? 0.9 : 1 }} />
-      <AbsoluteFill style={{ background: "#3A0710", mixBlendMode: "screen", opacity: 0.35 }} />
+      <AbsoluteFill style={{ background: "linear-gradient(135deg,rgba(11,47,79,.55),rgba(110,15,26,.42))", mixBlendMode: "multiply", opacity: beat.layout === "hook" ? 0.55 : 1 }} />
       <AbsoluteFill style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.07) 1px,transparent 1.4px)", backgroundSize: "7px 7px", backgroundPosition: `${(frame * 37) % 7}px ${(frame * 53) % 7}px` }} />
       {scratch ? <div style={{ position: "absolute", left: (frame * 131) % 1080, top: 0, bottom: 0, width: 2, background: "rgba(255,255,255,.16)" }} /> : null}
       <AbsoluteFill style={{ background: "radial-gradient(ellipse at 50% 45%,transparent 45%,rgba(0,0,0,.62))" }} />
@@ -631,7 +630,7 @@ const EfHead: React.FC<{ p: FormatReelProps }> = ({ p }) => {
           <Img src={staticFile("logo.png")} style={{ width: 48, height: 48, borderRadius: "50%" }} />
           LA VOZ RIOJANA
         </span>
-        <span style={{ background: p.accent, color: C.navy, fontWeight: 900, fontStretch: "72%", fontSize: 34, padding: "16px 20px" }}>UN DÍA COMO HOY</span>
+        <span style={{ background: p.accent, color: inkOn(p.accent), fontWeight: 900, fontStretch: "72%", fontSize: 34, padding: "16px 20px" }}>UN DÍA COMO HOY</span>
       </div>
       {p.ef ? (
         <div style={{ position: "absolute", right: 44, top: 108, width: 124, borderRadius: 16, overflow: "hidden", background: "#fff", color: C.ink, textAlign: "center", boxShadow: "0 10px 26px rgba(0,0,0,.45)", ...popStyle(frame - 6) }}>
@@ -654,7 +653,7 @@ const HookEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
       <AbsoluteFill style={{ background: "linear-gradient(rgba(10,13,18,.45),transparent 18%,transparent 40%,rgba(10,13,18,.94) 62%)" }} />
       <EfHead p={p} />
       {p.ef ? (
-        <div style={{ position: "absolute", left: 30, top: 620, fontWeight: 900, fontStretch: "62%", fontSize: 400, lineHeight: 0.8, color: "transparent", WebkitTextStroke: `5px ${p.accent}`, opacity: 0.7 * r, transform: `translate(${-40 * drift}px, ${(1 - r) * 70}px)` }}>
+        <div style={{ position: "absolute", left: 30, top: 620, fontWeight: 900, fontStretch: "62%", fontSize: 400, lineHeight: 0.8, color: "transparent", WebkitTextStroke: `5px ${onDark(p.accent)}`, opacity: 0.7 * r, transform: `translate(${-40 * drift}px, ${(1 - r) * 70}px)` }}>
           {p.ef.year}
         </div>
       ) : null}
@@ -765,13 +764,13 @@ const YearsEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
       {y0 && y1 ? (
         <div style={{ position: "absolute", left: 90, right: 90, top: 330, height: 150, ...riseStyle(frame) }}>
           <div style={{ position: "absolute", left: 0, top: 0, fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1 }}>{y0}</div>
-          <div style={{ position: "absolute", right: 0, top: 0, fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1, color: p.accent, opacity: fill > 0.95 ? 1 : 0.35 }}>{y1}</div>
+          <div style={{ position: "absolute", right: 0, top: 0, fontWeight: 900, fontStretch: "72%", fontSize: 64, lineHeight: 1, color: onDark(p.accent), opacity: fill > 0.95 ? 1 : 0.35 }}>{y1}</div>
           <div style={{ position: "absolute", left: 0, right: 0, top: 100, height: 10, background: "rgba(255,255,255,.25)", borderRadius: 5 }} />
           <div style={{ position: "absolute", left: 0, top: 100, height: 10, width: `${fill * 100}%`, background: `linear-gradient(90deg,#fff,${p.accent})`, borderRadius: 5 }} />
           {Array.from({ length: n + 1 }).map((_, i) => (
             <span key={i} style={{ position: "absolute", left: `${(i / n) * 100}%`, top: i % 5 === 0 ? 80 : 88, width: 4, height: i % 5 === 0 ? 50 : 34, marginLeft: -2, background: i / n <= fill ? "#fff" : "rgba(255,255,255,.25)" }} />
           ))}
-          <span style={{ position: "absolute", left: `${fill * 100}%`, top: 89, width: 32, height: 32, marginLeft: -16, borderRadius: "50%", background: p.accent, boxShadow: "0 0 0 10px rgba(255,209,92,.3)" }} />
+          <span style={{ position: "absolute", left: `${fill * 100}%`, top: 89, width: 32, height: 32, marginLeft: -16, borderRadius: "50%", background: p.accent, boxShadow: `0 0 0 10px ${p.accent}55` }} />
         </div>
       ) : null}
       <div style={{ position: "absolute", left: 0, right: 0, top: 560, textAlign: "center", fontWeight: 900, fontStretch: "62%", fontSize: 400, lineHeight: 0.85, color: p.accent, textShadow: "0 18px 50px rgba(0,0,0,.5)", ...slamStyle(frame) }}>{shown}</div>
@@ -806,7 +805,7 @@ const CalendarEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
       </div>
       {b.items[0] ? (
         <div style={{ position: "absolute", left: 100, right: 100, top: 860, ...stampStyle(frame - sealAt, -6) }}>
-          <div style={{ border: `14px solid ${p.accent}`, color: p.accent, textAlign: "center", padding: "22px 20px", background: "rgba(10,13,18,.65)", fontWeight: 900, fontStretch: "70%", fontSize: 104, lineHeight: 0.95 }}>
+          <div style={{ border: `14px solid ${p.accent}`, color: "#fff", textAlign: "center", padding: "22px 20px", background: isDarkHex(p.accent) ? p.accent : "rgba(10,13,18,.65)", fontWeight: 900, fontStretch: "70%", fontSize: 104, lineHeight: 0.95 }}>
             {b.items[0].text.toUpperCase()}
           </div>
         </div>

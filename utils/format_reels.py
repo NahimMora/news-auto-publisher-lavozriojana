@@ -59,7 +59,7 @@ COMPOSITION = "FormatReel"
 CLOSING = {"um": "Seguí a La Voz Riojana.", "du": "Compartilo y guardalo.", "ef": "Seguí a La Voz Riojana."}
 BADGE = {"um": "ÚLTIMO MOMENTO", "du": "DATO ÚTIL", "ef": "UN DÍA COMO HOY"}
 # DU: rojo oscuro en vez del amarillo (pedido del responsable, 2026-11-15; el componente pone texto blanco encima).
-ACCENT = {"um": "#FF7A1A", "du": "#8B0F1D", "ef": "#FFD15C"}
+ACCENT = {"um": "#FF7A1A", "du": "#8B0F1D", "ef": "#B30000"}  # EF: resaltados en rojo LVR (15/11)
 # Ritmo de la voz por formato (atempo de ffmpeg sobre la locución 3.x).
 TEMPO_DEFAULT = {"um": "1.0", "du": "1.0", "ef": "1.0"}  # EF igual que DU desde el 15/11 (misma voz en todo)
 DIRECTION = (

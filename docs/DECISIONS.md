@@ -3160,7 +3160,9 @@ dirección enérgica, ritmo 1.0, sin el ruido final) y pidió que sea "así
 siempre": EF deja su dirección propia y su ritmo 1.12 y usa la misma. En DU el
 amarillo pasa a rojo oscuro (`#8B0F1D`): donde era fondo va con texto blanco;
 donde era texto sobre el navy, blanco o rojo claro (el rojo oscuro no se lee).
-EF conserva el amarillo sobre su fondo rojo.
+Corrección del mismo día: en EF el responsable quería en rojo los RESALTADOS, no el
+fondo → el retrato vuelve al gris con duotono navy/bordó y el acento de EF pasa a
+rojo LVR (`#B30000`, texto blanco encima; rojo claro donde es letra sobre oscuro).
 
 ## 2026-11-15 — Limpieza automática de disco
 
