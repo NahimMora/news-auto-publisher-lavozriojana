@@ -119,16 +119,19 @@ class DeploymentModeTests(unittest.TestCase):
             ):
                 result = run_24x7.run_cycle(1, heartbeat_interval=1)
 
-        # run_all.py y editorial_context/refresh_context.py no tienen canal
-        # (no están sujetos a los kill switches de web/facebook/instagram) y
-        # llaman a run_step siempre; el resto se saltea sin invocarlo.
-        self.assertEqual(2, run_step.call_count)
+        # run_all.py, editorial_context/refresh_context.py y la limpieza de
+        # disco (pipeline/run_disk_cleanup.py) no tienen canal (no están sujetos
+        # a los kill switches de web/facebook/instagram) y llaman a run_step
+        # siempre; el resto se saltea sin invocarlo.
+        self.assertEqual(3, run_step.call_count)
         children = result.details["children"]
         self.assertEqual(
             # Al final, el feed de datos para la web (meta/run_web_feed.py).
             ["scraping_rewrite", "scraping_rewrite", "web", "facebook"] + ["instagram"] * 4
             # WhatsApp copia lo de Facebook: sigue su interruptor.
-            + ["facebook"] * 2 + ["instagram"] * 7 + ["web"],
+            + ["facebook"] * 2 + ["instagram"] * 7 + ["web"]
+            # La limpieza de disco (local, sin canal; el mock devuelve el mismo resultado).
+            + ["scraping_rewrite"],
             [item["stage"] for item in children],
         )
         self.assertTrue(all(item["status"] == "no_work" for item in children))
