@@ -94,8 +94,22 @@ class SpokenFormsAndMappingTests(unittest.TestCase):
         out = na.map_words("Seguí a La Voz Riojana.".split(), asr, 1700)
         self.assertTrue(out.ok, out.errors)
         self.assertEqual(out.tokens[-1].end_ms, 1700)
-        late = [("Seguí", 0, 400, 1), ("Riojana.", 2100, 2600, 1)]
+        # whisper redondea el último segmento a un segundo entero, aun después del fin
+        rounded = [("Seguí", 0, 400, 1), ("a", 400, 500, 1), ("La", 500, 600, 1), ("Voz", 1000, 1300, 1), ("Riojana.", 2000, 3000, 1)]
+        out = na.map_words("Seguí a La Voz Riojana.".split(), rounded, 1900)
+        self.assertTrue(out.ok, out.errors)
+        self.assertLessEqual(out.tokens[-1].end_ms, 1900)
+        self.assertEqual([t.start_ms <= u.start_ms for t, u in zip(out.tokens, out.tokens[1:])], [True] * 4)
+        late = [("Seguí", 0, 400, 1), ("Riojana.", 3300, 3800, 1)]
         self.assertIn("tiempos fuera del clip", na.map_words("Seguí Riojana.".split(), late, 1700).errors)
+
+    def test_misheard_merged_words_are_split(self):
+        asr = [("Seguí", 0, 300, 1), ("a", 300, 350, 1), ("la", 350, 450, 1), ("Bosriojana.", 450, 1200, 0.6)]
+        out = na.map_words("Seguí a La Voz Riojana.".split(), asr, 1300)
+        self.assertTrue(out.critical_ok, out.errors)
+        self.assertEqual([t.method for t in out.tokens], ["asr"] * 5)
+        # una palabra parecida a una sola del guion no se parte
+        self.assertEqual(na._split_merged(["Chilecito"], [("Chilecitos", 0, 500, 1)], 600), [("Chilecitos", 0, 500, 1)])
 
     def test_unanchored_negation_is_critical(self):
         asr = [("El", 0, 200, 1), ("acusado", 200, 700, 1), ("declaró", 1000, 1500, 1)]

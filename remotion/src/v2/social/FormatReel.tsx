@@ -582,10 +582,11 @@ const Card: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
 // que se llena y calendario que pasa las hojas).
 const BORDO = "#7A1426";
 // Filtro del retrato por tramo: el gancho luce la foto; el resto la baja para que lea el gráfico.
-const EF_VF: Record<BeatT["layout"], string> = { ...VF, hook: "brightness(1.18) contrast(1.05)", who: "brightness(.55)" };
+const EF_VF: Record<BeatT["layout"], string> = { ...VF, hook: "brightness(1.12) contrast(1.1)", who: "brightness(.55)" };
 
-// Retrato continuo de punta a punta: blanco y negro, duotono navy/bordó, grano
-// de película que se mueve, rayas de proyector y viñeta. El filtro cambia por tramo.
+// Retrato continuo de punta a punta: blanco y negro teñido de ROJO (duotono rojo
+// LVR / bordó; el responsable lo pidió rojo en vez del gris pálido, 2026-11-15),
+// grano de película que se mueve, rayas de proyector y viñeta. El filtro cambia por tramo.
 const ArchiveBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
   const frame = useCurrentFrame();
   const beat = p.beats.find((b) => frame >= b.from && frame < b.to) ?? p.beats[p.beats.length - 1];
@@ -598,7 +599,8 @@ const ArchiveBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
         src={staticFile(p.media.file)}
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 30%", filter: `grayscale(1) contrast(1.15) ${EF_VF[beat.layout]} brightness(${flicker})`, transform: `scale(${1.08 + 0.16 * k}) translate(${-1.5 * k}%, ${-2 * k}%)` }}
       />
-      <AbsoluteFill style={{ background: "linear-gradient(135deg,rgba(11,47,79,.55),rgba(110,15,26,.42))", mixBlendMode: "multiply", opacity: beat.layout === "hook" ? 0.55 : 1 }} />
+      <AbsoluteFill style={{ background: `linear-gradient(160deg,#E0303F,${BORDO})`, mixBlendMode: "multiply", opacity: beat.layout === "hook" ? 0.9 : 1 }} />
+      <AbsoluteFill style={{ background: "#3A0710", mixBlendMode: "screen", opacity: 0.35 }} />
       <AbsoluteFill style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.07) 1px,transparent 1.4px)", backgroundSize: "7px 7px", backgroundPosition: `${(frame * 37) % 7}px ${(frame * 53) % 7}px` }} />
       {scratch ? <div style={{ position: "absolute", left: (frame * 131) % 1080, top: 0, bottom: 0, width: 2, background: "rgba(255,255,255,.16)" }} /> : null}
       <AbsoluteFill style={{ background: "radial-gradient(ellipse at 50% 45%,transparent 45%,rgba(0,0,0,.62))" }} />

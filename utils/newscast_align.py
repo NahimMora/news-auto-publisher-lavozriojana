@@ -35,7 +35,7 @@ from utils.logging_setup import setup_logger
 
 logger = setup_logger("newscast_align", "nightly_newscast.log")
 
-ALIGNER_VERSION = "lvr-align-4"
+ALIGNER_VERSION = "lvr-align-5"
 WHISPER_RELEASE = "b5454"
 WHISPER_ZIP_URL = f"https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_RELEASE}/whisper-bin-x64.zip"
 WHISPER_ZIP_SHA256 = "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb"
@@ -192,16 +192,29 @@ def _is_critical(word: str, index: int) -> bool:
 
 
 def _split_merged(script_words: list[str], asr: list[tuple[str, int, int, float]], clip_ms: int) -> list[tuple[str, int, int, float]]:
-    """whisper a veces funde palabras del guion en una ("ARA San Juan" →
-    "Arasanjuan"): se separa en esas palabras, con tiempo proporcional a las
-    letras. Además, el último segmento puede terminar unos ms después del audio:
-    ese fin se recorta al clip (una palabra que EMPIEZA fuera sigue siendo error)."""
+    """Dos mañas de whisper en la locución:
+
+    * funde palabras del guion en una ("ARA San Juan" → "Arasanjuan", "Voz
+      Riojana" → "Bosriojana"): si la palabra oída no se parece a ninguna del
+      guion pero sí a 2-4 seguidas juntas (igual, o ≥ 0,78 de similitud con 2-3),
+      se separa en esas palabras con tiempo proporcional a las letras;
+    * redondea el último segmento a un segundo entero que puede quedar hasta
+      1,5 s después del audio (más aún si la voz se recortó): esos tiempos se
+      corren hacia atrás hasta el fin del clip. Un desfase mayor sigue siendo
+      error ("tiempos fuera del clip")."""
+    over = max((e for _w, _s, e, _p in asr), default=0) - clip_ms
+    if 0 < over <= 1500:
+        limit, rev = clip_ms, []
+        for w, start, end, prob in reversed(asr):
+            end = min(end, limit)
+            start = min(start, max(0, end - 60))
+            rev.append((w, start, end, prob))
+            limit = start
+        asr = list(reversed(rev))
     folded = [fold(re.sub(r"[^\w]", "", w)) for w in script_words]
-    singles = set(folded)
+    singles = {f for f in folded if f}
     out: list[tuple[str, int, int, float]] = []
     for w, start, end, prob in asr:
-        if start <= clip_ms < end:
-            end = clip_ms
         key = fold(re.sub(r"[^\w]", "", w))
         split: list[str] = []
         if len(key) >= 6 and key not in singles:
@@ -212,6 +225,19 @@ def _split_merged(script_words: list[str], asr: list[tuple[str, int, int, float]
                         break
                 if split:
                     break
+            # "riojana" se parece a "bosriojana" sólo por estar contenida: cuentan las de largo parecido
+            near = [f for f in singles if abs(len(f) - len(key)) <= 2]
+            if not split and max((_similar(key, f) for f in near), default=0.0) < 0.8:
+                best, where = 0.0, (0, 0)
+                for k in (2, 3):
+                    for i in range(len(folded) - k + 1):
+                        cat = "".join(folded[i:i + k])
+                        if all(folded[i:i + k]) and abs(len(cat) - len(key)) <= 2:
+                            ratio = _similar(cat, key)
+                            if ratio > best:
+                                best, where = ratio, (i, k)
+                if best >= 0.78:
+                    split = script_words[where[0]:where[0] + where[1]]
         if not split:
             out.append((w, start, end, prob))
             continue

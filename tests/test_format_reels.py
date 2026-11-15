@@ -360,6 +360,33 @@ class OpeningGapTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             fr.opening_gap([Tok("Un", 2900, 3100), Tok("12", 3200, 3300)])
 
+    def test_radio_noise_after_last_word_is_trimmed(self):
+        calls = []
+
+        def runner(args, **kw):
+            calls.append(args)
+            if "silencedetect" in " ".join(args):
+                err = ("silence_start: 15.28\nsilence_end: 15.41 | silence_duration: 0.13\n"
+                       "silence_start: 18.73\nsilence_end: 18.91 | silence_duration: 0.18\n")
+                return mock.Mock(stderr=err)
+            open(args[-1], "wb").close()
+            return mock.Mock(stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wav = os.path.join(tmp, "voz.wav")
+            open(wav, "wb").close()
+            self.assertAlmostEqual(fr.trim_tail_noise(wav, 19.07, runner=runner), 18.79, places=2)
+        self.assertIn("atrim=0:18.790", " ".join(calls[-1]))
+
+    def test_voice_ending_on_a_word_is_not_trimmed(self):
+        def runner(args, **kw):
+            # el último sonido dura 1,2 s (la frase de cierre), no es un ruido
+            return mock.Mock(stderr="silence_start: 17.5\nsilence_end: 17.8 | silence_duration: 0.3\n")
+
+        self.assertEqual(fr.trim_tail_noise("x.wav", 19.0, runner=runner), 19.0)
+        late_silence = lambda args, **kw: mock.Mock(stderr="silence_start: 18.7\nsilence_end: 19.0\n")  # noqa: E731
+        self.assertEqual(fr.trim_tail_noise("x.wav", 19.0, runner=late_silence), 19.0)
+
     def test_trim_matches_numbers_heard_as_words(self):
         words = [("Un", 0, 260, 0.9), ("doce", 260, 390, 0.9), ("de", 390, 520, 0.9), ("noroeste", 520, 1030, 0.9),
                  ("urgente", 2490, 2900, 0.9), ("Un", 3000, 3240, 0.9), ("doce", 3240, 3360, 0.9), ("de", 3360, 3480, 0.9),

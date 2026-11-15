@@ -888,6 +888,38 @@ def strong_photo(path: str, size: tuple[int, int], *, policial: bool, checker=No
 
 
 # ── Render ───────────────────────────────────────────────────────────────
+def trim_tail_noise(wav: str, seconds: float, *, runner=None, max_burst: float = 0.35) -> float:
+    """La voz 3.x termina casi siempre con un "psh" de radio (~150 ms de ruido
+    después de un silencio corto, tras la última palabra). Se corta en ese
+    silencio con un fundido; el alineamiento posterior confirma que no se perdió
+    ninguna palabra. Devuelve la nueva duración en s."""
+    runner = runner or subprocess.run
+    out = runner(["ffmpeg", "-hide_banner", "-nostats", "-i", wav, "-af", "silencedetect=noise=-38dB:d=0.07", "-f", "null", "-"],
+                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    text = out.stderr if isinstance(getattr(out, "stderr", None), str) else ""
+    starts =[float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", text)]
+    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", text)]
+    silences = [(s, ends[i] if i < len(ends) else seconds) for i, s in enumerate(starts)]
+    sound_end = seconds
+    if silences and seconds - silences[-1][1] < 0.02:  # termina en silencio: el último sonido es anterior
+        sound_end = silences[-1][0]
+        silences = silences[:-1]
+    if not silences:
+        return seconds
+    gap_start, gap_end = silences[-1]
+    if not 0 < sound_end - gap_end <= max_burst or gap_start < seconds * 0.6:
+        return seconds
+    cut = gap_start + 0.06
+    tmp = wav + ".cola.wav"
+    runner(["ffmpeg", "-v", "error", "-y", "-i", wav, "-af", f"atrim=0:{cut:.3f},afade=t=out:st={max(0.0, cut - 0.05):.3f}:d=0.05", tmp],
+           capture_output=True, timeout=60)
+    if not os.path.isfile(tmp):
+        return seconds
+    os.replace(tmp, wav)
+    logger.info("Voz: recortado el ruido final (%.2f s)", seconds - cut)
+    return cut
+
+
 def opening_gap(tokens: list, *, max_start_ms: int = 900, max_gap_ms: int = 1200) -> None:
     """La voz 3.x a veces lee en voz alta la etiqueta de estilo antes del texto.
     Si después del recorte queda un arranque tardío o un hueco entre las
@@ -922,6 +954,7 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     tempo = os.getenv(f"FORMAT_REELS_{plan.kind.upper()}_TEMPO") or os.getenv("FORMAT_REELS_TEMPO") or TEMPO_DEFAULT.get(plan.kind, "1.0")
     seconds = nn.synthesize(plan.text, wav, direction=EF_DIRECTION if plan.kind == "ef" else DIRECTION, tempo=tempo, voice=voice(),
                            model=os.getenv("FORMAT_REELS_TTS_MODEL", "gemini-3.8-flash-tts"))
+    seconds = trim_tail_noise(wav, seconds)
     alignment = align_clip(wav, plan.text, int(seconds * 1000))
     if not alignment.ok:
         raise RuntimeError(f"la voz no alinea con el guion: {alignment.errors[:2]}")
