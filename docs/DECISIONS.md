@@ -3154,6 +3154,13 @@ tras un silencio corto (estaba en todas las locuciones): `trim_tail_noise` lo
 corta antes de alinear (UM/DU/EF). El alineador separa palabras que whisper
 funde ("Arasanjuan", "Bosriojana") y corre hacia atrás el redondeo del último
 segmento (hasta 1,5 s); subtítulo marker con más separación.
+**Misma voz en todo y DU en rojo oscuro** (pedido del responsable, 15/11): le
+gustó mucho la voz del Datos útiles de Vialidad (Gemini 3.8 Flash, Fenrir,
+dirección enérgica, ritmo 1.0, sin el ruido final) y pidió que sea "así
+siempre": EF deja su dirección propia y su ritmo 1.12 y usa la misma. En DU el
+amarillo pasa a rojo oscuro (`#8B0F1D`): donde era fondo va con texto blanco;
+donde era texto sobre el navy, blanco o rojo claro (el rojo oscuro no se lee).
+EF conserva el amarillo sobre su fondo rojo.
 
 ## 2026-11-15 — Limpieza automática de disco
 

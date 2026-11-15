@@ -24,6 +24,20 @@ import { V2_FONT_SANS } from "../tokens";
 
 export const FORMAT_REEL_FPS = 30;
 const C = { red: "#B30000", blue: "#2F6FB0", navy: "#0B2F4F", ink: "#0A0D12", gold: "#FFD15C", green: "#1E7A46" };
+// Datos útiles: el responsable pidió rojo oscuro en vez del amarillo (2026-11-15).
+// Donde el amarillo era fondo va rojo oscuro con texto blanco; donde era texto
+// sobre el navy, blanco o un rojo claro legible (el rojo oscuro no se lee ahí).
+const DU_RED = "#8B0F1D";
+const DU_SOFT = "#F5B5BB";
+// Acento oscuro (DU) → texto blanco encima y versión clara para escribir sobre fondo oscuro.
+const isDarkHex = (hex: string) => {
+  const m = hex.replace("#", "").match(/^[0-9a-f]{6}$/i);
+  if (!m) return false;
+  const n = parseInt(m[0], 16);
+  return 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255) < 110;
+};
+const inkOn = (acc: string) => (isDarkHex(acc) ? "#fff" : C.ink);
+const onDark = (acc: string) => (isDarkHex(acc) ? "#FF6B75" : acc);
 const MONO = "LVR Mono";
 const EASE = Easing.bezier(0.2, 0.8, 0.2, 1);
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
@@ -232,7 +246,7 @@ const DuHead: React.FC = () => {
         <Img src={staticFile("logo.png")} style={{ width: 56, height: 56, borderRadius: "50%", background: "#fff" }} />
         LA VOZ RIOJANA
       </div>
-      <div style={{ position: "absolute", right: 56, top: 126, background: C.gold, color: C.navy, fontWeight: 900, fontStretch: "75%", fontSize: 32, padding: "10px 18px", borderRadius: 30, ...popStyle(frame) }}>DATO ÚTIL</div>
+      <div style={{ position: "absolute", right: 56, top: 126, background: DU_RED, color: "#fff", fontWeight: 900, fontStretch: "75%", fontSize: 32, padding: "10px 18px", borderRadius: 30, ...popStyle(frame) }}>DATO ÚTIL</div>
     </>
   );
 };
@@ -247,7 +261,7 @@ const TitleWords: React.FC<{ words: WordT[]; from: number; to: number; abs: numb
         const cur = k === cw;
         return (
           <React.Fragment key={k}>
-            <span style={cur ? { background: acc, color: C.ink, boxShadow: `0 0 0 .05em ${acc}`, WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" } : undefined}>
+            <span style={cur ? { background: acc, color: inkOn(acc), boxShadow: `0 0 0 .05em ${acc}`, WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" } : undefined}>
               {upper ? w.t.toUpperCase() : w.t}
             </span>{" "}
           </React.Fragment>
@@ -292,7 +306,7 @@ const HookDU: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
       </h2>
       {q < b.words.length ? (
         <div style={{ position: "absolute", left: 56, top: 1300, ...popStyle(frame - ctaAt) }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 18, background: C.gold, color: C.navy, borderRadius: 70, padding: "22px 40px", fontWeight: 900, fontStretch: "78%", fontSize: 64, transform: "rotate(-2deg)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 18, background: DU_RED, color: "#fff", borderRadius: 70, padding: "22px 40px", fontWeight: 900, fontStretch: "78%", fontSize: 64, transform: "rotate(-2deg)" }}>
             <span><TitleWords words={b.words} from={q} to={b.words.length} abs={frame + b.from} acc="#ffffff" upper={false} /></span>
             <span style={{ display: "inline-block", transform: `translateY(${bounce}px)` }}>👇</span>
           </div>
@@ -323,7 +337,7 @@ const MapBox: React.FC<{ place: NonNullable<FormatReelProps["place"]>; acc: stri
 const MapChips: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   const frame = useCurrentFrame();
   const left = p.place ? 610 : 56;
-  const styles: [string, string, string | undefined][] = [[p.accent, C.ink, undefined], [C.red, "#fff", undefined], [C.ink, "#fff", `12px solid ${p.accent}`]];
+  const styles: [string, string, string | undefined][] = [[p.accent, inkOn(p.accent), undefined], [C.red, "#fff", undefined], [C.ink, "#fff", `12px solid ${p.accent}`]];
   const tops = [500, 720, 900];
   return (
     <AbsoluteFill>
@@ -381,7 +395,7 @@ const NumberBeat: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
   return (
     <AbsoluteFill>
       <Bug />
-      <div style={{ position: "absolute", left: 0, right: 0, top: 360, textAlign: "center", fontWeight: 900, fontStretch: "62%", fontSize: box.fontSize, lineHeight: 0.85, color: p.accent, ...slamStyle(frame) }}>{counted(b.value, frame)}</div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 360, textAlign: "center", fontWeight: 900, fontStretch: "62%", fontSize: box.fontSize, lineHeight: 0.85, color: onDark(p.accent), ...slamStyle(frame) }}>{counted(b.value, frame)}</div>
       <div style={{ position: "absolute", left: 60, right: 60, top: 770, textAlign: "center", fontWeight: 900, fontStretch: "72%", fontSize: 100, lineHeight: 0.95, ...riseStyle(frame - labelAt) }}>{b.label.toUpperCase()}</div>
       {b.detail ? <Stamp f={frame - (b.detailAt - b.from)} text={b.detail} x={170} right={170} y={1020} r={-4} bg={C.green} size={74} center /> : null}
     </AbsoluteFill>
@@ -408,7 +422,7 @@ const CheckBeat: React.FC = () => {
 // número gigante con sticker de unidad, lista = fichas grandes con ícono,
 // texto = nota adhesiva.
 const Badge: React.FC<{ n: number; size: number }> = ({ n, size }) => (
-  <span style={{ width: size, height: size, borderRadius: "50%", background: C.gold, color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: size * 0.56, flex: "none" }}>{n}</span>
+  <span style={{ width: size, height: size, borderRadius: "50%", background: DU_RED, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: size * 0.56, flex: "none" }}>{n}</span>
 );
 
 const lit = (f: number): React.CSSProperties => (f < 0 ? { opacity: 0.2, filter: "grayscale(1)" } : { opacity: 1, ...popStyle(f) });
@@ -438,8 +452,8 @@ const DateCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, f
         <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: d ? 320 : 100, lineHeight: 1, padding: d ? "8px 0 22px" : "46px 20px", ...lit(frame - valueAt) }}>{d ? d.day : b.value.toUpperCase()}</div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <Label text={b.label} color={C.gold} />
-        {b.pill ? <div style={{ display: "inline-block", marginTop: 20, background: C.gold, color: C.navy, borderRadius: 40, padding: "10px 24px", fontWeight: 900, fontStretch: "78%", fontSize: 46, ...popStyle(frame - 4) }}>{b.pill.toUpperCase()}</div> : null}
+        <Label text={b.label} color={DU_SOFT} />
+        {b.pill ? <div style={{ display: "inline-block", marginTop: 20, background: DU_RED, color: "#fff", borderRadius: 40, padding: "10px 24px", fontWeight: 900, fontStretch: "78%", fontSize: 46, ...popStyle(frame - 4) }}>{b.pill.toUpperCase()}</div> : null}
         <div style={{ fontWeight: 900, fontStretch: "70%", fontSize: 72, lineHeight: 0.95, marginTop: 16, color: "#fff", ...lit(frame - valueAt) }}>{b.value.toUpperCase()}</div>
         <Detail b={b} frame={frame} color="rgba(255,255,255,.85)" />
       </div>
@@ -447,16 +461,16 @@ const DateCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, f
   );
 };
 
-// Monto: ticket navy troquelado, cifra dorada con contador.
+// Monto: ticket rojo oscuro troquelado, cifra blanca con contador.
 const AmountCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
   const f = frame - Math.min(valueAt, 12);
   const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
   const notch = (side: "left" | "right"): React.CSSProperties => ({ position: "absolute", top: 232, [side]: -34, width: 68, height: 68, borderRadius: "50%", background: "rgba(11,47,79,.95)" });
   return (
-    <div style={{ position: "relative", background: C.navy, borderRadius: 34, padding: "40px 50px 44px", boxShadow: "0 26px 60px rgba(0,0,0,.45)", border: `5px solid ${C.gold}` }}>
-      <Label text={b.label} color={C.gold} />
-      <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: 250, lineHeight: 0.95, color: C.gold, marginTop: 20 }}>{shown}</div>
-      <div style={{ borderTop: "6px dashed rgba(255,209,92,.6)", margin: "22px -50px 0" }} />
+    <div style={{ position: "relative", background: DU_RED, borderRadius: 34, padding: "40px 50px 44px", boxShadow: "0 26px 60px rgba(0,0,0,.45)", border: "5px solid #fff" }}>
+      <Label text={b.label} color={DU_SOFT} />
+      <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: 250, lineHeight: 0.95, color: "#fff", marginTop: 20 }}>{shown}</div>
+      <div style={{ borderTop: "6px dashed rgba(255,255,255,.5)", margin: "22px -50px 0" }} />
       <span style={notch("left")} />
       <span style={notch("right")} />
       {b.detail || b.pill ? <div style={{ fontSize: 42, fontWeight: 800, color: "#fff", marginTop: 22, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.detail || b.pill}</div> : null}
@@ -470,10 +484,10 @@ const NumberCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b,
   const shown = f < 0 ? b.value.replace(/[\d.]+/, "0") : counted(b.value, f);
   return (
     <div style={{ position: "relative", textAlign: "center", paddingTop: 10 }}>
-      <Label text={b.label} color={C.gold} />
+      <Label text={b.label} color={DU_SOFT} />
       <div style={{ fontWeight: 900, fontStretch: "62%", fontSize: 420, lineHeight: 0.85, color: "#fff", textShadow: "0 18px 50px rgba(0,0,0,.5)", marginTop: 18 }}>{shown}</div>
       {b.unit ? (
-        <div style={{ display: "inline-block", marginTop: 6, background: C.gold, color: C.navy, fontWeight: 900, fontStretch: "70%", fontSize: 92, padding: "8px 34px", borderRadius: 14, boxShadow: "0 14px 34px rgba(0,0,0,.4)", ...stampStyle(frame - Math.min(valueAt + 10, 22), -4) }}>{b.unit.toUpperCase()}</div>
+        <div style={{ display: "inline-block", marginTop: 6, background: DU_RED, color: "#fff", fontWeight: 900, fontStretch: "70%", fontSize: 92, padding: "8px 34px", borderRadius: 14, boxShadow: "0 14px 34px rgba(0,0,0,.4)", ...stampStyle(frame - Math.min(valueAt + 10, 22), -4) }}>{b.unit.toUpperCase()}</div>
       ) : null}
       {b.pill || b.detail ? <div style={{ fontSize: 42, fontWeight: 800, color: "#fff", marginTop: 26, ...riseStyle(frame - (b.detailAt - b.from)) }}>{b.pill || b.detail}</div> : null}
     </div>
@@ -486,7 +500,7 @@ const ListCard: React.FC<{ b: BeatT; frame: number }> = ({ b, frame }) => {
   const two = opts.length === 2;
   return (
     <div>
-      <Label text={b.label} color={C.gold} />
+      <Label text={b.label} color={DU_SOFT} />
       <div style={{ display: "flex", flexDirection: two ? "row" : "column", gap: 28, marginTop: 26 }}>
         {opts.map((it, i) => {
           const f = frame - (it.at - b.from);
@@ -503,18 +517,18 @@ const ListCard: React.FC<{ b: BeatT; frame: number }> = ({ b, frame }) => {
   );
 };
 
-// Texto: nota adhesiva dorada.
+// Texto: nota adhesiva rojo oscuro.
 const NoteCard: React.FC<{ b: BeatT; frame: number; valueAt: number }> = ({ b, frame, valueAt }) => {
   const box = fit({ text: b.value.toUpperCase(), maxWidth: 780, maxHeight: 300, min: 80, max: 140, weight: 900, lh: 0.95, stretch: "condensed", maxLines: 3, uppercase: true });
   return (
-    <div style={{ position: "relative", background: C.gold, color: C.navy, borderRadius: 8, padding: "56px 54px 48px", boxShadow: "0 30px 60px rgba(0,0,0,.45)" }}>
+    <div style={{ position: "relative", background: DU_RED, color: "#fff", borderRadius: 8, padding: "56px 54px 48px", boxShadow: "0 30px 60px rgba(0,0,0,.45)" }}>
       <span style={{ position: "absolute", top: -26, left: "50%", width: 180, height: 52, marginLeft: -90, background: "rgba(255,255,255,.55)", transform: "rotate(-3deg)" }} />
-      <Label text={b.label} color={C.navy} />
+      <Label text={b.label} color={DU_SOFT} />
       {b.pill ? <div style={{ fontWeight: 900, fontStretch: "78%", fontSize: 46, marginTop: 14 }}>{b.pill.toUpperCase()}</div> : null}
       <div style={{ fontWeight: 900, fontStretch: "66%", fontSize: box.fontSize, lineHeight: 0.95, marginTop: 14, ...lit(frame - valueAt) }}>
         {box.lines.map((l, i) => <div key={i}>{l}</div>)}
       </div>
-      <Detail b={b} frame={frame} color={C.navy} />
+      <Detail b={b} frame={frame} color="#fff" />
     </div>
   );
 };
@@ -721,7 +735,8 @@ const MapEF: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
       ) : null}
       <div style={{ position: "absolute", left: 56, right: 56, top: pl ? 1090 : 600, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 14 }}>
         {b.items.slice(0, 3).map((it, i) => {
-          const f = frame - (it.at - b.from);
+          // Sin mapa (lugar fuera del nomenclador riojano) los chips entran enseguida: si no, el tramo queda vacío.
+          const f = frame - (pl ? it.at - b.from : 4 + i * 8);
           return (
             <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 10, background: i % 2 ? C.red : "#fff", color: i % 2 ? "#fff" : C.navy, fontWeight: 900, fontStretch: "72%", fontSize: pl ? 48 : 80, padding: "14px 22px", boxShadow: "0 12px 28px rgba(0,0,0,.35)", ...(f < 0 ? { opacity: 0 } : popStyle(f)) }}>
               {i === 0 ? <Pin color={C.navy} size={pl ? 40 : 64} /> : null}
@@ -903,21 +918,21 @@ const Captions: React.FC<{ p: FormatReelProps; b: BeatT }> = ({ p, b }) => {
     }
     if (b.cap === "marker") {
       const st: React.CSSProperties = { ...common, fontSize: 72, color: "#fff", textShadow: shadow, opacity: v ? 1 : 0, transform: v ? (cur ? "scale(1.08)" : "none") : "translateY(16px)" };
-      if (key && v) Object.assign(st, { background: acc, color: C.ink, padding: "0 12px", borderRadius: 4, textShadow: "none", transform: "rotate(-1.5deg)" });
+      if (key && v) Object.assign(st, { background: acc, color: inkOn(acc), padding: "0 12px", borderRadius: 4, textShadow: "none", transform: "rotate(-1.5deg)" });
       return <span key={k} style={st}>{w.t}</span>;
     }
     if (b.cap === "callout") {
-      return <span key={k} style={{ ...common, fontSize: 56, color: cur || (key && v) ? acc : "#fff", opacity: v ? 1 : 0 }}>{w.t}</span>;
+      return <span key={k} style={{ ...common, fontSize: 56, color: cur || (key && v) ? onDark(acc) : "#fff", opacity: v ? 1 : 0 }}>{w.t}</span>;
     }
     if (b.cap === "pop") {
       const longest = Math.max(...cue.map((i) => b.words[i].t.length));
       const pf = Math.min(150, Math.floor(1700 / Math.max(1, longest)));
       const pw = cur ? prog(abs - msToFrame(w.s), 0.28) : 1;
-      return <span key={k} style={{ ...common, fontSize: pf, lineHeight: 0.95, textTransform: "uppercase", color: key && v ? acc : "#fff", textShadow: shadow, opacity: v ? pw : 0, transform: cur ? `scale(${1.7 - 0.7 * pw})` : "none" }}>{w.t}</span>;
+      return <span key={k} style={{ ...common, fontSize: pf, lineHeight: 0.95, textTransform: "uppercase", color: key && v ? onDark(acc) : "#fff", textShadow: shadow, opacity: v ? pw : 0, transform: cur ? `scale(${1.7 - 0.7 * pw})` : "none" }}>{w.t}</span>;
     }
     // chunk
-    const st: React.CSSProperties = { ...common, fontSize: 66, color: key && v ? acc : "#fff", textShadow: shadow, opacity: v ? 1 : 0.28 };
-    if (cur) Object.assign(st, { transform: "scale(1.12) rotate(-1.5deg)", color: C.ink, background: acc, padding: "0 12px", textShadow: "none", borderRadius: 6 });
+    const st: React.CSSProperties = { ...common, fontSize: 66, color: key && v ? onDark(acc) : "#fff", textShadow: shadow, opacity: v ? 1 : 0.28 };
+    if (cur) Object.assign(st, { transform: "scale(1.12) rotate(-1.5deg)", color: inkOn(acc), background: acc, padding: "0 12px", textShadow: "none", borderRadius: 6 });
     return <span key={k} style={st}>{w.t}</span>;
   };
   if (b.cap === "pill") {

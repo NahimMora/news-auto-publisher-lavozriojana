@@ -58,9 +58,10 @@ FPS = 30
 COMPOSITION = "FormatReel"
 CLOSING = {"um": "Seguí a La Voz Riojana.", "du": "Compartilo y guardalo.", "ef": "Seguí a La Voz Riojana."}
 BADGE = {"um": "ÚLTIMO MOMENTO", "du": "DATO ÚTIL", "ef": "UN DÍA COMO HOY"}
-ACCENT = {"um": "#FF7A1A", "du": "#FFD15C", "ef": "#FFD15C"}
+# DU: rojo oscuro en vez del amarillo (pedido del responsable, 2026-11-15; el componente pone texto blanco encima).
+ACCENT = {"um": "#FF7A1A", "du": "#8B0F1D", "ef": "#FFD15C"}
 # Ritmo de la voz por formato (atempo de ffmpeg sobre la locución 3.x).
-TEMPO_DEFAULT = {"um": "1.0", "du": "1.0", "ef": "1.12"}
+TEMPO_DEFAULT = {"um": "1.0", "du": "1.0", "ef": "1.0"}  # EF igual que DU desde el 15/11 (misma voz en todo)
 DIRECTION = (
     "Sos el locutor de último momento de un medio de La Rioja, Argentina. Voz potente, enérgica y urgente, "
     "que atrape desde la primera palabra, como un flash informativo de radio. Ritmo rápido y decidido, sin atropellarte "
@@ -68,13 +69,6 @@ DIRECTION = (
     "natural: seseo, voseo, la 'll' y la 'y' como una 'ye' suave, nunca la 'sh' porteña. Golpeá la primera frase y "
     "remarcá cifras, lugares y lo que pasó. Nada de tono solemne, cansino ni de asistente virtual. Leé exactamente este "
     "texto, sin agregar, quitar ni cambiar palabras:\n\n"
-)
-EF_DIRECTION = (
-    "Sos el locutor de efemérides de un medio de La Rioja, Argentina. Voz firme, clara y cálida, de narrador de historia "
-    "que atrapa desde la primera palabra. Ritmo ágil, sin atropellarte ni comerte sílabas, con pausas mínimas entre frases. "
-    "Si el hecho es una tragedia, tono respetuoso y sobrio, sin dramatizar. Español argentino con tonada riojana natural: "
-    "seseo, voseo, la 'll' y la 'y' como una 'ye' suave, nunca la 'sh' porteña. Remarcá fechas, años, nombres y lugares. "
-    "Leé exactamente este texto, sin agregar, quitar ni cambiar palabras:\n\n"
 )
 NO_INVENT = (
     "Usá SOLO datos que estén escritos en la nota: no inventes cifras, fechas, días, horarios, lugares, personas, "
@@ -952,7 +946,9 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     rel = os.path.relpath(work, public).replace("\\", "/")
     wav = os.path.join(work, "voz.wav")
     tempo = os.getenv(f"FORMAT_REELS_{plan.kind.upper()}_TEMPO") or os.getenv("FORMAT_REELS_TEMPO") or TEMPO_DEFAULT.get(plan.kind, "1.0")
-    seconds = nn.synthesize(plan.text, wav, direction=EF_DIRECTION if plan.kind == "ef" else DIRECTION, tempo=tempo, voice=voice(),
+    # Misma voz en los tres formatos: la del Datos útiles del 14/11 que el responsable
+    # pidió dejar "así siempre" (Gemini 3.8 Flash, Fenrir, dirección enérgica).
+    seconds = nn.synthesize(plan.text, wav, direction=DIRECTION, tempo=tempo, voice=voice(),
                            model=os.getenv("FORMAT_REELS_TTS_MODEL", "gemini-3.8-flash-tts"))
     seconds = trim_tail_noise(wav, seconds)
     alignment = align_clip(wav, plan.text, int(seconds * 1000))
