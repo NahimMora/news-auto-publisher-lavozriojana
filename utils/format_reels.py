@@ -645,9 +645,10 @@ def ef_blockers(entry: dict) -> list[str]:
     return out
 
 
-def validate_ef(entry: dict, cand: nn.Candidate, today) -> tuple[Plan | None, list[str]]:
+def validate_ef(entry: dict, cand: nn.Candidate, today, *, scope: str = "") -> tuple[Plan | None, list[str]]:
     """Plan de la efeméride. Todo lo que se dice y se lee se controla contra la
-    nota fuente; los años se calculan (no se copian de la nota)."""
+    nota fuente; los años se calculan (no se copian de la nota). Con
+    ``scope="riojana"`` el gancho tiene que decir el vínculo con La Rioja."""
     warnings: list[str] = []
     md = ef_month_day(entry)
     year = entry.get("anio")
@@ -655,10 +656,16 @@ def validate_ef(entry: dict, cand: nn.Candidate, today) -> tuple[Plan | None, li
         return None, ["fecha o año inválidos"]
     years = today.year - year
     hook = _sentence(_clean(entry.get("gancho"), 160))
-    if not 4 <= _words(hook) <= 16:
-        warnings.append("gancho: tiene que tener de 4 a 16 palabras")
+    max_words = 18 if scope == "riojana" else 16
+    if not 4 <= _words(hook) <= max_words:
+        warnings.append(f"gancho: tiene que tener de 4 a {max_words} palabras")
     if str(year) not in hook:
         warnings.append("gancho: tiene que nombrar el año del hecho")
+    if scope == "riojana" and "rioj" not in nn._fold(hook):
+        # El vínculo riojano es lo que hace que le importe a nuestra audiencia.
+        warnings.append("gancho: es una efeméride riojana y no lo dice; nombrá La Rioja o decí riojano/riojana")
+    if scope == "riojana" and re.search(r"\bvinculad[oa]s?\b", nn._fold(hook)):
+        warnings.append("gancho: decí el vínculo concreto con La Rioja (nació, murió, vivió en...), no 'vinculado'")
     beats = [Beat("hook", "title", 0, hook)]
     warnings += _fact_check([hook], cand, "gancho")
     place = _clean(entry.get("lugar"), 40)

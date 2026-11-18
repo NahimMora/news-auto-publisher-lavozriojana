@@ -897,6 +897,17 @@ const Outro: React.FC<{ p: FormatReelProps }> = ({ p }) => {
 
 // ── Subtítulos (cinco formas del prototipo) ──────────────────────────────
 // Frases cortadas en la puntuación; las largas en trozos parejos de hasta `max` palabras.
+// Una negación nunca queda separada de lo que niega ("NO HUBO | PERSONAS LESIONADAS" se
+// leía al revés): el grupo que la tiene sigue hasta 3 palabras después o hasta el fin de frase.
+const NEGATIONS = new Set(["no", "ni", "sin", "nunca", "jamas", "nadie", "nada", "ningun", "ninguna", "ninguno", "tampoco"]);
+const wordsAfterNegation = (words: WordT[], cue: number[]): number => {
+  let last = -1;
+  cue.forEach((i, j) => {
+    if (NEGATIONS.has(fold(words[i].t))) last = j;
+  });
+  return last < 0 ? Infinity : cue.length - 1 - last;
+};
+
 const cuesOf = (words: WordT[], max: number): number[][] => {
   const phrases: number[][] = [];
   let cur: number[] = [];
@@ -912,7 +923,14 @@ const cuesOf = (words: WordT[], max: number): number[][] => {
   phrases.forEach((ph) => {
     const n = Math.ceil(ph.length / max);
     const size = Math.ceil(ph.length / n);
-    for (let i = 0; i < ph.length; i += size) out.push(ph.slice(i, i + size));
+    const chunks: number[][] = [];
+    for (let i = 0; i < ph.length; i += size) {
+      const chunk = ph.slice(i, i + size);
+      const prev = chunks[chunks.length - 1];
+      if (prev && wordsAfterNegation(words, prev) < 3) chunks[chunks.length - 1] = prev.concat(chunk);
+      else chunks.push(chunk);
+    }
+    out.push(...chunks);
   });
   return out;
 };

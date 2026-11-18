@@ -449,6 +449,20 @@ _NO_BREAK_AFTER = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", 
                    "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "cien", "mil", "millones"}
 
 
+# Una negación no se separa de lo que niega: "No hubo | personas lesionadas" se lee al
+# revés si el segundo subtítulo queda solo en pantalla.
+_NEGATIONS = {"no", "ni", "sin", "nunca", "jamas", "nadie", "nada", "ningun", "ninguna", "ninguno", "tampoco"}
+_NEGATION_SPAN = 3
+
+
+def _words_after_negation(current: list) -> int | None:
+    """Palabras del cue después de su última negación (``None`` si no hay)."""
+    for k in range(len(current) - 1, -1, -1):
+        if fold(re.sub(r"[^\w]", "", current[k].text)) in _NEGATIONS:
+            return len(current) - 1 - k
+    return None
+
+
 def _can_break_after(prev: str, nxt: str) -> bool:
     p = fold(re.sub(r"[^\w]", "", prev))
     if p in _NO_BREAK_AFTER:
@@ -492,7 +506,12 @@ def build_cues(tokens: list[Token], *, offset_ms: int = 0, max_words: int = CUE_
         clause_end = bool(re.search(r"[,;:]$", token.text))
         too_long = len(text) + 1 + len(nxt.text) > max_chars or len(current) >= max_words
         breakable = _can_break_after(token.text, nxt.text)
-        if sentence_end or (clause_end and len(current) >= 2) or (too_long and breakable) or len(current) >= max_words + 2:
+        after_neg = _words_after_negation(current)
+        negation_open = after_neg is not None and after_neg < _NEGATION_SPAN
+        if negation_open:
+            breakable = False
+        hard_cap = max_words + (_NEGATION_SPAN + 1 if negation_open else 2)
+        if sentence_end or (clause_end and len(current) >= 2) or (too_long and breakable) or len(current) >= hard_cap:
             flush()
     flush()
     # Cues muy breves: se unen al siguiente si caben (sin cruzar oración).

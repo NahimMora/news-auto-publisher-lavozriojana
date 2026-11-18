@@ -364,6 +364,13 @@ SCRIPT_PROMPT = (
     "gancho: de 8 a 16 palabras. Para un hecho, natalicio o muerte empieza \"Un <día> de <mes> de <año>,\" (ej. \"Un 12 de "
     "noviembre de 1863, en Olta, asesinaban al Chacho Peñaloza.\"); para una jornada empieza \"Desde <año>, cada <día> de <mes>\" "
     "(ej. \"Desde 1999, cada 25 de noviembre el mundo dice basta a la violencia contra la mujer.\"). "
+    "El gancho tiene que frenar el scroll: después de la fecha va lo más fuerte del texto (el logro, el récord, la "
+    "tragedia, lo que lo hizo conocido), nunca una descripción genérica como \"piloto de carreras argentino\". "
+    "Si alcance es \"riojana\", el gancho TIENE que decir el vínculo CONCRETO con La Rioja tal como figura en el texto "
+    "(nació, murió, vivió, gobernó o pasó en <localidad>, La Rioja; o \"riojano\"/\"riojana\" sólo si el texto dice que "
+    "nació en La Rioja), nunca un vago \"vinculado a La Rioja\": es lo que hace que le importe a la audiencia; puede "
+    "tener hasta 18 palabras (ej. \"Un 18 de noviembre de 1932 nacía Nasif Estéfano, el piloto que murió en la curva de "
+    "Aimogasta, La Rioja.\"). En ese caso, donde cuenta ese vínculo riojano. "
     "Si se te da una conmemoracion de la fecha (ley, día nacional), usala en fecha_hoy. "
     "lugar: la localidad o el lugar del hecho tal como figura en el texto (vacío si no hay uno). "
     "quien: el protagonista (persona, nave, institución): locucion de 6 a 12 palabras; apodo corto (máx. 24, puede ir vacío); "
@@ -385,13 +392,19 @@ def _source_text(item: Item, day: date, body: str, related: list[Item] | None = 
     return f"{head}{extra}\n{body}"
 
 
+def scope_of(item: Item) -> str:
+    """riojana | nacional | internacional: cambia el gancho y las etiquetas del posteo."""
+    return "riojana" if item.riojan else ("nacional" if item.argentine else "internacional")
+
+
 def write_entry(item: Item, day: date, cand: nn.Candidate, *, pic: Photo | None = None, related: list[Item] | None = None,
                 completion=None, attempts: int = 4) -> tuple[dict | None, list[str]]:
     from utils import format_reels as fr
     from utils.ai_client import chat_completion
 
     completion = completion or chat_completion
-    payload = json.dumps({"fecha": f"{day.day} de {MONTHS_ES[day.month - 1]}", "anio": item.year, "efemeride": item.text,
+    scope = scope_of(item)
+    payload = json.dumps({"fecha": f"{day.day} de {MONTHS_ES[day.month - 1]}", "anio": item.year, "efemeride": item.text, "alcance": scope,
                           "conmemoracion": [r.text for r in related or []],
                           "foto": {"archivo": pic.name, "descripcion": pic.description} if pic else None,
                           "texto": cand.body[:9000]}, ensure_ascii=False)
@@ -424,7 +437,7 @@ def write_entry(item: Item, day: date, cand: nn.Candidate, *, pic: Photo | None 
         for key in ("quien", "donde", "anios", "fecha_hoy"):
             if isinstance(raw.get(key), dict):
                 entry[key] = raw[key]
-        plan, warnings = fr.validate_ef(entry, cand, day)
+        plan, warnings = fr.validate_ef(entry, cand, day, scope=scope)
         if plan and not warnings:
             return entry, []
         logger.info("Guion EF automático, intento %s/%s con observaciones: %s", attempt, attempts, warnings[:5])
@@ -462,7 +475,7 @@ def prepare(day: date, *, getter=None, completion=None) -> AutoEf:
         if not entry:
             reasons.append(f"{item.id}: guion: {(warnings or ['sin guion'])[0]}")
             continue
-        scope = "riojana" if item.riojan else ("nacional" if item.argentine else "internacional")
+        scope = scope_of(item)
         logger.info("Efeméride automática %s (%s, prioridad %s): %s", day.isoformat(), scope, prio, item.text[:90])
         return AutoEf(item=item, entry=entry, cand=cand, photo=pic, scope=scope, article_url=url)
     raise NoEfemeride("; ".join(reasons)[:300])

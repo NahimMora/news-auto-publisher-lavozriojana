@@ -271,7 +271,7 @@ def run_ef_auto(state: dict, today) -> tuple[str, dict]:
     except Exception as exc:  # noqa: BLE001 — red, Wikipedia o IA: sin marca, se reintenta en el próximo ciclo
         logger.error("Efeméride automática: falló la preparación: %s: %s", type(exc).__name__, exc)
         return "error", {"ef": "fuente_ilegible"}
-    plan, warnings = fr.validate_ef(auto.entry, auto.cand, today)
+    plan, warnings = fr.validate_ef(auto.entry, auto.cand, today, scope=auto.scope)
     if not plan or warnings:
         fr.mark("ef", key, status="rejected", reason="guion sin datos verificables", warnings=warnings[:5], day=day)
         return "no_work", {"ef": "sin efeméride automática"}

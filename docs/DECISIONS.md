@@ -3252,3 +3252,21 @@ Remotion: `PhotoBackdrop` en `FormatReel.tsx` y prop `gallery`.
 **QA**: render real sin publicar (granizo en Catuna, 2 fotos, 18,5 s), revisado cuadro
 por cuadro.
 **Rollback**: `FORMAT_REELS_UM_PHOTO_ENABLED=false` en el script de arranque y reiniciar.
+
+## 2026-11-18 — Negaciones juntas en subtítulos; efeméride riojana con vínculo concreto
+
+**Contexto**: en el tramo "balance" de UM, "no hubo personas lesionadas" se mostró como
+"NO HUBO" y después "✓ PERSONAS LESIONADAS", que se lee al revés. La efeméride de Nasif
+Estéfano salió sin mencionar La Rioja (murió en la curva de Aimogasta; nació en
+Concepción, Tucumán). El responsable pidió reglas generales, no correcciones puntuales.
+**Decisión**: (1) subtítulos de Reels de formato (`cuesOf` en `FormatReel.tsx`) y del
+noticiero (`build_cues`): una negación (no, ni, sin, nunca, nadie, ningún, tampoco...)
+queda en el mismo subtítulo que lo que niega, hasta 3 palabras después o hasta el fin de
+la frase. (2) EF automática: el alcance (`scope_of`) llega al guion; si es riojana, el
+gancho tiene que decir el vínculo concreto con La Rioja tal como figura en la fuente
+(nació, murió, vivió en...), nunca "vinculado a"; el validador lo exige (hasta 18
+palabras) y el gancho tiene que priorizar lo más fuerte del texto sobre una descripción
+genérica. No se agrega ningún filtro de fotos crudas: si está en la nota, va.
+**Evidencia**: `tests/test_newscast_v3.py`, `tests/test_format_reels.py`; guion real de
+hoy regenerado sin publicar: "Un 18 de noviembre de 1932 nacía Nasif Estéfano, quien
+murió en Aimogasta, La Rioja."

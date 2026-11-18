@@ -433,6 +433,23 @@ class EfemeridesTests(unittest.TestCase):
         self.assertTrue(any("caudillo" in w for w in warnings), warnings)
         self.assertTrue(any("Pablo Irrazábal" in w for w in warnings), warnings)
 
+    def test_riojan_hook_must_say_la_rioja(self):
+        import copy
+        import datetime
+
+        entry = copy.deepcopy(EF_ENTRY)
+        entry["gancho"] = "Un 12 de noviembre de 1863 asesinaban al Chacho Peñaloza."
+        day = datetime.date(2027, 11, 12)
+        _plan, warnings = fr.validate_ef(entry, self.ef_cand(), day, scope="riojana")
+        self.assertTrue(any("riojana y no lo dice" in w for w in warnings), warnings)
+        # Sin alcance riojano no se exige.
+        self.assertFalse(any("riojana" in w for w in fr.validate_ef(entry, self.ef_cand(), day)[1]))
+        entry["gancho"] = "Un 12 de noviembre de 1863 asesinaban en Olta al riojano Chacho Peñaloza."
+        self.assertEqual([], fr.validate_ef(entry, self.ef_cand(), day, scope="riojana")[1])
+        # Un vínculo vago no alcanza: hay que decir el concreto.
+        entry["gancho"] = "Un 12 de noviembre de 1863 moría el Chacho Peñaloza, vinculado a La Rioja."
+        self.assertTrue(any("vínculo concreto" in w for w in fr.validate_ef(entry, self.ef_cand(), day, scope="riojana")[1]))
+
     def test_screen_text_longer_than_its_slot_is_asked_again(self):
         import copy
         import datetime

@@ -126,6 +126,16 @@ class CueTests(unittest.TestCase):
             self.assertLessEqual(len(cue["text"]), na.CUE_MAX_CHARS + 8)
         self.assertNotEqual(cues[-1]["text"], "local.")
 
+    def test_negation_stays_with_what_it_negates(self):
+        # "No hubo | personas lesionadas" se leía al revés cuando el segundo cue quedaba solo.
+        for text in ("A pesar de la magnitud, no hubo personas lesionadas durante el episodio ocurrido.",
+                     "Los vecinos aseguran que nunca vieron algo así en el barrio de la capital."):
+            for cue in na.build_cues(_tokens(text), max_words=4, max_chars=24, min_ms=0):
+                words = [na.fold(w.strip(".,")) for w in cue["text"].split()]
+                for neg in ("no", "nunca"):
+                    if neg in words:
+                        self.assertGreaterEqual(len(words) - 1 - words.index(neg), 3, cue["text"])
+
     def test_cues_cut_at_sentence_end(self):
         cues = na.build_cues(_tokens("Una mujer fue detenida. La causa sigue abierta."))
         self.assertTrue(cues[0]["text"].endswith("detenida."))
