@@ -24,7 +24,7 @@ from utils.deployment import deployment_plan
 from utils.file_manager import JsonStateError
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import delete_reel_upload, publish_facebook_reel, render_reel_item
-from utils.publish_selection import video_reels_enabled
+from utils.publish_selection import local_video_reel_source_excluded, video_reels_enabled
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 
 logger = setup_logger("run_paparazzi_videos", "run_paparazzi_videos.log")
@@ -60,10 +60,15 @@ def _record_evidence(job_id: str, noticia: dict, *, ig_id: str, fb_id: str, gov_
 
 
 def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
-    """Devuelve ``completed``, ``failed``, ``deferred`` o ``skipped``."""
+    """Devuelve ``completed``, ``failed``, ``deferred``, ``skipped`` o ``dropped``."""
     noticia = dict(job.get("noticia") or {})
     # Reel local: los canales los fija el job (Instagram, y Facebook con LOCAL_VIDEO_REEL_FACEBOOK).
     channels = noticia.get("reel_channels")
+    if channels and local_video_reel_source_excluded(noticia):
+        # Encolado antes de excluir la fuente: se descarta y run_ig la publica como imagen.
+        pv.transition(job_id, status="expired", reason="source_excluded")
+        logger.info("Reel local descartado por fuente excluida: %s", str(noticia.get("titulo") or "")[:80])
+        return "dropped"
     if channels:
         instagram = instagram and "instagram" in channels
         facebook = facebook and "facebook" in channels
@@ -172,6 +177,9 @@ def main() -> StageResult:
             next_retry_at = until
             break
         outcome = _process(job_id, job, instagram=instagram, facebook=facebook)
+        if outcome == "dropped":
+            expired += 1
+            continue
         if outcome == "skipped":
             deferred += 1
             continue

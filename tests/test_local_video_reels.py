@@ -159,6 +159,16 @@ class LocalVideoReelJobsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"LOCAL_VIDEO_REEL_FACEBOOK": "true"}):
             self.assertEqual(["instagram", "facebook"], self.jobs._local_reel_fields(_local())["reel_channels"])
 
+    def test_fenix_radio_clips_are_excluded(self):
+        from utils.publish_selection import is_local_video_reel_item
+
+        self.assertFalse(is_local_video_reel_item(_local(source="fenix_locales")))
+        self.assertTrue(is_local_video_reel_item(_local(source="tiempopopular_policiales")))
+        with mock.patch.dict(os.environ, {"LOCAL_VIDEO_REEL_EXCLUDED_SOURCES": ""}):
+            self.assertTrue(is_local_video_reel_item(_local(source="fenix_locales")))
+        # Sin Reel esperado, run_ig la publica como imagen.
+        self.assertFalse(self.jobs.local_reel_expected()(_local(source="fenix_locales")))
+
     def test_extended_categories_are_eligible(self):
         from utils.publish_selection import is_local_video_reel_item
 
@@ -297,6 +307,15 @@ class LocalVideoReelStageTests(unittest.TestCase):
         self.assertEqual("completed", outcome)
         facebook.assert_called_once()
         self.assertEqual(("ig-1", "fb-1"), (evidence.call_args.kwargs["ig_id"], evidence.call_args.kwargs["fb_id"]))
+
+    def test_pending_job_from_excluded_source_is_dropped(self):
+        self.job["noticia"]["source"] = "fenix_locales"
+        with mock.patch.object(self.stage, "render_reel_item") as render:
+            outcome = self.stage._process("reel:1", self.job, instagram=True, facebook=True)
+        self.assertEqual("dropped", outcome)
+        render.assert_not_called()
+        job = json.loads(self.jobs_path.read_text(encoding="utf-8"))["jobs"]["reel:1"]
+        self.assertEqual(("expired", "source_excluded"), (job["status"], job["reason"]))
 
     def test_skipped_without_instagram(self):
         with mock.patch.object(self.stage, "render_reel_item") as render:

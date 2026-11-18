@@ -351,6 +351,34 @@ def _only_at_sentence_start(word: str, text: str) -> bool:
 _ARTICLE = re.compile(r"^(El|La|Los|Las|Un|Una)\s+\S+$")
 
 
+_UNIT_CANON = {"h": "horas", "hs": "horas", "hrs": "horas", "hora": "horas", "horas": "horas", "min": "minutos", "minuto": "minutos",
+               "minutos": "minutos", "m": "metros", "mts": "metros", "metro": "metros", "metros": "metros", "km": "km",
+               "kilometro": "km", "kilometros": "km", "ano": "anos", "anos": "anos"}
+_UNIT_RE = re.compile(r"\b(\d+(?:[.,]\d+)*|[a-z]+)\s?(hs|hrs|h|horas?|min|minutos?|mts|m|metros?|km|kilometros?|anos?)\b")
+
+
+def _unit_key(number: str) -> str | None:
+    """'30horas' → '30|horas'; ``None`` si la cifra no trae unidad."""
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)*)\s?([a-zñ]+)", _fold(number))
+    if not m or m.group(2).replace("ñ", "n") not in _UNIT_CANON:
+        return None
+    return f"{m.group(1)}|{_UNIT_CANON[m.group(2).replace('ñ', 'n')]}"
+
+
+def _unit_keys(original: str) -> set[str]:
+    """Cifras con unidad de la nota, con la unidad normalizada: "30 hs",
+    "treinta horas" y "30 horas" son la misma cifra que "30horas" del guion."""
+    from pipeline.node_webapp.editorial import _SPANISH_NUMBER_WORDS
+
+    keys = set()
+    for m in _UNIT_RE.finditer(_fold(original).replace("ñ", "n")):
+        value = m.group(1)
+        value = value if value[0].isdigit() else _SPANISH_NUMBER_WORDS.get(value, "")
+        if value:
+            keys.add(f"{value}|{_UNIT_CANON[m.group(2)]}")
+    return keys
+
+
 def factual_warnings(text: str, sources: list[Candidate], label: str) -> list[str]:
     """Cifras y nombres propios del guion que no figuran en las notas. Una
     cifra que surge de sumar notas distintas tampoco figura: se rechaza."""
@@ -358,8 +386,11 @@ def factual_warnings(text: str, sources: list[Candidate], label: str) -> list[st
 
     original = "\n".join(f"{c.title}\n{c.body}\n{' '.join(c.localities)}" for c in sources)
     known_numbers = _extract_numbers(original)
+    known_units = _unit_keys(original)
     warnings = []
     for number in sorted(_extract_numbers(text, include_uno=False) - known_numbers):
+        if _unit_key(number) in known_units:
+            continue
         warnings.append(f"{label}: la cifra '{number}' no está en las notas")
     for noun in sorted(_extract_proper_nouns(text)):
         if noun in {"La Voz Riojana", "La Rioja", "Rioja", "Riojana"}:

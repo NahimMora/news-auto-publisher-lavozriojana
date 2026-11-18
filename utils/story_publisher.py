@@ -18,6 +18,7 @@ import io
 import os
 import tempfile
 import time
+from urllib.parse import urlparse
 
 from PIL import Image
 
@@ -132,10 +133,22 @@ def render_story(props: dict, asset_path: str | None = None) -> bytes:
         return out.getvalue()
 
 
+# Wikimedia responde 429 a un User-Agent genérico: su política pide uno que
+# identifique al cliente con un contacto (las fotos de efemérides vienen de ahí).
+_DESCRIPTIVE_UA = "LaVozRiojanaBot/1.0 (+https://lavozriojana.com)"
+
+
+def _user_agent(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if host.endswith(("wikimedia.org", "wikipedia.org")):
+        return _DESCRIPTIVE_UA
+    return "LaVozRiojanaBot/1.0"
+
+
 def download_image(url: str, max_bytes: int = 15 * 1024 * 1024) -> str | None:
     """Baja una imagen pública a un archivo temporal JPEG (o ``None``)."""
     try:
-        response = safe_get(url, timeout=40, headers={"User-Agent": "LaVozRiojanaBot/1.0"})
+        response = safe_get(url, timeout=40, headers={"User-Agent": _user_agent(url)})
     except (UnsafeURLError, Exception) as exc:  # noqa: BLE001 — cualquier fallo de red deja la pieza sin imagen
         logger.warning("No se pudo bajar la imagen: %s", type(exc).__name__)
         return None

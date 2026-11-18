@@ -343,7 +343,14 @@ _SCREEN_GENERIC = {"tenes", "podes", "elegi", "elegir", "elegis", "prefieras", "
                    "podras", "podran", "tenes", "tendras", "queres", "necesitas", "sirve", "servicio", "valido", "valida", "vigente"}
 _SCREEN_STOP = _SCREEN_GENERIC | {"sobre", "desde", "hasta", "entre", "para", "porque", "donde", "cuando", "todos", "todas", "nuevo", "nueva",
                 "nuevos", "nuevas", "fecha", "horario", "horarios", "lugar", "inicio", "final", "comienzo", "ultimo", "ultima",
-                "datos", "costo", "precio", "como", "anotarte", "inscripcion", "inscripciones", "cabecera", "recorrido"}
+                "datos", "costo", "precio", "como", "anotarte", "inscripcion", "inscripciones", "cabecera", "recorrido",
+                # Gramática y conectores: no son hechos y frenaban guiones correctos
+                # ("tambien", "pueden", "otros", "comienza", "realizaran"...).
+                "tambien", "ademas", "otros", "otras", "estos", "estas", "puede", "pueden", "podra", "debe", "deben",
+                "deberan", "tendra", "tendran", "habra", "seran", "estara", "estaran", "realizara", "realizaran", "comienza",
+                "comienzan", "comenzo", "comenzara", "empieza", "empiezan", "sigue", "siguen", "segun", "durante", "antes",
+                "despues", "luego", "mismo", "misma", "cada", "solo", "horas", "minutos", "requiere", "requieren", "limite",
+                "llega", "llegan", "quienes", "personas", "vecinos"}
 
 
 def _screen_check(texts: list[str], cand: nn.Candidate, label: str) -> list[str]:

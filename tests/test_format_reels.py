@@ -72,6 +72,22 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(fr._screen_check(["Calles dañadas", "Calle Vilcapugio"], c, "t"), [])
         self.assertTrue(fr._fact_check(["La línea 6 desvía hoy."], c, "t"))
 
+    def test_grammar_words_are_not_invented_facts(self):
+        # Frenaban guiones correctos de Datos útiles todo el día ("también", "pueden", "comienza").
+        c = cand(body="La inscripción se abrirá el lunes en la Municipalidad. Se entregarán formularios.")
+        self.assertEqual(fr._screen_check(["También pueden otros vecinos", "Comienza el lunes"], c, "t"), [])
+        self.assertTrue(fr._screen_check(["Entregan libros"], c, "t"))
+
+    def test_figures_with_units_match_other_spellings(self):
+        def warn(text, body):
+            return nn.factual_warnings(text, [cand(body=body)], "t")
+
+        self.assertEqual(warn("Dura 30 horas.", "La jornada dura 30 hs."), [])
+        self.assertEqual(warn("Subió 5 metros.", "El dique subió cinco metros."), [])
+        self.assertEqual(warn("A 907 metros.", "a 907 m de profundidad"), [])
+        self.assertTrue(warn("Dura 30 horas.", "Cuesta 30 pesos."))
+        self.assertTrue(warn("Subió 5 metros.", "Subió 5 kilómetros."))
+
     def test_question_opening_capital_is_not_a_proper_noun(self):
         c = cand(body="Se pagan los Chachos desde el lunes 16 de noviembre en Chilecito.")
         self.assertEqual(fr._fact_check(["¿Cobrás Chachos? Mirá esto."], c, "gancho"), [])
@@ -273,6 +289,18 @@ EF_ENTRY = {
 }
 
 
+class PhotoUserAgentTests(unittest.TestCase):
+    def test_wikimedia_gets_descriptive_user_agent(self):
+        # Wikimedia devolvía 429 al User-Agent genérico y la foto de la EF no bajaba.
+        from utils import story_publisher as sp
+
+        with mock.patch.object(sp, "safe_get", return_value=mock.Mock(status_code=429, content=b"x")) as get:
+            self.assertIsNone(sp.download_image("https://upload.wikimedia.org/wikipedia/commons/c/cc/x.jpg"))
+            self.assertIn("lavozriojana.com", get.call_args.kwargs["headers"]["User-Agent"])
+            sp.download_image("https://media.lavozriojana.com/x.webp")
+            self.assertEqual("LaVozRiojanaBot/1.0", get.call_args.kwargs["headers"]["User-Agent"])
+
+
 class EfemeridesTests(unittest.TestCase):
     def ef_cand(self):
         return cand(title="163 años del asesinato del Chacho Peñaloza", body=EF_BODY)
@@ -339,7 +367,9 @@ class EfStageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.dict(os.environ, {"LVR_DATA_DIR": self.tmp.name, "LVR_LOGS_DIR": self.tmp.name})
+        # EF automática apagada: con el .env del host (FORMAT_REELS_EF_AUTO=true) iba a Wikipedia real.
+        patcher = mock.patch.dict(os.environ, {"LVR_DATA_DIR": self.tmp.name, "LVR_LOGS_DIR": self.tmp.name,
+                                               "FORMAT_REELS_EF_AUTO": "false"})
         patcher.start()
         self.addCleanup(patcher.stop)
 

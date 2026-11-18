@@ -120,6 +120,14 @@ def local_video_reel_enabled() -> bool:
     return _flag("LOCAL_VIDEO_REEL_ENABLED")
 
 
+def local_video_reel_source_excluded(item: dict) -> bool:
+    """Fuentes cuyos videos no sirven como Reel (default: Fénix, que incrusta
+    recortes de su programa de radio con gente hablando a cámara)."""
+    raw = os.getenv("LOCAL_VIDEO_REEL_EXCLUDED_SOURCES", "fenix")
+    source = item_source(item)
+    return any(source.startswith(prefix.strip().lower()) for prefix in raw.split(",") if prefix.strip())
+
+
 def _local_video_reel_categories() -> set[str]:
     raw = os.getenv("LOCAL_VIDEO_REEL_CATEGORIES", "policiales,interior")
     return {value.strip().lower() for value in raw.split(",") if value.strip()}
@@ -214,6 +222,7 @@ def is_local_video_reel_item(item: dict) -> bool:
         and not item.get("social_skip_reason")
         and _is_local(item)
         and "internacional" not in item_source(item)
+        and not local_video_reel_source_excluded(item)
         and item_category(item) in _local_video_reel_categories()
     )
 

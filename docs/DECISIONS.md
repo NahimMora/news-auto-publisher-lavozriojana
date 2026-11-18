@@ -3201,3 +3201,22 @@ en Facebook la misma nota aparece como link y como video.
 **Evidencia**: `tests/test_local_video_reels.py`, `tests/test_format_reels.py`.
 **Rollback**: en el script de arranque, `LOCAL_VIDEO_REEL_CATEGORIES=policiales,interior`,
 `LOCAL_VIDEO_REEL_FACEBOOK=false`, `FORMAT_REELS_UM_MAX_PER_DAY=2`, y reiniciar el supervisor.
+
+## 2026-11-18 — Fuera los recortes de radio de Fénix; destrabe de los Reels propios
+
+**Contexto**: con el arreglo del dedup, 12 de 13 Reels locales fueron de Fénix:
+recortes de su programa de radio, gente hablando a cámara. El responsable no los
+quiere. Ese mismo día no salió ningún Reel propio: DU rechazó todos los guiones
+por palabras gramaticales ("también", "pueden", "comienza") y por cifras con unidad
+escritas distinto que en la nota ("30 horas" contra "30 hs", "5 metros" contra
+"cinco metros"); la foto de la EF (Wikimedia) devolvió 429 por el User-Agent
+genérico; UM no tuvo ninguna nota con video del lugar de 6 s o más.
+**Decisión**: `LOCAL_VIDEO_REEL_EXCLUDED_SOURCES` (default `fenix`); los jobs ya
+encolados de esa fuente pasan a `expired` (`source_excluded`) y `run_ig` publica
+la nota como imagen. Stopwords gramaticales en el control de pantalla de DU (los
+sustantivos siguen controlados). Una cifra con unidad vale si la nota trae el mismo
+número con una unidad equivalente (hs/h/horas, m/mts/metros, km/kilómetros, años,
+también en letras); con otra unidad se sigue rechazando. User-Agent con contacto
+para descargas de wikimedia.org/wikipedia.org.
+**Evidencia**: `tests/test_local_video_reels.py`, `tests/test_format_reels.py`.
+**Rollback**: `LOCAL_VIDEO_REEL_EXCLUDED_SOURCES=` (vacío) vuelve a incluir a Fénix.

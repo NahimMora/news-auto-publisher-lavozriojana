@@ -209,6 +209,8 @@ durante 3 noches; después se decide activar la publicación.
   `run_ig` la publica como imagen. El dedup por video usa el ID de YouTube
   (`youtube:<id>`): hasta el 2026-11-18 la clave cortaba la query y todo
   `watch?v=` colapsaba en una sola, por lo que sólo salió 1 de cada ~12 Reels locales.
+  `LOCAL_VIDEO_REEL_EXCLUDED_SOURCES` (default `fenix`) deja afuera a Fénix: sus videos
+  son recortes de la radio con gente hablando; esas notas salen como imagen.
 - Fuentes judiciales (2026-10-22, `SCRAPER_JUDICIALES_ENABLED`, apagado por
   defecto y activo en producción): `main_judiciales.py` lee los RSS del MPF y de
   la Función Judicial. Antes de reescribir, Gemini puntúa (0–10) y detecta el
