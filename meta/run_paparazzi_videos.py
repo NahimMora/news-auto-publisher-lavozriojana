@@ -62,7 +62,7 @@ def _record_evidence(job_id: str, noticia: dict, *, ig_id: str, fb_id: str, gov_
 def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
     """Devuelve ``completed``, ``failed``, ``deferred`` o ``skipped``."""
     noticia = dict(job.get("noticia") or {})
-    # Reel local: sólo Instagram (Facebook ya publica la nota con link a la Web).
+    # Reel local: los canales los fija el job (Instagram, y Facebook con LOCAL_VIDEO_REEL_FACEBOOK).
     channels = noticia.get("reel_channels")
     if channels:
         instagram = instagram and "instagram" in channels

@@ -10,8 +10,8 @@ publica como Reel EditorialReel en Instagram y Facebook, sin puntaje editorial
 y fuera de todo cupo del lote.
 
 Las locales de policiales/interior con YouTube incrustado
-(``is_local_video_reel_item``) van como Reel sólo a Instagram: Facebook sigue
-con su post con link. ``run_ig`` no las publica como imagen mientras se espere
+(``is_local_video_reel_item``) van como Reel a Instagram (y a Facebook con
+``LOCAL_VIDEO_REEL_FACEBOOK``): Facebook sigue además con su post con link.``run_ig`` no las publica como imagen mientras se espere
 el Reel (``local_reel_expected``) y las retoma si el Reel falla o vence.
 
 Flujo propio y separado (mismo patrón que ``utils/x_video_reels.py``): sólo
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import time
+from urllib.parse import parse_qs, urlparse
 
 from utils.file_manager import load_json, update_json
 from utils.logging_setup import setup_logger
@@ -62,8 +63,39 @@ _GIVEN_UP = {"dead_letter", "expired"}
 
 def _video_key(noticia: dict) -> str:
     """El mismo archivo de video puede venir en notas distintas (Paparazzi
-    reutiliza el clip en varias notas del mismo tema): se compara sin query."""
-    return str(noticia.get("video_url") or "").strip().split("?", 1)[0].split("#", 1)[0].lower()
+    reutiliza el clip en varias notas del mismo tema): se compara sin query.
+
+    YouTube es la excepción: en ``watch?v=ID`` el video ES la query, y sin ella
+    todos los videos locales colapsaban en la misma clave y sólo salía el primero.
+    """
+    raw = str(noticia.get("video_url") or "").strip()
+    youtube_id = _youtube_id(raw)
+    if youtube_id:
+        return f"youtube:{youtube_id}"
+    return raw.split("?", 1)[0].split("#", 1)[0].lower()
+
+
+def _youtube_id(url: str) -> str:
+    """ID de un video de YouTube (watch, youtu.be, embed, shorts, live) o ``""``."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower().removeprefix("www.").removeprefix("m.")
+    parts = [p for p in parsed.path.split("/") if p]
+    if host == "youtu.be":
+        return parts[0] if parts else ""
+    if host not in {"youtube.com", "youtube-nocookie.com"}:
+        return ""
+    if parsed.path.rstrip("/") == "/watch":
+        return (parse_qs(parsed.query).get("v") or [""])[0].strip()
+    if len(parts) >= 2 and parts[0] in {"embed", "shorts", "live", "v"}:
+        return parts[1]
+    return ""
+
+
+def _flag(name: str) -> bool:
+    return str(os.getenv(name, "false")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -85,8 +117,13 @@ def _cutoff(current: int) -> int:
 
 
 def _local_reel_fields(noticia: dict) -> dict:
-    """Reel local: el YouTube incrustado como fuente, sólo Instagram y con crédito."""
-    fields: dict = {"video_url": str(noticia["video_embed_url"]).strip(), "reel_channels": ["instagram"]}
+    """Reel local: el YouTube incrustado como fuente y con crédito.
+
+    Sólo Instagram por defecto; con ``LOCAL_VIDEO_REEL_FACEBOOK`` también sale
+    como video en Facebook, además del post con link a la Web (que no cambia).
+    """
+    channels = ["instagram", "facebook"] if _flag("LOCAL_VIDEO_REEL_FACEBOOK") else ["instagram"]
+    fields: dict = {"video_url": str(noticia["video_embed_url"]).strip(), "reel_channels": channels}
     author = str(noticia.get("video_embed_author") or "").strip()
     if author:
         fields["video_credit"] = author

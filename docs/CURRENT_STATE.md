@@ -199,11 +199,16 @@ durante 3 noches; después se decide activar la publicación.
 - Reels locales (2026-10-22, `LOCAL_VIDEO_REEL_ENABLED`, apagado por defecto y
   activo en producción): Tiempo Popular, Nueva Rioja y Fénix guardan el primer
   YouTube del cuerpo (`video_embed_url`, `video_embed_author`). Si la nota
-  seleccionada es de `LOCAL_VIDEO_REEL_CATEGORIES` (policiales, interior), en
-  Instagram sale como Reel EditorialReel desde `meta/run_paparazzi_videos.py`, con
-  "Video: <canal>" en pantalla y en el caption, fuera del tope diario y del cupo
-  por ciclo. Web y Facebook (post con link) no cambian. Si el Reel queda en
-  `dead_letter`/`expired`, `run_ig` la publica como imagen.
+  seleccionada es de `LOCAL_VIDEO_REEL_CATEGORIES` (en producción desde 2026-11-18:
+  las 10 secciones; antes policiales e interior), en Instagram sale como Reel
+  EditorialReel desde `meta/run_paparazzi_videos.py`, con "Video: <canal>" en
+  pantalla y en el caption, fuera del tope diario y del cupo por ciclo. Con
+  `LOCAL_VIDEO_REEL_FACEBOOK` (apagado por defecto, activo en producción desde
+  2026-11-18) el Reel sale también como video en Facebook; el post con link de
+  Facebook y la Web no cambian. Si el Reel queda en `dead_letter`/`expired`,
+  `run_ig` la publica como imagen. El dedup por video usa el ID de YouTube
+  (`youtube:<id>`): hasta el 2026-11-18 la clave cortaba la query y todo
+  `watch?v=` colapsaba en una sola, por lo que sólo salió 1 de cada ~12 Reels locales.
 - Fuentes judiciales (2026-10-22, `SCRAPER_JUDICIALES_ENABLED`, apagado por
   defecto y activo en producción): `main_judiciales.py` lee los RSS del MPF y de
   la Función Judicial. Antes de reescribir, Gemini puntúa (0–10) y detecta el

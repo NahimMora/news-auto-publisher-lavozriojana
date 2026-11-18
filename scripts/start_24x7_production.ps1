@@ -156,10 +156,14 @@ $env:PIPELINE_IG_MAX_PER_CYCLE = "12"
 # Fénix 95.1 (Locales): sólo notas con vínculo riojano. Ver docs/DECISIONS.md 2026-10-22.
 $env:SCRAPER_FENIX_ENABLED = "1"
 $env:SCRAPER_MEDIOSRIOJA_ENABLED = "1"
-# Locales de policiales/interior con YouTube incrustado: Reel sólo en Instagram
-# (Facebook sigue con link). Ver docs/DECISIONS.md 2026-10-22.
+# Locales con YouTube incrustado: Reel en Instagram y Facebook, de todas las
+# secciones (Facebook sigue además con su post con link). Ver docs/DECISIONS.md
+# 2026-10-22 y 2026-11-18.
 $env:LOCAL_VIDEO_REEL_ENABLED = "true"
-$env:LOCAL_VIDEO_REEL_CATEGORIES = "policiales,interior"
+$env:LOCAL_VIDEO_REEL_CATEGORIES = "policiales,interior,sociedad,economia,salud,educacion,deportes,cultura,espectaculos,politica"
+$env:LOCAL_VIDEO_REEL_FACEBOOK = "true"
+# Reel "Último momento": hasta 10 por día (antes 2). Ver docs/DECISIONS.md 2026-11-18.
+$env:FORMAT_REELS_UM_MAX_PER_DAY = "10"
 # MPF y Función Judicial: sólo puntaje >= 7 y sin casos ya cubiertos en 72 h.
 $env:SCRAPER_JUDICIALES_ENABLED = "1"
 $env:JUDICIAL_MIN_SCORE = "7"

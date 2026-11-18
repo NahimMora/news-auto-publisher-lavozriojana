@@ -232,6 +232,29 @@ class StageTests(unittest.TestCase):
             self.assertEqual(stage.run_du(state)[0], "no_work")
         self.assertEqual(plan.call_count, 1)
 
+    def _main_with_du(self, outcome):
+        from meta import run_format_reels as stage
+
+        env = {"FORMAT_REELS_UM_ENABLED": "false", "FORMAT_REELS_DU_ENABLED": "true", "FORMAT_REELS_EF_ENABLED": "false",
+               "FORMAT_REELS_DU_HOURS": "0-24"}
+        plan = mock.Mock()
+        plan.channel_enabled.return_value = True
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(stage, "deployment_plan", return_value=plan), \
+                mock.patch.object(stage.shutil, "which", return_value="ffmpeg"), \
+                mock.patch.object(stage, "run_du", return_value=outcome):
+            return stage.main()
+
+    def test_published_reel_reports_success(self):
+        # Regresión: un Reel publicado (dict) se comparaba contra un set y tiraba TypeError,
+        # el proceso moría sin StageResult y la etapa quedaba "failed" aunque hubiera publicado.
+        result = self._main_with_du(("done", {"du": {"ig": "success", "fb": "success"}}))
+        self.assertEqual((result.status.value, result.succeeded, result.failed), ("success", 1, 0))
+
+    def test_failed_reel_reports_degraded(self):
+        self.assertEqual(self._main_with_du(("done", {"du": {"ig": "failed", "fb": "skipped"}})).status.value, "degraded")
+        self.assertEqual(self._main_with_du(("error", {"du": "render_failed"})).status.value, "degraded")
+
 
 EF_BODY = (
     "El 12 de noviembre de 1863, el Chacho Peñaloza fue capturado en Olta y, tras entregar las armas, fue asesinado. "

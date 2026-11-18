@@ -154,6 +154,39 @@ class LocalVideoReelJobsTests(unittest.TestCase):
         self.jobs.transition(reel_dedup_key(note), status="dead_letter", reason="reel_render_unavailable")
         self.assertFalse(self.jobs.local_reel_expected()(note))
 
+    def test_facebook_channel_only_with_flag(self):
+        self.assertEqual(["instagram"], self.jobs._local_reel_fields(_local())["reel_channels"])
+        with mock.patch.dict(os.environ, {"LOCAL_VIDEO_REEL_FACEBOOK": "true"}):
+            self.assertEqual(["instagram", "facebook"], self.jobs._local_reel_fields(_local())["reel_channels"])
+
+    def test_extended_categories_are_eligible(self):
+        from utils.publish_selection import is_local_video_reel_item
+
+        with mock.patch.dict(os.environ, {"LOCAL_VIDEO_REEL_CATEGORIES": "policiales,interior,sociedad,politica"}):
+            self.assertTrue(is_local_video_reel_item(_local(seccion="Sociedad")))
+            self.assertTrue(is_local_video_reel_item(_local(seccion="Política")))
+            self.assertFalse(is_local_video_reel_item(_local(seccion="Deportes")))
+
+    def test_distinct_youtube_videos_are_not_duplicates(self):
+        # Regresión: la clave de video cortaba la query y todo "watch?v=..." colapsaba
+        # en "youtube.com/watch": sólo salía el primer Reel local, el resto "video repetido".
+        other = "https://www.youtube.com/watch?v=OtroVideo11"
+        same = "https://youtu.be/EvpKwfKIHxA?si=abc"
+        notes = [_local("a"), _local("b", video_embed_url=other), _local("c", video_embed_url=same)]
+        self.meta.write_text(json.dumps(notes), encoding="utf-8")
+
+        self.assertEqual({"new": 2}, self.jobs.ingest())
+
+    def test_video_key_normalization(self):
+        key = self.jobs._video_key
+        yt = "youtube:EvpKwfKIHxA"
+        for url in (YOUTUBE, "https://youtu.be/EvpKwfKIHxA", "https://www.youtube.com/embed/EvpKwfKIHxA?feature=oembed",
+                    "https://www.youtube-nocookie.com/embed/EvpKwfKIHxA", "https://m.youtube.com/watch?v=EvpKwfKIHxA&t=3",
+                    "https://www.youtube.com/shorts/EvpKwfKIHxA"):
+            self.assertEqual(yt, key({"video_url": url}), url)
+        self.assertEqual("https://cdn.x.com/clip.mp4", key({"video_url": "https://CDN.x.com/clip.mp4?token=1"}))
+        self.assertEqual("", key({}))
+
     def test_disabled_flag_does_not_read_state(self):
         with mock.patch.dict(os.environ, {"LOCAL_VIDEO_REEL_ENABLED": "false"}), mock.patch.object(
             self.jobs, "load_json"
@@ -186,6 +219,11 @@ class LocalVideoReelInstagramTests(unittest.TestCase):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Las candidatas promovidas desde la UI manual se leen de data/editorial_candidates.json:
+        # sin este mock el test mezclaba datos reales de producción en la cola.
+        patcher = mock.patch.object(run_ig, "manual_automatic_candidates", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
         for name in ("utils.social_queue.record_queue_event", "utils.social_queue.record_queue_events"):
             patcher = mock.patch(name)
             patcher.start()
@@ -243,6 +281,22 @@ class LocalVideoReelStageTests(unittest.TestCase):
             outcome = self.stage._process("reel:1", self.job, instagram=True, facebook=True)
         self.assertEqual("completed", outcome)
         facebook.assert_not_called()
+
+    def test_local_reel_with_facebook_channel_goes_to_both(self):
+        from utils.operation_result import OperationResult
+        from utils.stage_result import StageStatus
+
+        self.job["noticia"]["reel_channels"] = ["instagram", "facebook"]
+        ok = OperationResult(StageStatus.SUCCESS, external_id="ig-1")
+        with mock.patch.object(self.stage, "render_reel_item", return_value=({"video_url": "u"}, "k")), mock.patch.object(
+            self.stage, "post_reel_video_to_instagram", return_value=ok
+        ), mock.patch.object(self.stage, "publish_facebook_reel", return_value=(True, "fb-1")) as facebook, mock.patch.object(
+            self.stage, "_record_evidence"
+        ) as evidence:
+            outcome = self.stage._process("reel:1", self.job, instagram=True, facebook=True)
+        self.assertEqual("completed", outcome)
+        facebook.assert_called_once()
+        self.assertEqual(("ig-1", "fb-1"), (evidence.call_args.kwargs["ig_id"], evidence.call_args.kwargs["fb_id"]))
 
     def test_skipped_without_instagram(self):
         with mock.patch.object(self.stage, "render_reel_item") as render:

@@ -261,13 +261,32 @@ class RewriteGateTests(unittest.TestCase):
         from openIA import rewrite_news
 
         noticia = {"titulo": "Murió el joven", "parrafos": ["texto"], "event_update": {"of_title": "Muerte cerebral", "novedad": "murió"}}
-        with mock.patch.object(rewrite_news, "_call_gemini", side_effect=RuntimeError("corte")) as call, \
+        # Camino de dos llamadas: fijado explícitamente para no depender del .env del host
+        # (con REWRITE_SINGLE_CALL_ENABLED=true iba a la llamada única, sin mock).
+        with mock.patch.dict(os.environ, {"REWRITE_SINGLE_CALL_ENABLED": "false"}), \
+                mock.patch.object(rewrite_news, "_call_gemini", side_effect=RuntimeError("corte")) as call, \
                 mock.patch.object(rewrite_news, "GEMINI_RETRY_COUNT", 1):
             try:
                 rewrite_news.rewrite_noticia(noticia)
             except Exception:
                 pass
         rules = call.call_args.args[2]
+        self.assertIn("ACTUALIZA una ya publicada", rules)
+        self.assertIn("murió", rules)
+
+    def test_update_rule_reaches_single_call_prompt(self):
+        from openIA import rewrite_news
+
+        noticia = {"titulo": "Murió el joven", "parrafos": ["texto"], "event_update": {"of_title": "Muerte cerebral", "novedad": "murió"}}
+        with mock.patch.dict(os.environ, {"REWRITE_SINGLE_CALL_ENABLED": "true"}), \
+                mock.patch.object(rewrite_news, "_call_combined", return_value=None) as combined, \
+                mock.patch.object(rewrite_news, "_call_gemini", side_effect=RuntimeError("corte")), \
+                mock.patch.object(rewrite_news, "GEMINI_RETRY_COUNT", 1):
+            try:
+                rewrite_news.rewrite_noticia(noticia)
+            except Exception:
+                pass
+        rules = combined.call_args.args[1]
         self.assertIn("ACTUALIZA una ya publicada", rules)
         self.assertIn("murió", rules)
 

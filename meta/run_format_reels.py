@@ -291,8 +291,8 @@ def main() -> StageResult:
         statuses.append(status)
         details.update(info)
     published = sum(1 for v in details.values() if isinstance(v, dict) and v.get("ig") == "success")
-    failed = sum(1 for v in details.values() if (isinstance(v, dict) and v.get("ig") not in {"success"})
-                 or v in {"render_failed", "lista_ilegible", "fuente_ilegible"})
+    failed = sum(1 for v in details.values() if (isinstance(v, dict) and v.get("ig") != "success")
+                 or (isinstance(v, str) and v in {"render_failed", "lista_ilegible", "fuente_ilegible"}))
     if not published and not failed:
         return StageResult(STAGE, StageStatus.NO_WORK, details=details, duration_seconds=time.monotonic() - started)
     status = StageStatus.SUCCESS if not failed else StageStatus.DEGRADED

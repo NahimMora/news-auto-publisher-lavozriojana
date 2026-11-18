@@ -3178,3 +3178,26 @@ vuelve a bajar lo que falta. Limpieza manual inicial con autorización del
 responsable: 22,8 GB.
 **Evidencia**: `tests/test_disk_cleanup.py`; simulación sobre producción.
 **Rollback**: `DISK_CLEANUP_ENABLED=false`.
+
+## 2026-11-18 — Más video: Reels locales en todas las secciones y en Facebook, UM hasta 10/día
+
+**Contexto**: el responsable no veía videos y pidió que salgan más. Hay ~17
+videos/día (X, paparazzi/Infobae, DU, noticiero) y en IG rinden ~3 veces más que
+las placas (mediana de alcance 1.918 contra 575, últimos 10 días). Pero de 77
+notas locales con YouTube incrustado sólo salieron 6 Reels: `_video_key` cortaba
+la query y todo `youtube.com/watch?v=...` quedaba con la misma clave, así que se
+descartaban como "video repetido". Mientras tanto `run_ig` tampoco las publicaba
+como imagen (esperaba el Reel) hasta que vencían a las 24 h. Además
+`run_format_reels` moría con `TypeError` (dict comparado contra un set) justo
+después de cada Reel publicado y la etapa figuraba `failed`.
+**Decisión** (pedido explícito del responsable): (1) clave de video con el ID de
+YouTube (`youtube:<id>`); (2) `LOCAL_VIDEO_REEL_CATEGORIES` con las 10 secciones;
+(3) nuevo flag `LOCAL_VIDEO_REEL_FACEBOOK` (apagado por defecto): el Reel local
+sale también como video en Facebook, sin quitar el post con link a la Web;
+(4) `FORMAT_REELS_UM_MAX_PER_DAY=10`. (2)–(4) se activan en
+`scripts/start_24x7_production.ps1`.
+**Riesgo**: cada Reel consume la cuota de IG (100/24 h) que comparte con las placas;
+en Facebook la misma nota aparece como link y como video.
+**Evidencia**: `tests/test_local_video_reels.py`, `tests/test_format_reels.py`.
+**Rollback**: en el script de arranque, `LOCAL_VIDEO_REEL_CATEGORIES=policiales,interior`,
+`LOCAL_VIDEO_REEL_FACEBOOK=false`, `FORMAT_REELS_UM_MAX_PER_DAY=2`, y reiniciar el supervisor.
