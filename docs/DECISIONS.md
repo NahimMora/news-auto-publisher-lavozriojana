@@ -3235,3 +3235,20 @@ prohíbe calcular o convertir cifras. Resultado sobre los 6 rechazados: pasan 5,
 guiones revisados a mano contra la nota.
 **Evidencia**: `tests/test_format_reels.py` (tarjeta inventada descartada, detalle quitado).
 **Rollback**: revertir el commit.
+
+## 2026-11-18 — Último momento con fotos (galería de la nota original)
+
+**Contexto**: UM exigía un video de 6 s o más del lugar. En 3 días hubo 27 notas locales
+urgentes y sólo 5 traían video; ninguna sirvió. Las policiales riojanas traen casi
+siempre una foto; Nueva Rioja trae 2 a 5 en aproximadamente la mitad de sus notas.
+El responsable eligió "con foto" y "varias fotos".
+**Decisión**: flag `FORMAT_REELS_UM_PHOTO_ENABLED` (apagado por defecto, activo en el
+script de arranque). Si la nota no trae video, o el video no sirve, UM sale con fotos:
+las del cuerpo de la nota original (`source_gallery`: sólo figuras del cuerpo, nunca
+relacionadas, avatares ni publicidad), si hay 2 o más que pasen `strong_photo`, una por
+tramo; si no, la foto de la nota con zoom y paneo de punta a punta. Crédito
+"FOTO: <medio>". Siguen las exigencias de urgente, riojana, primicia y foto fuerte.
+Remotion: `PhotoBackdrop` en `FormatReel.tsx` y prop `gallery`.
+**QA**: render real sin publicar (granizo en Catuna, 2 fotos, 18,5 s), revisado cuadro
+por cuadro.
+**Rollback**: `FORMAT_REELS_UM_PHOTO_ENABLED=false` en el script de arranque y reiniciar.

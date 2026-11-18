@@ -86,6 +86,23 @@ def _video(cand: nn.Candidate, work: str) -> tuple[dict | None, str]:
     return {"type": "video", "file": clip, "width": w, "height": h, "credit": credit}, ""
 
 
+def _photo_media(note: fr.Note, cand: nn.Candidate, photo: dict, work: str) -> dict:
+    """UM sin video: las fotos del cuerpo de la nota original (una por tramo) si hay 2 o
+    más que pasen el control de foto fuerte; si no, la foto de la nota sola."""
+    files: list[str] = []
+    for i, url in enumerate(fr.source_gallery(note.canonical, limit=fr._int("FORMAT_REELS_UM_GALLERY_MAX", 4))):
+        dest = os.path.join(work, f"galeria_{i + 1}.jpg")
+        size = nn.prepare_photo(url, dest)
+        if size and fr.strong_photo(dest, size, policial=cand.section == "policiales")[0]:
+            files.append(dest)
+    credit = f"FOTO: {cand.source_name.upper()}" if cand.source_name else ""
+    media = {**photo, "credit": credit}
+    if len(files) >= 2:
+        media["gallery"] = files
+        logger.info("Último momento con %s fotos de la nota original: %s", len(files), note.canonical)
+    return media
+
+
 def _produce(kind: str, note: fr.Note, cand: nn.Candidate, media: dict, plan: fr.Plan, work: str) -> dict:
     rendered = fr.render(plan, cand, media, work)
     caption = fr.caption_for(plan, cand)
@@ -98,10 +115,13 @@ def run_um(state: dict, records: list[dict]) -> tuple[str, dict]:
     if fr.published_today("um", state, day) >= fr._int("FORMAT_REELS_UM_MAX_PER_DAY", 2):
         return "no_work", {"um": "tope diario"}
     items = state.get("items") or {}
+    # Con FORMAT_REELS_UM_PHOTO_ENABLED la nota sin video (o con video inservible) sale
+    # con sus fotos; las exigencias de urgente, riojana, primicia y foto fuerte no cambian.
+    photo_mode = fr._flag("FORMAT_REELS_UM_PHOTO_ENABLED")
     for note in fr.recent_notes(fr._int("FORMAT_REELS_UM_MAX_AGE_MINUTES", 180)):
         if f"um:{note.url}" in items or note.category in SKIP_CATEGORIES:
             continue
-        if not note.video_url or not is_breaking(note.title, note.category):
+        if (not note.video_url and not photo_mode) or not is_breaking(note.title, note.category):
             continue  # filtros baratos: no se registra
         if not fr.is_scoop(note, records=records):
             fr.mark("um", note.url, status="rejected", reason="no es primicia", title=note.title[:90])
@@ -119,7 +139,9 @@ def run_um(state: dict, records: list[dict]) -> tuple[str, dict]:
             if not photo:
                 fr.mark("um", note.url, status="rejected", reason=f"foto: {why}", title=cand.title[:90])
                 continue
-            media, why = _video(cand, work)
+            media, why = _video(cand, work) if cand.video_url else (None, "sin video")
+            if not media and photo_mode:
+                media = _photo_media(note, cand, photo, work)
             if not media:
                 fr.mark("um", note.url, status="rejected", reason=f"video: {why}", title=cand.title[:90])
                 continue

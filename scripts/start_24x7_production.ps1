@@ -164,6 +164,8 @@ $env:LOCAL_VIDEO_REEL_CATEGORIES = "policiales,interior,sociedad,economia,salud,
 $env:LOCAL_VIDEO_REEL_FACEBOOK = "true"
 # Reel "Último momento": hasta 10 por día (antes 2). Ver docs/DECISIONS.md 2026-11-18.
 $env:FORMAT_REELS_UM_MAX_PER_DAY = "10"
+# Último momento sin video: con las fotos de la nota (galería de origen si hay 2+).
+$env:FORMAT_REELS_UM_PHOTO_ENABLED = "true"
 # MPF y Función Judicial: sólo puntaje >= 7 y sin casos ya cubiertos en 72 h.
 $env:SCRAPER_JUDICIALES_ENABLED = "1"
 $env:JUDICIAL_MIN_SCORE = "7"

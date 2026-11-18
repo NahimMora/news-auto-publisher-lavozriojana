@@ -69,6 +69,8 @@ export const FormatReelSchema = z.object({
   badge: z.string(),
   accent: z.string(),
   media: z.object({ type: z.enum(["video", "photo"]), file: z.string(), width: z.number(), height: z.number() }),
+  // UM con foto: fotos de la nota original, una por tramo (vacío = la foto de media).
+  gallery: z.array(z.string()),
   credit: z.string(),
   place: z.object({ label: z.string(), x: z.number(), y: z.number() }).nullable(),
   voiceFile: z.string(),
@@ -186,6 +188,31 @@ const VideoBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
         muted
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: VF[beat.layout], transform: "scale(1.3)", transformOrigin: "50% 26%" }}
       />
+    </AbsoluteFill>
+  );
+};
+
+// UM sin video: la foto con Ken Burns de punta a punta o, con galería, una foto por
+// tramo (corte con el whoosh del tramo, paneo alternado); el filtro cambia por tramo.
+const PhotoBackdrop: React.FC<{ p: FormatReelProps }> = ({ p }) => {
+  const frame = useCurrentFrame();
+  const found = p.beats.findIndex((b) => frame >= b.from && frame < b.to);
+  const idx = found >= 0 ? found : p.beats.length - 1;
+  const beat = p.beats[idx];
+  const files = p.gallery.length ? p.gallery : [p.media.file];
+  const multi = files.length > 1;
+  const k = multi
+    ? Math.min(1, (frame - beat.from) / Math.max(1, beat.to - beat.from))
+    : Math.min(1, frame / Math.max(1, p.totalFrames));
+  const dir = multi && idx % 2 ? 1 : -1;
+  return (
+    <AbsoluteFill style={{ overflow: "hidden", background: "#000" }}>
+      <div style={{ position: "absolute", inset: -60, overflow: "hidden" }}>
+        <Img
+          src={staticFile(files[idx % files.length])}
+          style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 35%", filter: VF[beat.layout], transform: `scale(${1.08 + 0.16 * k}) translate(${dir * 2 * k}%, ${-1.5 * k}%)` }}
+        />
+      </div>
     </AbsoluteFill>
   );
 };
@@ -993,7 +1020,7 @@ export const FormatReel: React.FC<FormatReelProps> = (p) => {
   useV2FontsReady();
   return (
     <AbsoluteFill style={{ fontFamily: V2_FONT_SANS, background: C.ink, color: "#fff", overflow: "hidden" }}>
-      {p.kind === "um" ? <VideoBackdrop p={p} /> : null}
+      {p.kind === "um" ? (p.media.type === "video" ? <VideoBackdrop p={p} /> : <PhotoBackdrop p={p} />) : null}
       {p.kind === "ef" ? <ArchiveBackdrop p={p} /> : null}
       {p.beats.map((b, i) => (
         <Sequence key={i} from={b.from} durationInFrames={Math.max(1, b.to - b.from)}>
@@ -1014,6 +1041,7 @@ export const FORMAT_REEL_DEFAULTS: FormatReelProps = {
   badge: "DATO ÚTIL",
   accent: C.gold,
   media: { type: "photo", file: "logo.png", width: 1000, height: 1000 },
+  gallery: [],
   credit: "",
   place: null,
   voiceFile: "",

@@ -736,6 +736,8 @@ def config_inventory() -> dict[str, list[str]]:
                 "FORMAT_REELS_TTS_MODEL",
                 "FORMAT_REELS_TEMPO",
                 "FORMAT_REELS_UM_MAX_PER_DAY",
+                "FORMAT_REELS_UM_PHOTO_ENABLED",
+                "FORMAT_REELS_UM_GALLERY_MAX",
                 "FORMAT_REELS_UM_MAX_AGE_MINUTES",
                 "FORMAT_REELS_UM_HOURS",
                 "FORMAT_REELS_DU_HOURS",

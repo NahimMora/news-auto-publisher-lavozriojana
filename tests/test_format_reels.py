@@ -318,6 +318,81 @@ EF_ENTRY = {
 }
 
 
+NR_HTML = """<html><body>
+<article class="cont-cuerpo"><div class="cont-foto"><figure class="nota-foto"><img src="/galeria/fotos/2026/11/13/l_1.webp"></figure></div>
+<section class="texto"><span class="autor"><figure class="avatar"><img src="/galeria/fotos-autor/m_9.webp"></figure></span>
+<p>Texto</p><figure class="embed"><img src="https://nuevarioja.com.ar/galeria/fotos/2026/11/13/e_2.webp"></figure>
+<figure class="embed"><img src="https://nuevarioja.com.ar/galeria/fotos/2026/11/13/e_2.webp?w=1"></figure></section></article>
+<aside class="sidebar"><div class="lo-mas-visto"><article><img src="/galeria/fotos/2026/11/18/m_7.webp"></article></div></aside>
+</body></html>"""
+
+
+class UmPhotoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_gallery_only_takes_body_photos(self):
+        url = "https://nuevarioja.com.ar/policiales/nota.htm"
+        self.assertEqual(fr.source_gallery(url, html=NR_HTML), [
+            "https://nuevarioja.com.ar/galeria/fotos/2026/11/13/l_1.webp",
+            "https://nuevarioja.com.ar/galeria/fotos/2026/11/13/e_2.webp",
+        ])
+        self.assertEqual(fr.source_gallery(url, html=NR_HTML, limit=1), ["https://nuevarioja.com.ar/galeria/fotos/2026/11/13/l_1.webp"])
+        self.assertEqual(fr.source_gallery("", html=NR_HTML), [])
+
+    def _media(self, urls, strong=True):
+        from meta import run_format_reels as stage
+
+        note = fr.Note(url="https://lavozriojana.com/noticias/x", title="t", category="policiales", localities=[], published_at=0,
+                       source="nuevarioja_policiales", canonical="https://nuevarioja.com.ar/x.htm")
+        photo = {"type": "photo", "file": os.path.join(self.tmp.name, "foto.jpg"), "width": 1200, "height": 800}
+        with mock.patch.object(fr, "source_gallery", return_value=urls), \
+                mock.patch.object(nn, "prepare_photo", return_value=(1200, 800)), \
+                mock.patch.object(fr, "strong_photo", return_value=(strong, "")):
+            return stage._photo_media(note, cand(section="policiales"), photo, self.tmp.name)
+
+    def test_photo_media_uses_gallery_with_two_or_more_strong_photos(self):
+        media = self._media(["https://a/1.jpg", "https://a/2.jpg", "https://a/3.jpg"])
+        self.assertEqual(3, len(media["gallery"]))
+        self.assertEqual("photo", media["type"])
+
+    def test_photo_media_falls_back_to_single_photo(self):
+        self.assertNotIn("gallery", self._media(["https://a/1.jpg"]))
+        self.assertNotIn("gallery", self._media(["https://a/1.jpg", "https://a/2.jpg"], strong=False))
+
+    def _run_um(self, photo_mode: bool):
+        from meta import run_format_reels as stage
+
+        note = fr.Note(url="https://lavozriojana.com/noticias/u", title="Choque fatal en la ruta 38", category="policiales",
+                       localities=["Chilecito"], published_at=0, source="nuevarioja_policiales", canonical="https://nuevarioja.com.ar/u.htm")
+        photo = {"type": "photo", "file": "f.jpg", "width": 1200, "height": 800}
+        env = {"FORMAT_REELS_UM_PHOTO_ENABLED": "true" if photo_mode else "false", "LVR_DATA_DIR": self.tmp.name}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(fr, "new_workdir", return_value=self.tmp.name), \
+                mock.patch.object(fr, "cleanup"), \
+                mock.patch.object(fr, "recent_notes", return_value=[note]), \
+                mock.patch.object(stage, "is_breaking", return_value=True), \
+                mock.patch.object(fr, "is_scoop", return_value=True), \
+                mock.patch.object(fr, "is_riojan", return_value=True), \
+                mock.patch.object(stage, "_candidate", return_value=cand(section="policiales")), \
+                mock.patch.object(stage, "_photo", return_value=(photo, "")), \
+                mock.patch.object(stage, "_photo_media", side_effect=lambda n, c, p, w: {**p, "credit": "FOTO: X"}) as media, \
+                mock.patch.object(fr, "write_plan", return_value=(mock.Mock(), [], True)), \
+                mock.patch.object(stage, "_produce", return_value={"ig": "success", "fb": "success"}) as produce:
+            result = stage.run_um({}, [])
+        return result, media, produce
+
+    def test_um_without_video_uses_photos_only_with_flag(self):
+        (status, _info), media, produce = self._run_um(photo_mode=True)
+        self.assertEqual("done", status)
+        media.assert_called_once()
+        self.assertEqual("photo", produce.call_args.args[3]["type"])
+        (status, _info), media, produce = self._run_um(photo_mode=False)
+        self.assertEqual("no_work", status)
+        produce.assert_not_called()
+
+
 class PhotoUserAgentTests(unittest.TestCase):
     def test_wikimedia_gets_descriptive_user_agent(self):
         # Wikimedia devolvía 429 al User-Agent genérico y la foto de la EF no bajaba.

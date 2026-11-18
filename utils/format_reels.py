@@ -44,6 +44,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urljoin
 
 from utils import nightly_newscast as nn
 from utils.editorial_priority import is_breaking
@@ -190,6 +191,48 @@ def _web_records() -> list[dict]:
     except JsonStateError as exc:
         logger.warning("Historial web ilegible: %s", exc)
         return []
+
+
+# Galería de la nota original (UM sin video): sólo fotos del cuerpo, nunca las de
+# notas relacionadas, "más vistas", avatares de autor ni publicidad.
+GALLERY_SELECTORS = (
+    "article.cont-cuerpo figure.nota-foto img", "article.cont-cuerpo figure.embed img",  # Nueva Rioja
+    ".entry-content figure img", ".entry-content .gallery img", ".td-post-content figure img",  # WordPress
+)
+_GALLERY_SKIP = ("avatar", "fotos-autor", "logo", "banner", "publi", "icon", "gravatar")
+
+
+def source_gallery(url: str, *, limit: int = 4, html: str | None = None) -> list[str]:
+    """Fotos del cuerpo de la nota original, en orden y sin repetir (``[]`` si no se puede leer)."""
+    if not url:
+        return []
+    from bs4 import BeautifulSoup
+
+    if html is None:
+        from utils.safe_http import safe_get
+
+        try:
+            response = safe_get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0 (compatible; LaVozRiojanaBot/1.0)"})
+        except Exception as exc:  # noqa: BLE001 — sin galería se usa la foto de la nota
+            logger.info("Galería: no se pudo leer %s (%s)", url, type(exc).__name__)
+            return []
+        if getattr(response, "status_code", 0) != 200:
+            return []
+        html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    out: list[str] = []
+    seen: set[str] = set()
+    for selector in GALLERY_SELECTORS:
+        for img in soup.select(selector):
+            src = urljoin(url, str(img.get("data-src") or img.get("data-lazy-src") or img.get("src") or "").strip())
+            key = re.sub(r"-\d+x\d+(?=\.\w+$)", "", src.split("?", 1)[0])  # miniaturas de WordPress
+            if not src.startswith("http") or key in seen or any(s in src.lower() for s in _GALLERY_SKIP):
+                continue
+            seen.add(key)
+            out.append(src)
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def recent_notes(max_age_minutes: int, *, now: float | None = None) -> list[Note]:
@@ -986,6 +1029,8 @@ def render(plan: Plan, cand: nn.Candidate, media: dict, work: str) -> Rendered:
     props = {
         "kind": plan.kind, "badge": BADGE[plan.kind], "accent": ACCENT[plan.kind],
         "media": {"type": media["type"], "file": f"{rel}/{os.path.basename(media['file'])}", "width": media["width"], "height": media["height"]},
+        # UM con foto: varias fotos de la nota original, una por tramo (vacío = la foto de "media").
+        "gallery": [f"{rel}/{os.path.basename(f)}" for f in media.get("gallery") or []],
         "credit": media.get("credit", ""),
         "place": {"label": place.get("label") or plan.place, "x": float(place["x"]), "y": float(place["y"])} if place and "x" in place else None,
         "voiceFile": f"{rel}/voz.wav", "totalFrames": total,
