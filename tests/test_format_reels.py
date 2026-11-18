@@ -117,6 +117,35 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(plan.beats[0].cta_from, 6)
         self.assertEqual([b.head for b in plan.beats if b.layout == "card"][2], "$20.000")
 
+    def _du_raw(self, extra_card, detail=""):
+        c = cand(body="Las inscripciones cierran el 27 de diciembre. Se puede anotar de forma presencial o virtual. "
+                      "Cuesta $20.000. Hay 106 carreras en la UNLaR.")
+        cards = [
+            {"tipo": "fecha", "rotulo": "Inscripciones", "resumen": "27 de diciembre", "valor": "27 de diciembre", "detalle": detail,
+             "locucion": "Las inscripciones cierran el 27 de diciembre."},
+            {"tipo": "lista", "rotulo": "Cómo anotarte", "resumen": "Presencial o virtual", "opciones": [{"icono": "🏫", "texto": "Presencial"}, {"icono": "💻", "texto": "Virtual"}],
+             "locucion": "Te podés anotar de forma presencial o virtual."},
+            {"tipo": "monto", "rotulo": "Cuánto cuesta", "resumen": "$20.000", "valor": "$20.000", "locucion": "La inscripción cuesta $20.000 en la UNLaR."},
+            {"tipo": "cifra", "rotulo": "La oferta", "resumen": "106 carreras", "valor": "106", "unidad": "carreras", "locucion": "Hay 106 carreras para elegir en la UNLaR."},
+        ] + ([extra_card] if extra_card else [])
+        return {"apta": True, "interes": 9, "pregunta": "¿Vas a estudiar en la UNLaR?", "llamado": "Anotá esto.", "tarjetas": cards}, c
+
+    def test_du_card_with_invented_figure_is_dropped_not_the_reel(self):
+        invented = {"tipo": "cifra", "rotulo": "Duración", "resumen": "30 horas", "valor": "30", "unidad": "horas",
+                    "locucion": "El curso dura 30 horas en la UNLaR."}
+        raw, c = self._du_raw(invented)
+        plan, warnings, _ = fr.validate_du(raw, c)
+        self.assertEqual(warnings, [])
+        self.assertEqual(4, sum(1 for b in plan.beats if b.layout == "card"))
+        self.assertNotIn("30", plan.text)
+
+    def test_du_invented_detail_is_stripped_and_card_kept(self):
+        raw, c = self._du_raw(None, detail="Sucursales bancarias")
+        plan, warnings, _ = fr.validate_du(raw, c)
+        self.assertEqual(warnings, [])
+        first = next(b for b in plan.beats if b.layout == "card")
+        self.assertEqual(("27 de diciembre", ""), (first.head, first.detail))
+
     def test_du_needs_min_cards(self):
         c = cand(body="Inscripciones hasta el 27 de diciembre. Cuesta $20.000.")
         raw = {"apta": True, "interes": 9, "pregunta": "¿Vas a estudiar?", "llamado": "Anotá esto.", "tarjetas": [

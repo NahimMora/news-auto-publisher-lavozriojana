@@ -110,7 +110,7 @@ DU_PROMPT = (
     "interes: 0 a 10, qué tan probable es que le sirva a mucha gente de La Rioja (10 = trámite, pago, inscripción o "
     "servicio masivo en la provincia; 0 = no le sirve a nadie de La Rioja). "
     "pregunta: de 3 a 7 palabras, a quién le sirve (ej. \"¿Vas a estudiar en la UNLaR?\"). llamado: 2 o 3 palabras (ej. \"Anotá esto.\"). "
-    "tarjetas: 4 (5 sólo si hay un quinto dato fuerte), cada una de un tipo que muestre el dato de la forma más visual: "
+    "tarjetas: 5 si la nota trae un quinto dato (si no, 4), cada una de un tipo que muestre el dato de la forma más visual: "
     "fecha = una fecha o plazo (capsula opcional que la introduce, máx. 16, ej. \"Cierran el\"; valor = la fecha, ej. \"27 de diciembre\"); "
     "lista = 2 o 3 opciones cortas (máx. 16 cada una) con un emoji de ícono (ej. 🏫 Presencial, 💻 Virtual); "
     "monto = un precio o pago (valor con el signo, ej. \"$20.000\"); "
@@ -121,6 +121,8 @@ DU_PROMPT = (
     "locucion: cómo se dice el dato, de 6 a 12 palabras, nombrando el valor o las opciones. claves: 2 o 3 palabras de la locución. "
     "Escribí con mayúsculas y minúsculas normales (nada todo en mayúsculas). "
     "Copiá cifras, horarios y fechas EXACTAMENTE como están en la nota. "
+    "Nunca calcules, sumes, conviertas ni redondees: si la nota dice 'a las 17:30' no es una duración, y si no trae "
+    "una cantidad, no hay tarjeta de cifra. En rótulo, resumen, cápsula y detalle usá palabras que estén en la nota. "
     "Total de palabras habladas (pregunta + llamado + locuciones) entre 36 y 60: contalas antes de responder. "
     "Español rioplatense, voseo."
 )
@@ -476,6 +478,11 @@ DU_CAPS = (("pill", 1330), ("marker", 1340), ("chunk", 1380), ("callout", 1440),
 DU_KINDS = {"fecha", "lista", "monto", "cifra", "texto"}
 
 
+def _du_card_check(speech: str, screen: list[str], cand: nn.Candidate, tag: str) -> list[str]:
+    plain = [_plain(x) for x in screen if x]
+    return _fact_check([speech, *plain], cand, tag) + _screen_check(plain, cand, tag)
+
+
 def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], bool]:
     """(plan, observaciones, apta). ``apta=False`` = la nota no califica (no se reintenta)."""
     interest = int(raw.get("interes") or 0) if str(raw.get("interes") or "0").lstrip("-").isdigit() else 0
@@ -490,6 +497,7 @@ def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], 
     hook = Beat("hook", "title", 0, f"{question} {call}".strip(), cta_from=_words(question) if call else -1)
     beats = [hook]
     cards: list[Beat] = []
+    dropped: list[str] = []
     for i, t in enumerate((raw.get("tarjetas") or [])[:5]):
         if not isinstance(t, dict):
             continue
@@ -515,14 +523,25 @@ def validate_du(raw: dict, cand: nn.Candidate) -> tuple[Plan | None, list[str], 
                 warnings.append(f"{tag}: falta el valor")
             beat.items = [(beat.value, "")]
             screen = [beat.value, beat.unit]
-        screen += [head, beat.pill, beat.detail]
-        plain = [_plain(x) for x in screen if x]
-        warnings += _fact_check([speech, *plain], cand, tag)
-        warnings += _screen_check(plain, cand, tag)
+        card_warnings = _du_card_check(speech, screen + [head, beat.pill, beat.detail], cand, tag)
+        if card_warnings and (beat.pill or beat.detail):
+            # Cápsula y detalle son opcionales: sin ellos la tarjeta puede quedar limpia.
+            if not _du_card_check(speech, screen + [head], cand, tag):
+                beat.pill = beat.detail = ""
+                card_warnings = []
+        if card_warnings:
+            # Una tarjeta con un dato que no está en la nota se descarta entera (nunca se
+            # publica texto sin verificar); el Reel sigue si quedan suficientes tarjetas.
+            dropped += card_warnings
+            continue
         cards.append(beat)
     beats += cards
-    if len(cards) < _int("FORMAT_REELS_DU_MIN_CARDS", 4):
-        warnings.append(f"hay {len(cards)} tarjetas válidas; hacen falta al menos {_int('FORMAT_REELS_DU_MIN_CARDS', 4)}")
+    min_cards = _int("FORMAT_REELS_DU_MIN_CARDS", 4)
+    if len(cards) < min_cards:
+        warnings += dropped
+        warnings.append(f"hay {len(cards)} tarjetas válidas; hacen falta al menos {min_cards}")
+    elif dropped:
+        logger.info("Guion du: tarjetas descartadas por datos que no están en la nota: %s", dropped[:4])
     warnings += _fact_check([question], cand, "gancho")
     spoken = sum(_words(b.text) for b in beats)
     if not 32 <= spoken <= 64:

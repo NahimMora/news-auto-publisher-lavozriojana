@@ -3220,3 +3220,18 @@ también en letras); con otra unidad se sigue rechazando. User-Agent con contact
 para descargas de wikimedia.org/wikipedia.org.
 **Evidencia**: `tests/test_local_video_reels.py`, `tests/test_format_reels.py`.
 **Rollback**: `LOCAL_VIDEO_REEL_EXCLUDED_SOURCES=` (vacío) vuelve a incluir a Fénix.
+
+## 2026-11-18 — DU: se descarta la tarjeta con datos ajenos, no el Reel
+
+**Contexto**: al regenerar los 6 guiones DU rechazados hoy se vio que el control
+tenía razón: el modelo agregaba datos ("30 horas" cuando la nota dice "a las 17:30",
+"sucursales" cuando dice "bocas de pago", cifras que no están). Un solo dato malo
+tiraba el Reel entero tras 4 intentos.
+**Decisión**: si una tarjeta trae algo que no está en la nota, primero se le quitan
+cápsula y detalle (opcionales); si sigue sucia, se descarta la tarjeta entera. El Reel
+sale si quedan al menos `FORMAT_REELS_DU_MIN_CARDS` (4) tarjetas limpias; nunca se
+publica texto sin verificar. El prompt pide 5 tarjetas cuando hay un quinto dato y
+prohíbe calcular o convertir cifras. Resultado sobre los 6 rechazados: pasan 5, con
+guiones revisados a mano contra la nota.
+**Evidencia**: `tests/test_format_reels.py` (tarjeta inventada descartada, detalle quitado).
+**Rollback**: revertir el commit.
