@@ -708,6 +708,7 @@ def config_inventory() -> dict[str, list[str]]:
                 "PAPARAZZI_HEURISTIC_ENABLED",
                 "PAPARAZZI_HEURISTIC_MIN",
                 "PAPARAZZI_DAILY_MAX",
+                "PAPARAZZI_PACING_HOURS",
                 "NATIONAL_WEB_SKIP_ENABLED",
                 "CAPTION_LAZY_ENABLED",
                 "REWRITE_SINGLE_CALL_ENABLED",

@@ -21,6 +21,7 @@ Todos apagados por defecto: el comportamiento no cambia hasta activarlos.
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import time
@@ -114,23 +115,47 @@ def paparazzi_gate(noticia: dict, *, now=None) -> tuple[bool, str, int]:
     minimum = _int("PAPARAZZI_HEURISTIC_MIN", 5)
     if score < minimum:
         return False, f"paparazzi_low_heuristic:{score}", score
-    day = now_ar(now).date().isoformat()
+    current = now_ar(now)
+    day = current.date().isoformat()
     cap = _int("PAPARAZZI_DAILY_MAX", 10)
+    allowance = paparazzi_paced_allowance(cap, current)
     result = {"ok": False}
 
     def mutate(state):
         days = state.setdefault("paparazzi_daily", {})
         for old in [d for d in days if d < day][:-7]:
             days.pop(old, None)
-        if days.get(day, 0) < cap:
+        if days.get(day, 0) < min(cap, allowance):
             days[day] = days.get(day, 0) + 1
             result["ok"] = True
         return state
 
     update_json(state_path(), mutate, {}, expected_type=dict)
     if not result["ok"]:
-        return False, "paparazzi_daily_cap", score
+        return False, "paparazzi_daily_cap" if allowance >= cap else "paparazzi_pacing", score
     return True, "", score
+
+
+def paparazzi_paced_allowance(cap: int, current) -> int:
+    """Cuántas notas de paparazzi pueden haber entrado hasta ``current``.
+
+    Con ``PAPARAZZI_PACING_HOURS`` (ej. ``"8-24"``) el tope diario se habilita de a
+    partes iguales por hora de esa franja y lo no usado se acumula: el tope no se
+    llena apenas empieza el día. Fuera de la franja, antes: nada; después: todo.
+    Sin la variable (default) no hay reparto: el tope entero desde las 0 h.
+    """
+    raw = os.getenv("PAPARAZZI_PACING_HOURS", "").strip()
+    try:
+        start, end = (int(x) for x in raw.split("-", 1))
+    except ValueError:
+        return cap
+    if not 0 <= start < end <= 24:
+        return cap
+    hour = current.hour + current.minute / 60
+    if hour < start:
+        return 0
+    elapsed = min(end - start, int(hour - start) + 1)  # la hora en curso ya cuenta
+    return min(cap, math.ceil(cap * elapsed / (end - start)))
 
 
 # ── Nacionales fuera de la web ───────────────────────────────────────────

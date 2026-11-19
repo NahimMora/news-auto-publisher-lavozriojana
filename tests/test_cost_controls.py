@@ -39,6 +39,30 @@ class PaparazziTests(_Data):
         self.assertFalse(passed)
         self.assertEqual(reason, "paparazzi_daily_cap")
 
+    def test_paced_allowance_spreads_the_cap_over_the_day(self):
+        import datetime
+
+        at = lambda h, m=0: datetime.datetime(2026, 11, 19, h, m)  # noqa: E731
+        with mock.patch.dict(os.environ, {"PAPARAZZI_PACING_HOURS": "8-24"}):
+            self.assertEqual(0, cc.paparazzi_paced_allowance(25, at(7, 59)))
+            self.assertEqual(2, cc.paparazzi_paced_allowance(25, at(8, 10)))   # 25/16 por hora, la hora en curso cuenta
+            self.assertEqual(13, cc.paparazzi_paced_allowance(25, at(15, 30)))  # a mitad de la franja, la mitad
+            self.assertEqual(25, cc.paparazzi_paced_allowance(25, at(23, 30)))
+        with mock.patch.dict(os.environ, {"PAPARAZZI_PACING_HOURS": ""}):
+            self.assertEqual(25, cc.paparazzi_paced_allowance(25, at(0, 5)))  # sin reparto: todo desde las 0 h
+
+    def test_gate_stops_at_pace_and_says_why(self):
+        import datetime
+
+        good = {"titulo": "Murió un reconocido actor: lo despidió Susana Giménez", "parrafos": []}
+        morning = datetime.datetime(2026, 11, 19, 8, 10).timestamp()
+        env = {"PAPARAZZI_HEURISTIC_MIN": "5", "PAPARAZZI_DAILY_MAX": "25", "PAPARAZZI_PACING_HOURS": "8-24"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(cc, "now_ar", side_effect=lambda now=None: datetime.datetime.fromtimestamp(now)):
+            self.assertTrue(cc.paparazzi_gate(dict(good), now=morning)[0])
+            self.assertTrue(cc.paparazzi_gate(dict(good), now=morning)[0])
+            passed, reason, _ = cc.paparazzi_gate(dict(good), now=morning)
+        self.assertEqual((False, "paparazzi_pacing"), (passed, reason))
+
 
 class NationalTests(unittest.TestCase):
     def test_local_sources_and_riojan_text_are_never_national(self):

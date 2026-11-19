@@ -3288,3 +3288,20 @@ con los Reels reales del 18-19/11: locales 70, UM y DU 65. Rechazado: el local v
 ni se marca, se reintenta en el próximo ciclo. No toca X ni paparazzi.
 **Evidencia**: `tests/test_reel_value_gate.py`; calibración sobre 23 Reels publicados.
 **Rollback**: `REEL_VALUE_GATE_ENABLED=false` en el script de arranque y reiniciar.
+
+## 2026-11-19 — Paparazzi: tope 25 por día, repartido en la jornada
+
+**Contexto**: el responsable vio que paparazzi "no sirve videos ni noticias". El scraper
+trae unas 30 notas por día (casi todas con video JWPlayer propio), pero el tope de costo
+del 14/11 (`PAPARAZZI_DAILY_MAX=10`) se llenaba todos los días desde el 15/11 y los Reels
+de paparazzi cayeron de 11-13 a 1-5 por día. Los otros faltantes no eran fallas: los
+videos de X dependen de los links que manda el backend de HolaSalta (26 el 11/11, 3-5
+por día desde el 17/11); Tiempo Popular no publicó policiales el 19/11; Nueva Rioja trajo
+menos notas nuevas.
+**Decisión** (el responsable: "subí el tope pero que tampoco se llene apenas empieza el
+día"): `PAPARAZZI_DAILY_MAX=25` y `PAPARAZZI_PACING_HOURS=8-24`: el tope se habilita de a
+partes iguales por hora de la franja y lo no usado se acumula
+(`paparazzi_paced_allowance`). La nota fuera de ritmo va a dead-letter con
+`paparazzi_pacing` (distinto de `paparazzi_daily_cap`). Sin la variable no hay reparto.
+**Evidencia**: `tests/test_cost_controls.py`.
+**Rollback**: `PAPARAZZI_DAILY_MAX=10` y quitar `PAPARAZZI_PACING_HOURS` del script de arranque.

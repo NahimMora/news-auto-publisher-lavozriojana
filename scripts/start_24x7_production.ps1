@@ -168,6 +168,9 @@ $env:FORMAT_REELS_UM_MAX_PER_DAY = "10"
 $env:FORMAT_REELS_UM_PHOTO_ENABLED = "true"
 # Puntaje de valor con IA para Reels locales, UM y DU (umbral 70/65/65). Ver docs/DECISIONS.md 2026-11-19.
 $env:REEL_VALUE_GATE_ENABLED = "true"
+# Paparazzi: hasta 25 notas por día (antes 10), repartidas entre las 8 y las 24 h. Ver docs/DECISIONS.md 2026-11-19.
+$env:PAPARAZZI_DAILY_MAX = "25"
+$env:PAPARAZZI_PACING_HOURS = "8-24"
 # MPF y Función Judicial: sólo puntaje >= 7 y sin casos ya cubiertos en 72 h.
 $env:SCRAPER_JUDICIALES_ENABLED = "1"
 $env:JUDICIAL_MIN_SCORE = "7"
