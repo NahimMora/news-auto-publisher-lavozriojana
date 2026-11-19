@@ -24,6 +24,7 @@ from utils.deployment import deployment_plan
 from utils.editorial_priority import is_breaking
 from utils.file_manager import JsonStateError
 from utils.logging_setup import setup_logger
+from utils.reel_editorial_score import score_value
 from utils.social_time import now_ar
 from utils.stage_result import StageResult, StageStatus, emit_stage_result
 
@@ -86,6 +87,15 @@ def _video(cand: nn.Candidate, work: str) -> tuple[dict | None, str]:
     return {"type": "video", "file": clip, "width": w, "height": h, "credit": credit}, ""
 
 
+def _worth_it(kind: str, note: fr.Note, cand: nn.Candidate) -> bool:
+    """Compuerta de valor (``REEL_VALUE_GATE_ENABLED``). Rechazada queda marcada y no
+    se vuelve a evaluar; con la IA caída no se marca y se reintenta el próximo ciclo."""
+    decision = score_value(kind, title=cand.title, section=cand.section, text=cand.body)
+    if decision.status == "rejected":
+        fr.mark(kind, note.url, status="rejected", reason=f"poco valor ({decision.score}): {decision.reason}"[:200], title=cand.title[:90])
+    return decision.allowed
+
+
 def _photo_media(note: fr.Note, cand: nn.Candidate, photo: dict, work: str) -> dict:
     """UM sin video: las fotos del cuerpo de la nota original (una por tramo) si hay 2 o
     más que pasen el control de foto fuerte; si no, la foto de la nota sola."""
@@ -135,6 +145,8 @@ def run_um(state: dict, records: list[dict]) -> tuple[str, dict]:
             if not fr.is_riojan(cand):
                 fr.mark("um", note.url, status="rejected", reason="no es un hecho riojano", title=cand.title[:90])
                 continue
+            if not _worth_it("um", note, cand):
+                continue
             photo, why = _photo(cand, work, policial=cand.section == "policiales")
             if not photo:
                 fr.mark("um", note.url, status="rejected", reason=f"foto: {why}", title=cand.title[:90])
@@ -174,6 +186,8 @@ def run_du(state: dict) -> tuple[str, dict]:
             continue
         if not fr.is_riojan(cand):
             fr.mark("du", note.url, status="rejected", reason="no es de La Rioja", title=cand.title[:90])
+            continue
+        if not _worth_it("du", note, cand):
             continue
         plan, warnings, qualifies = fr.write_plan("du", cand)
         if not qualifies or not plan:

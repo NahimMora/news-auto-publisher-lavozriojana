@@ -148,3 +148,79 @@ def score_reel_candidate(noticia: dict, *, origin: str) -> ReelScoreDecision:
 
     logger.error("Puntaje de reel no disponible (%s) para: %s", origin, titulo)
     return ReelScoreDecision(False, "unavailable", reason="ai_failed")
+
+
+# ── Compuerta de valor para los Reels propios y locales ──────────────────
+# Distinta del puntaje de X (REEL_EDITORIAL_SCORE_ENABLED): aplica a los Reels
+# locales con YouTube incrustado, a Último momento y a Datos útiles, con un
+# criterio por tipo. Nació el 2026-11-18, cuando al abrir los Reels locales a
+# todas las secciones salieron videos institucionales y UM/DU sin valor.
+VALUE_CRITERIA = {
+    "local_video": (
+        "Reel con el video que trae la nota local (el canal del video se indica). Suman: el video muestra el hecho "
+        "(accidente, incendio, temporal, operativo, protesta, rescate) o un testimonio directo de un hecho riojano. "
+        "Restan mucho: video institucional, de prensa oficial o de un funcionario o dirigente hablando; acto, "
+        "discurso, anuncio, inauguración o campaña sin un hecho. Si el hecho es nacional o de otra provincia (no pasó "
+        "en La Rioja), el puntaje es como máximo 50 aunque sea un tema importante."
+    ),
+    "um": (
+        "Reel ÚLTIMO MOMENTO: sólo hechos urgentes y de impacto que están pasando en La Rioja (accidente grave, "
+        "incendio, temporal, operativo, crimen, emergencia). Restan mucho: advertencias, comunicados, denuncias, "
+        "reclamos o conflictos sin un hecho grave en curso; notas de seguimiento."
+    ),
+    "du": (
+        "Reel DATOS ÚTILES: sólo si la audiencia puede USAR la información (fechas de pago, trámites, cortes de "
+        "servicio, horarios, inscripciones, requisitos, alertas). Restan mucho: denuncias, reclamos gremiales, "
+        "conflictos o declaraciones aunque traigan fechas o montos."
+    ),
+}
+
+
+def value_gate_enabled() -> bool:
+    return str(os.getenv("REEL_VALUE_GATE_ENABLED", "false")).strip().lower() in _TRUE
+
+
+# Calibrado el 2026-11-19 con los Reels reales del 18-19/11: en locales, los flojos
+# (campañas, emprendimientos, actos) quedaban en 65; los hechos con video, de 75 para arriba.
+VALUE_DEFAULT_MIN = {"local_video": 70, "um": 65, "du": 65}
+
+
+def value_min_score(kind: str) -> int:
+    default = VALUE_DEFAULT_MIN.get(kind, 65)
+    raw = os.getenv(f"REEL_VALUE_MIN_SCORE_{kind.upper()}") or os.getenv("REEL_VALUE_MIN_SCORE") or str(default)
+    try:
+        return max(0, min(100, int(raw)))
+    except ValueError:
+        return default
+
+
+def score_value(kind: str, *, title: str, section: str, text: str, video_source: str = "", completion=None) -> ReelScoreDecision:
+    """¿Vale la pena este Reel? ``kind``: local_video | um | du. Nunca lanza.
+
+    Apagado (``REEL_VALUE_GATE_ENABLED``) aprueba todo. Si la IA no responde
+    devuelve ``unavailable`` y NO aprueba: el que llama decide reintentar.
+    """
+    if not value_gate_enabled():
+        return ReelScoreDecision(True, "disabled")
+    from utils.ai_client import chat_completion
+
+    completion = completion or chat_completion
+    system = _SCORE_PROMPT + "\n\nTipo de Reel a evaluar:\n" + VALUE_CRITERIA[kind]
+    user = f"Sección: {section}\nTítulo: {title}\n" + (f"Canal del video: {video_source}\n" if video_source else "") + f"Texto:\n{text[:2500]}"
+    threshold = value_min_score(kind)
+    for attempt in range(1, 3):
+        try:
+            content = completion(
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"), temperature=0.2, max_tokens=200,
+                timeout=float(os.getenv("GEMINI_TIMEOUT", "60")), json_mode=True, stage="reel_value_gate",
+            )
+            score, motivo = _parse_score(content or "")
+        except Exception as exc:  # noqa: BLE001 — red, cuota o JSON inválido
+            logger.warning("Compuerta de valor %s, intento %s/2: %s", kind, attempt, type(exc).__name__)
+            continue
+        allowed = score >= threshold
+        logger.info("Reel %s %s score=%s umbral=%s: %s | %s", kind, "aprobado" if allowed else "descartado", score, threshold,
+                    title[:70], motivo)
+        return ReelScoreDecision(allowed, "approved" if allowed else "rejected", score, motivo)
+    return ReelScoreDecision(False, "unavailable", reason="ai_failed")

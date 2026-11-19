@@ -3270,3 +3270,21 @@ genérica. No se agrega ningún filtro de fotos crudas: si está en la nota, va.
 **Evidencia**: `tests/test_newscast_v3.py`, `tests/test_format_reels.py`; guion real de
 hoy regenerado sin publicar: "Un 18 de noviembre de 1932 nacía Nasif Estéfano, quien
 murió en Aimogasta, La Rioja."
+
+## 2026-11-19 — Compuerta de valor con IA para Reels locales, Último momento y Datos útiles
+
+**Contexto**: después de abrir los Reels locales a todas las secciones y UM con fotos,
+salieron Reels sin valor: videos institucionales (Quintela recordando un discurso, notas
+de "Medios Provincia"), un tema nacional (UCA/INDEC), un colegio de Santiago del Estero,
+UM que eran advertencias o conflictos y un DU que era un reclamo gremial. Ninguno de esos
+flujos tenía un filtro de valor editorial.
+**Decisión** (el responsable eligió "puntaje IA en todos"): `REEL_VALUE_GATE_ENABLED`
+(apagado por defecto, activo en el script de arranque) con `score_value` en
+`utils/reel_editorial_score.py`: una llamada por candidata con el criterio de cada tipo
+(local: el video muestra el hecho y no es institucional, techo de 50 si no pasó en La
+Rioja; UM: hecho urgente en curso; DU: información que se puede usar). Umbral calibrado
+con los Reels reales del 18-19/11: locales 70, UM y DU 65. Rechazado: el local vence
+(`low_value`) y la nota sale como imagen; UM/DU quedan marcados. IA caída: no se aprueba
+ni se marca, se reintenta en el próximo ciclo. No toca X ni paparazzi.
+**Evidencia**: `tests/test_reel_value_gate.py`; calibración sobre 23 Reels publicados.
+**Rollback**: `REEL_VALUE_GATE_ENABLED=false` en el script de arranque y reiniciar.

@@ -25,6 +25,7 @@ from utils.file_manager import JsonStateError
 from utils.logging_setup import setup_logger
 from utils.paparazzi_reels import delete_reel_upload, publish_facebook_reel, render_reel_item
 from utils.publish_selection import local_video_reel_source_excluded, video_reels_enabled
+from utils.reel_editorial_score import score_value
 from utils.stage_result import StageResult, StageStatus, emit_stage_result, result_from_counts
 
 logger = setup_logger("run_paparazzi_videos", "run_paparazzi_videos.log")
@@ -69,6 +70,18 @@ def _process(job_id: str, job: dict, *, instagram: bool, facebook: bool) -> str:
         pv.transition(job_id, status="expired", reason="source_excluded")
         logger.info("Reel local descartado por fuente excluida: %s", str(noticia.get("titulo") or "")[:80])
         return "dropped"
+    if channels and not job.get("value_score"):
+        texto = " ".join(str(p) for p in (noticia.get("parrafos") or [])[:4]) or str(noticia.get("texto_instagram") or "")
+        decision = score_value("local_video", title=str(noticia.get("titulo") or ""), section=str(noticia.get("seccion") or ""),
+                               text=texto, video_source=str(noticia.get("video_credit") or ""))
+        if decision.status == "unavailable":
+            return "skipped"  # IA caída: queda pendiente para el próximo ciclo
+        if not decision.allowed:
+            pv.transition(job_id, status="expired", reason="low_value", value_score=decision.score)
+            logger.info("Reel local descartado por poco valor (%s): %s", decision.score, str(noticia.get("titulo") or "")[:80])
+            return "dropped"
+        if decision.score is not None:
+            pv.transition(job_id, value_score=decision.score)
     if channels:
         instagram = instagram and "instagram" in channels
         facebook = facebook and "facebook" in channels

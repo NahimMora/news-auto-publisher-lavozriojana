@@ -166,6 +166,8 @@ $env:LOCAL_VIDEO_REEL_FACEBOOK = "true"
 $env:FORMAT_REELS_UM_MAX_PER_DAY = "10"
 # Último momento sin video: con las fotos de la nota (galería de origen si hay 2+).
 $env:FORMAT_REELS_UM_PHOTO_ENABLED = "true"
+# Puntaje de valor con IA para Reels locales, UM y DU (umbral 70/65/65). Ver docs/DECISIONS.md 2026-11-19.
+$env:REEL_VALUE_GATE_ENABLED = "true"
 # MPF y Función Judicial: sólo puntaje >= 7 y sin casos ya cubiertos en 72 h.
 $env:SCRAPER_JUDICIALES_ENABLED = "1"
 $env:JUDICIAL_MIN_SCORE = "7"
